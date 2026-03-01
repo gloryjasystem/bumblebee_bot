@@ -22,7 +22,7 @@ def kb_language() -> InlineKeyboardMarkup:
 def kb_main_menu() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="📡 Мои площадки", callback_data="menu:channels"),
+            InlineKeyboardButton(text="🤖 Мой список ботов", callback_data="menu:channels"),
             InlineKeyboardButton(text="📨 Рассылка",     callback_data="menu:mailing"),
         ],
         [

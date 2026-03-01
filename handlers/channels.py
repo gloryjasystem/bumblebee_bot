@@ -61,7 +61,7 @@ async def on_channels_menu(callback: CallbackQuery, platform_user: dict | None):
 
     if count < limit:
         buttons.append([InlineKeyboardButton(
-            text="➕ Подключить новую площадку",
+            text="➕ Подключить новый бот",
             callback_data="channel:new",
         )])
     else:
@@ -73,7 +73,7 @@ async def on_channels_menu(callback: CallbackQuery, platform_user: dict | None):
     buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data="menu:main")])
 
     await callback.message.edit_text(
-        f"📡 <b>Мои площадки</b>\n\n"
+        f"🤖 <b>Мои боты</b>\n\n"
         f"Подключено: {count}/{limit} (тариф {tariff.capitalize()})",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
     )
@@ -89,12 +89,26 @@ async def on_channel_new(callback: CallbackQuery, state: FSMContext, platform_us
         return
     await state.clear()
     await callback.message.edit_text(
-        "🐝 <b>Виды ботов</b>\n\n"
-        "👋 <b>Бот приветствий</b> — автоматически обрабатывает заявки, "
-        "отправляет приветственные сообщения и собирает базу пользователей для рассылок.\n\n"
-        "<b>Выберите действие:</b>",
+        "🤖 <b>Твой бот для канала</b>\n\n"
+        "Создай бота — и получи полное управление\n"
+        "каналом или группой в одном месте.\n\n"
+        "❭ Что сможет твой бот:\n\n"
+        "🛡 принимать заявки автоматически\n"
+        "   и отсеивать спам через капчу\n\n"
+        "👋 встречать каждого нового участника\n"
+        "   приветствием, а при отписке — прощанием\n\n"
+        "📣 настраивать и планировать рассылки\n"
+        "   по всей базе подписчиков с нужной датой\n\n"
+        "🔗 считать переходы по пригласительным ссылкам\n"
+        "   и анализировать стоимость каждого подписчика\n\n"
+        "🚫 блокировать пользователей и фильтровать заявки\n"
+        "   по языку, имени, фото и символам\n\n"
+        "📊 видеть глубокую аналитику активности\n"
+        "   и настраивать обработку сообщений в боте\n\n"
+        "👥 удобно управлять командой и многое другое ❮\n\n"
+        "🐝 Всё в одном боте — без лишних сервисов.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="👋 Бот приветствий", callback_data="bot_type:welcome")],
+            [InlineKeyboardButton(text="🚀 Создать бота", callback_data="bot_type:welcome")],
             [InlineKeyboardButton(text="🚫 Отменить",         callback_data="menu:channels")],
         ]),
     )

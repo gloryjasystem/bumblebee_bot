@@ -1,0 +1,22 @@
+# Telegram Bot
+aiogram==3.13.1
+
+# Database
+asyncpg==0.29.0
+alembic==1.13.1
+sqlalchemy==2.0.36  # нужен alembic, asyncpg используется напрямую
+
+# API Server (webhooks + WebApp)
+fastapi==0.115.5
+uvicorn[standard]==0.32.1
+httpx==0.27.2
+
+# Scheduler (рассылка, истечение тарифов)
+apscheduler==3.10.4
+
+# Security
+cryptography==43.0.3
+
+# Utils
+python-dotenv==1.0.1
+pydantic-settings==2.6.1

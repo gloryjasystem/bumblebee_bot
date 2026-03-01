@@ -68,6 +68,13 @@ async def _poll_child_bot(child_bot_id: int, owner_id: int, bot_username: str, r
     try:
         # Сбрасываем webhook если был установлен
         await bot.delete_webhook(drop_pending_updates=True)
+        # Ждём немного чтобы старый инстанс (при редеплое) успел умереть,
+        # затем делаем быстрый вызов чтобы "захватить" сессию у старого polling-а
+        await asyncio.sleep(3)
+        try:
+            await bot.get_updates(offset=0, timeout=0, allowed_updates=[])
+        except Exception:
+            pass
         retry_delay = 5  # сброс задержки при успешном подключении
 
         while True:

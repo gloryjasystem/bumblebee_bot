@@ -781,3 +781,101 @@ async def on_ch_stats(callback: CallbackQuery, platform_user: dict | None):
         ]),
     )
     await callback.answer()
+
+
+# ══════════════════════════════════════════════════════════════
+# ⚙️ Управление площадкой (ch_settings:{ch_id}) — DB id
+# ══════════════════════════════════════════════════════════════
+TIMEZONES = [
+    ("UTC+3 Москва",   "Europe/Moscow"),
+    ("UTC+0 Лондон",   "UTC"),
+    ("UTC+1 Берлин",   "Europe/Berlin"),
+    ("UTC+2 Киев",     "Europe/Kiev"),
+    ("UTC+5 Екатеринбург", "Asia/Yekaterinburg"),
+    ("UTC+6 Омск",     "Asia/Omsk"),
+    ("UTC+7 Красноярск", "Asia/Krasnoyarsk"),
+    ("UTC+8 Иркутск",  "Asia/Irkutsk"),
+    ("UTC+9 Якутск",   "Asia/Yakutsk"),
+    ("UTC+10 Владивосток", "Asia/Vladivostok"),
+]
+
+
+@router.callback_query(F.data.startswith("ch_settings:"))
+async def on_ch_settings(callback: CallbackQuery, platform_user: dict | None):
+    """Управление конкретной площадкой (по DB id)."""
+    if not platform_user:
+        return
+    ch_id = int(callback.data.split(":")[1])
+    ch = await db.fetchrow(
+        """SELECT bc.*, cb.bot_username
+           FROM bot_chats bc
+           LEFT JOIN child_bots cb ON bc.child_bot_id = cb.id
+           WHERE bc.id=$1 AND bc.owner_id=$2""",
+        ch_id, platform_user["user_id"],
+    )
+    if not ch:
+        await callback.answer("Площадка не найдена", show_alert=True)
+        return
+
+    status_icon = "🟢 Активна" if ch["is_active"] else "🔴 Остановлена"
+    tz = ch.get("timezone") or "UTC"
+    added = ch["added_at"].strftime("%d.%m.%Y") if ch.get("added_at") else "—"
+    chat_id = ch["chat_id"]
+
+    toggle_text = "⏸ Остановить" if ch["is_active"] else "▶️ Запустить"
+
+    await callback.message.edit_text(
+        f"⚙️ <b>Управление площадкой</b>\n\n"
+        f"📢 {ch['chat_title']}\n"
+        f"🤖 Бот: @{ch['bot_username'] or '—'}\n"
+        f"📅 Подключена: {added}\n"
+        f"🕐 Часовой пояс: {tz}\n"
+        f"📡 Статус: {status_icon}",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=toggle_text, callback_data=f"ch_toggle:{ch_id}")],
+            [InlineKeyboardButton(text="🕐 Часовой пояс", callback_data=f"ch_tz:{ch_id}")],
+            [InlineKeyboardButton(text="📊 Статистика",   callback_data=f"ch_stats:{chat_id}")],
+            [InlineKeyboardButton(text="◀️ Назад",         callback_data=f"channel:{ch_id}")],
+        ]),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("ch_tz:"))
+async def on_ch_tz(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    ch_id = int(callback.data.split(":")[1])
+    buttons = [
+        [InlineKeyboardButton(text=label, callback_data=f"ch_tz_set:{ch_id}:{tz}")]
+        for label, tz in TIMEZONES
+    ]
+    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"ch_settings:{ch_id}")])
+    await callback.message.edit_text(
+        "🕐 <b>Выберите часовой пояс</b>",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("ch_tz_set:"))
+async def on_ch_tz_set(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    parts = callback.data.split(":")
+    ch_id = int(parts[1])
+    tz = ":".join(parts[2:])
+    await db.execute(
+        "UPDATE bot_chats SET timezone=$1 WHERE id=$2 AND owner_id=$3",
+        tz, ch_id, platform_user["user_id"],
+    )
+    await callback.answer(f"✅ Часовой пояс: {tz}")
+    # Вернуться в управление
+    fake_cb_data = f"ch_settings:{ch_id}"
+    await callback.message.edit_text(
+        "✅ Часовой пояс обновлён.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="◀️ Назад", callback_data=f"ch_settings:{ch_id}")],
+        ]),
+    )
+

@@ -31,8 +31,9 @@ def kb_blacklist_main(chat_id: int) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="🔎 Найти в базе",               callback_data=f"bl_search:{chat_id}")],
         [InlineKeyboardButton(text="📤 Экспорт базы",               callback_data=f"bl_export:{chat_id}")],
         [InlineKeyboardButton(text="🗑 Очистить базу",              callback_data=f"bl_clear_confirm:{chat_id}")],
-        [InlineKeyboardButton(text="◀️ Назад",                      callback_data=f"channel:{chat_id}")],
+        [InlineKeyboardButton(text="◀️ Назад",                      callback_data=f"channel_by_chat:{chat_id}")],
     ])
+
 
 
 # ── Главный экран ЧС ─────────────────────────────────────────
@@ -212,3 +213,186 @@ async def on_bl_sweep(callback: CallbackQuery, platform_user: dict | None):
         ]),
     )
     await callback.answer()
+
+
+# ── Найти в базе ─────────────────────────────────────────────
+@router.callback_query(F.data.startswith("bl_search:"))
+async def on_bl_search(callback: CallbackQuery, state: FSMContext, platform_user: dict | None):
+    if not platform_user:
+        return
+    chat_id = callback.data.split(":")[1]
+    await state.set_state(BlacklistFSM.waiting_for_search_input)
+    await state.update_data(chat_id=chat_id, owner_id=platform_user["user_id"])
+    await callback.message.edit_text(
+        "🔎 <b>Поиск в чёрном списке</b>\n\n"
+        "Введите @username или Telegram ID для поиска:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🚫 Отменить", callback_data=f"ch_protection:{chat_id}")]
+        ]),
+    )
+    await callback.answer()
+
+
+@router.message(BlacklistFSM.waiting_for_search_input)
+async def on_bl_search_input(message: Message, state: FSMContext, platform_user: dict | None):
+    if not platform_user:
+        return
+    query = (message.text or "").strip().lstrip("@")
+    owner_id = platform_user["user_id"]
+
+    # Поиск по username или user_id
+    try:
+        uid = int(query)
+        row = await db.fetchrow(
+            "SELECT user_id, username, added_at FROM blacklist WHERE owner_id=$1 AND user_id=$2",
+            owner_id, uid,
+        )
+    except ValueError:
+        row = await db.fetchrow(
+            "SELECT user_id, username, added_at FROM blacklist WHERE owner_id=$1 AND username ILIKE $2",
+            owner_id, query,
+        )
+
+    await state.clear()
+    if row:
+        added = row["added_at"].strftime("%d.%m.%Y %H:%M") if row["added_at"] else "—"
+        await message.answer(
+            f"✅ <b>Найден в базе</b>\n\n"
+            f"👤 @{row['username'] or '—'}\n"
+            f"🆔 ID: <code>{row['user_id'] or '—'}</code>\n"
+            f"📅 Добавлен: {added}",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(
+                    text="🗑 Удалить из ЧС",
+                    callback_data=f"bl_remove:{row['user_id'] or row['username']}",
+                )],
+            ]),
+        )
+    else:
+        await message.answer(f"❌ <code>@{query}</code> не найден в чёрном списке.")
+
+
+# ── Экспорт базы ─────────────────────────────────────────────
+@router.callback_query(F.data.startswith("bl_export:"))
+async def on_bl_export(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    owner_id = platform_user["user_id"]
+    rows = await db.fetch(
+        "SELECT user_id, username FROM blacklist WHERE owner_id=$1 ORDER BY added_at DESC LIMIT 10000",
+        owner_id,
+    )
+    if not rows:
+        await callback.answer("База чёрного списка пуста.", show_alert=True)
+        return
+
+    lines = []
+    for r in rows:
+        if r["username"]:
+            lines.append(f"@{r['username']}")
+        elif r["user_id"]:
+            lines.append(str(r["user_id"]))
+
+    content = "\n".join(lines).encode("utf-8")
+    from aiogram.types import BufferedInputFile
+    file = BufferedInputFile(content, filename="blacklist_export.txt")
+
+    await callback.message.answer_document(
+        file,
+        caption=f"📤 Экспорт чёрного списка: {len(lines):,} записей",
+    )
+    await callback.answer()
+
+
+# ── Очистить базу ─────────────────────────────────────────────
+@router.callback_query(F.data.startswith("bl_clear_confirm:"))
+async def on_bl_clear_confirm(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    chat_id = callback.data.split(":")[1]
+    count = await get_blacklist_count(platform_user["user_id"])
+    await callback.message.edit_text(
+        f"⚠️ <b>Очистить чёрный список?</b>\n\n"
+        f"Будет удалено {count:,} записей. Действие необратимо.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Да, очистить", callback_data=f"bl_clear_do:{chat_id}")],
+            [InlineKeyboardButton(text="🚫 Отмена",       callback_data=f"ch_protection:{chat_id}")],
+        ]),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("bl_clear_do:"))
+async def on_bl_clear_do(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    chat_id = callback.data.split(":")[1]
+    owner_id = platform_user["user_id"]
+    deleted = await db.fetchval(
+        "WITH d AS (DELETE FROM blacklist WHERE owner_id=$1 RETURNING 1) SELECT COUNT(*) FROM d",
+        owner_id,
+    )
+    await callback.message.edit_text(
+        f"✅ Чёрный список очищен. Удалено {deleted:,} записей.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="◀️ Назад", callback_data=f"ch_protection:{chat_id}")],
+        ]),
+    )
+    await callback.answer()
+
+
+# ── Забанить всех нарушителей ────────────────────────────────
+@router.callback_query(F.data.startswith("bl_ban_all:"))
+async def on_bl_ban_all(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    chat_id_str = callback.data.split(":")[1]
+    chat_id = int(chat_id_str)
+    owner_id = platform_user["user_id"]
+
+    from handlers.channels import _show_channel_detail
+    # Получаем токен дочернего бота
+    bot_row = await db.fetchrow(
+        """SELECT cb.token_encrypted, bc.id as bc_id
+           FROM child_bots cb
+           JOIN bot_chats bc ON bc.child_bot_id = cb.id
+           WHERE bc.owner_id=$1 AND bc.chat_id=$2::bigint AND bc.is_active=true""",
+        owner_id, chat_id,
+    )
+    if not bot_row:
+        await callback.answer("Бот не найден.", show_alert=True)
+        return
+
+    from services.security import decrypt_token
+    from aiogram import Bot as AioBot
+
+    token = decrypt_token(bot_row["token_encrypted"])
+    child_bot = AioBot(token=token)
+
+    # Получаем нарушителей
+    violators = await db.fetch(
+        """SELECT bu.user_id FROM bot_users bu
+           INNER JOIN blacklist bl ON bl.owner_id=bu.owner_id
+             AND ((bl.user_id IS NOT NULL AND bl.user_id=bu.user_id)
+                  OR (bl.username IS NOT NULL AND bl.username=bu.username))
+           WHERE bu.owner_id=$1 AND bu.chat_id=$2::bigint AND bu.is_active=true""",
+        owner_id, chat_id,
+    )
+
+    banned = 0
+    for v in violators:
+        try:
+            await child_bot.ban_chat_member(chat_id, v["user_id"])
+            banned += 1
+        except Exception:
+            pass
+
+    await child_bot.session.close()
+    await callback.message.edit_text(
+        f"✅ Забанено: {banned} из {len(violators)} нарушителей.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="◀️ Назад", callback_data=f"ch_protection:{chat_id_str}")],
+        ]),
+    )
+    await callback.answer()
+

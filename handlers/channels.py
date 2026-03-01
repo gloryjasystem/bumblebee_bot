@@ -312,29 +312,75 @@ async def on_channel_detail(callback: CallbackQuery, platform_user: dict | None)
         await callback.answer("Площадка не найдена", show_alert=True)
         return
 
-    status = "🟢 Активна" if ch["is_active"] else "🔴 Отключена"
-    type_label = "📢 Канал" if ch["chat_type"] == "channel" else "👥 Группа"
+    chat_id  = ch["chat_id"]
+    owner_id = platform_user["user_id"]
+
+    # ── Статистика пользователей ──────────────────────────────
+    from datetime import date, timedelta
+    today     = date.today()
+    yesterday = today - timedelta(days=1)
+
+    total_users = await db.fetchval(
+        "SELECT COUNT(*) FROM bot_users WHERE owner_id=$1 AND chat_id=$2", owner_id, chat_id
+    ) or 0
+    today_users = await db.fetchval(
+        "SELECT COUNT(*) FROM bot_users WHERE owner_id=$1 AND chat_id=$2 AND joined_at::date=$3",
+        owner_id, chat_id, today,
+    ) or 0
+    yesterday_users = await db.fetchval(
+        "SELECT COUNT(*) FROM bot_users WHERE owner_id=$1 AND chat_id=$2 AND joined_at::date=$3",
+        owner_id, chat_id, yesterday,
+    ) or 0
+    pending_requests = await db.fetchval(
+        "SELECT COUNT(*) FROM bot_users WHERE owner_id=$1 AND chat_id=$2 AND is_active=false AND left_at IS NULL",
+        owner_id, chat_id,
+    ) or 0
+    active_users = await db.fetchval(
+        "SELECT COUNT(*) FROM bot_users WHERE owner_id=$1 AND chat_id=$2 AND is_active=true AND bot_activated=true",
+        owner_id, chat_id,
+    ) or 0
+    dead_users = total_users - active_users
+
+    # ── Формируем текст ───────────────────────────────────────
+    text = (
+        f"🤖 Бот: @{ch['bot_username']}\n\n"
+        f"<u>👥 Пользователей</u>\n"
+        f"├ Сегодня ≈ {today_users}\n"
+        f"├ Вчера ≈ {yesterday_users}\n"
+        f"├ Всего ≈ {total_users}\n"
+        f"└ Заявок в очереди ≈ {pending_requests}\n\n"
+        f"<u>💬 Сообщений</u>\n"
+        f"├ Сегодня ≈ 0\n"
+        f"├ Вчера ≈ 0\n"
+        f"└ Всего ≈ 0\n\n"
+        f"🟢 Живые ≈ {active_users}    🔴 Мёртвые ≈ {max(dead_users, 0)}"
+    )
+
     toggle_text = "🔴 Выключить" if ch["is_active"] else "🟢 Включить"
 
     await callback.message.edit_text(
-        f"{type_label}: <b>{ch['chat_title']}</b>\n"
-        f"Бот: @{ch['bot_username']}\n"
-        f"Статус: {status}",
+        text,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="✅ Заявки",        callback_data=f"ch_requests:{ch['chat_id']}")],
-            [InlineKeyboardButton(text="💬 Сообщения",     callback_data=f"ch_messages:{ch['chat_id']}")],
-            [InlineKeyboardButton(text="🛡 Чёрный список", callback_data=f"ch_protection:{ch['chat_id']}")],
-            [InlineKeyboardButton(text="📨 Рассылка",      callback_data=f"ch_mailing:{ch['chat_id']}")],
-            [InlineKeyboardButton(text="🔗 Ссылки",        callback_data=f"ch_links:{ch['chat_id']}")],
-            [InlineKeyboardButton(text="📊 Статистика",    callback_data=f"ch_stats:{ch['chat_id']}")],
+            [InlineKeyboardButton(text="✅ Обработка заявок",    callback_data=f"ch_requests:{chat_id}")],
             [
-                InlineKeyboardButton(text=toggle_text,     callback_data=f"ch_toggle:{ch['id']}"),
-                InlineKeyboardButton(text="🗑 Удалить",    callback_data=f"ch_delete:{ch['id']}"),
+                InlineKeyboardButton(text="💬 Сообщения",        callback_data=f"ch_messages:{chat_id}"),
+                InlineKeyboardButton(text="📨 Рассылка",         callback_data=f"ch_mailing:{chat_id}"),
             ],
-            [InlineKeyboardButton(text="◀️ Назад",         callback_data="menu:channels")],
+            [
+                InlineKeyboardButton(text="🔗 Ссылки",           callback_data=f"ch_links:{chat_id}"),
+                InlineKeyboardButton(text="📡 Площадки",         callback_data="menu:channels"),
+            ],
+            [
+                InlineKeyboardButton(text="🛡 Защита",           callback_data=f"ch_protection:{chat_id}"),
+                InlineKeyboardButton(text="⚙️ Управление",       callback_data=f"ch_settings:{ch_id}"),
+            ],
+            [InlineKeyboardButton(text="📣 Обратная связь",      callback_data=f"ch_feedback:{chat_id}")],
+            [InlineKeyboardButton(text=f"🗑 Удалить бот",        callback_data=f"ch_delete:{ch_id}")],
+            [InlineKeyboardButton(text="◀️ Назад",               callback_data="menu:channels")],
         ]),
     )
     await callback.answer()
+
 
 
 @router.callback_query(F.data.startswith("channel_by_chat:"))

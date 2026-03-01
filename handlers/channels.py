@@ -290,15 +290,8 @@ async def on_chat_verify_input(message: Message, state: FSMContext, platform_use
 # ══════════════════════════════════════════════════════════════
 # 5. Детали площадки
 # ══════════════════════════════════════════════════════════════
-@router.callback_query(F.data.startswith("channel:"))
-async def on_channel_detail(callback: CallbackQuery, platform_user: dict | None):
-    if not platform_user:
-        return
-    ch_id_str = callback.data.split(":")[1]
-    if ch_id_str == "new":
-        return
-
-    ch_id = int(ch_id_str)
+async def _show_channel_detail(callback: CallbackQuery, platform_user: dict, ch_id: int):
+    """Core logic: показывает детали площадки по DB id."""
     ch = await db.fetchrow(
         """
         SELECT bc.*, cb.bot_username, cb.bot_name
@@ -321,25 +314,25 @@ async def on_channel_detail(callback: CallbackQuery, platform_user: dict | None)
     yesterday = today - timedelta(days=1)
 
     total_users = await db.fetchval(
-        "SELECT COUNT(*) FROM bot_users WHERE owner_id=$1 AND chat_id=$2", owner_id, chat_id
+        "SELECT COUNT(*) FROM bot_users WHERE owner_id=$1 AND chat_id=$2::bigint", owner_id, chat_id
     ) or 0
     today_users = await db.fetchval(
-        "SELECT COUNT(*) FROM bot_users WHERE owner_id=$1 AND chat_id=$2 AND joined_at::date=$3",
+        "SELECT COUNT(*) FROM bot_users WHERE owner_id=$1 AND chat_id=$2::bigint AND joined_at::date=$3",
         owner_id, chat_id, today,
     ) or 0
     yesterday_users = await db.fetchval(
-        "SELECT COUNT(*) FROM bot_users WHERE owner_id=$1 AND chat_id=$2 AND joined_at::date=$3",
+        "SELECT COUNT(*) FROM bot_users WHERE owner_id=$1 AND chat_id=$2::bigint AND joined_at::date=$3",
         owner_id, chat_id, yesterday,
     ) or 0
     pending_requests = await db.fetchval(
-        "SELECT COUNT(*) FROM bot_users WHERE owner_id=$1 AND chat_id=$2 AND is_active=false AND left_at IS NULL",
+        "SELECT COUNT(*) FROM bot_users WHERE owner_id=$1 AND chat_id=$2::bigint AND is_active=false AND left_at IS NULL",
         owner_id, chat_id,
     ) or 0
     active_users = await db.fetchval(
-        "SELECT COUNT(*) FROM bot_users WHERE owner_id=$1 AND chat_id=$2 AND is_active=true AND bot_activated=true",
+        "SELECT COUNT(*) FROM bot_users WHERE owner_id=$1 AND chat_id=$2::bigint AND is_active=true AND bot_activated=true",
         owner_id, chat_id,
     ) or 0
-    dead_users = total_users - active_users
+    dead_users = max(total_users - active_users, 0)
 
     # ── Формируем текст ───────────────────────────────────────
     text = (
@@ -353,10 +346,8 @@ async def on_channel_detail(callback: CallbackQuery, platform_user: dict | None)
         f"├ Сегодня ≈ 0\n"
         f"├ Вчера ≈ 0\n"
         f"└ Всего ≈ 0\n\n"
-        f"🟢 Живые ≈ {active_users}    🔴 Мёртвые ≈ {max(dead_users, 0)}"
+        f"🟢 Живые ≈ {active_users}    🔴 Мёртвые ≈ {dead_users}"
     )
-
-    toggle_text = "🔴 Выключить" if ch["is_active"] else "🟢 Включить"
 
     await callback.message.edit_text(
         text,
@@ -382,6 +373,15 @@ async def on_channel_detail(callback: CallbackQuery, platform_user: dict | None)
     await callback.answer()
 
 
+@router.callback_query(F.data.startswith("channel:"))
+async def on_channel_detail(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    ch_id_str = callback.data.split(":")[1]
+    if ch_id_str == "new":
+        return
+    await _show_channel_detail(callback, platform_user, int(ch_id_str))
+
 
 @router.callback_query(F.data.startswith("channel_by_chat:"))
 async def on_channel_by_chat(callback: CallbackQuery, platform_user: dict | None):
@@ -390,12 +390,11 @@ async def on_channel_by_chat(callback: CallbackQuery, platform_user: dict | None
         return
     chat_id = int(callback.data.split(":")[1])
     ch = await db.fetchrow(
-        "SELECT id FROM bot_chats WHERE owner_id=$1 AND chat_id=$2",
+        "SELECT id FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint",
         platform_user["user_id"], chat_id,
     )
     if ch:
-        callback.data = f"channel:{ch['id']}"
-        await on_channel_detail(callback, platform_user)
+        await _show_channel_detail(callback, platform_user, ch["id"])
     else:
         await callback.answer("Площадка не найдена")
 
@@ -417,8 +416,7 @@ async def on_ch_toggle(callback: CallbackQuery, platform_user: dict | None):
         new_val, ch_id, platform_user["user_id"],
     )
     await callback.answer("🟢 Включена" if new_val else "🔴 Выключена")
-    callback.data = f"channel:{ch_id}"
-    await on_channel_detail(callback, platform_user)
+    await _show_channel_detail(callback, platform_user, ch_id)
 
 
 @router.callback_query(F.data.startswith("ch_delete:"))
@@ -448,5 +446,4 @@ async def on_ch_delete_confirm(callback: CallbackQuery, platform_user: dict | No
         ch_id, platform_user["user_id"],
     )
     await callback.answer("✅ Площадка удалена")
-    callback.data = "menu:channels"
     await on_channels_menu(callback, platform_user)

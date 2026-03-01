@@ -72,8 +72,8 @@ CREATE TABLE IF NOT EXISTS bot_users (
     left_at         TIMESTAMPTZ,
     UNIQUE(owner_id, chat_id, user_id)
 );
-CREATE INDEX idx_bot_users_owner_chat ON bot_users(owner_id, chat_id) WHERE is_active = true;
-CREATE INDEX idx_bot_users_activated  ON bot_users(owner_id, bot_activated) WHERE bot_activated = true;
+CREATE INDEX IF NOT EXISTS idx_bot_users_owner_chat ON bot_users(owner_id, chat_id) WHERE is_active = true;
+CREATE INDEX IF NOT EXISTS idx_bot_users_activated  ON bot_users(owner_id, bot_activated) WHERE bot_activated = true;
 
 -- 5. Чёрный список
 CREATE TABLE IF NOT EXISTS blacklist (
@@ -85,8 +85,8 @@ CREATE TABLE IF NOT EXISTS blacklist (
     added_at        TIMESTAMPTZ DEFAULT now(),
     CONSTRAINT bl_has_identifier CHECK (user_id IS NOT NULL OR username IS NOT NULL)
 );
-CREATE UNIQUE INDEX idx_bl_user_id   ON blacklist(owner_id, user_id)   WHERE user_id IS NOT NULL;
-CREATE UNIQUE INDEX idx_bl_username  ON blacklist(owner_id, lower(username)) WHERE username IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_bl_user_id   ON blacklist(owner_id, user_id)   WHERE user_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_bl_username  ON blacklist(owner_id, lower(username)) WHERE username IS NOT NULL;
 
 -- 6. Рассылки
 CREATE TABLE IF NOT EXISTS mailings (
@@ -161,8 +161,8 @@ CREATE TABLE IF NOT EXISTS payments (
     created_at      TIMESTAMPTZ DEFAULT now(),
     paid_at         TIMESTAMPTZ
 );
-CREATE INDEX idx_payments_user   ON payments(user_id, status);
-CREATE INDEX idx_payments_np     ON payments(np_payment_id) WHERE np_payment_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_payments_user   ON payments(user_id, status);
+CREATE INDEX IF NOT EXISTS idx_payments_np     ON payments(np_payment_id) WHERE np_payment_id IS NOT NULL;
 
 -- 11. Журнал действий (для тарифа Про+)
 CREATE TABLE IF NOT EXISTS audit_log (
@@ -175,4 +175,5 @@ CREATE TABLE IF NOT EXISTS audit_log (
     details         JSONB,
     created_at      TIMESTAMPTZ DEFAULT now()
 );
-CREATE INDEX idx_audit_owner_created ON audit_log(owner_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_owner_created ON audit_log(owner_id, created_at DESC);
+

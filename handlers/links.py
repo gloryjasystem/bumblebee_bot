@@ -27,8 +27,8 @@ def kb_links_list(links: list, chat_id: int) -> InlineKeyboardMarkup:
             text=link["name"][:30],
             callback_data=f"link_detail:{link['id']}",
         )])
-    buttons.append([InlineKeyboardButton(text="➕ Создать ссылку", callback_data=f"link_create:{chat_id}")])
-    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"channel:{chat_id}")])
+    buttons.append([InlineKeyboardButton(text="➡️ Создать ссылку", callback_data=f"link_create:{chat_id}")])
+    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"channel_by_chat:{chat_id}")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
@@ -62,7 +62,7 @@ async def on_links_list(callback: CallbackQuery, platform_user: dict | None):
         platform_user["user_id"], chat_id,
     )
     links = await db.fetch(
-        "SELECT * FROM invite_links WHERE owner_id=$1 AND chat_id=$2 AND is_active=true "
+        "SELECT * FROM invite_links WHERE owner_id=$1 AND chat_id=$2::bigint AND is_active=true "
         "ORDER BY created_at DESC",
         platform_user["user_id"], chat_id,
     )
@@ -267,4 +267,10 @@ async def on_link_delete(callback: CallbackQuery, platform_user: dict | None):
         link_id, platform_user["user_id"],
     )
     await callback.answer("✅ Ссылка удалена")
-    await on_links_list.__wrapped__(callback, platform_user) if hasattr(on_links_list, '__wrapped__') else None
+    # Возвращаемся в общее меню площадок
+    await callback.message.edit_text(
+        "✅ Ссылка удалена.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="◀️ Назад", callback_data="menu:channels")],
+        ]),
+    )

@@ -18,8 +18,12 @@ async def on_feedback_settings(callback: CallbackQuery, platform_user: dict | No
     if not platform_user:
         return
     chat_id = int(callback.data.split(":")[1])
+    await _show_feedback(callback, platform_user, chat_id)
+
+
+async def _show_feedback(callback: CallbackQuery, platform_user: dict, chat_id: int):
     ch = await db.fetchrow(
-        "SELECT * FROM bot_chats WHERE owner_id=$1 AND chat_id=$2",
+        "SELECT * FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint",
         platform_user["user_id"], chat_id,
     )
     if not ch:
@@ -37,9 +41,9 @@ async def on_feedback_settings(callback: CallbackQuery, platform_user: dict | No
         f"💡 Когда включена, сообщения участников\n"
         f"пересылаются вам анонимно.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=toggle,         callback_data=f"fb_toggle:{chat_id}")],
-            [InlineKeyboardButton(text="👤 Кому пересылать", callback_data=f"fb_target:{chat_id}")],
-            [InlineKeyboardButton(text="◀️ Назад",     callback_data=f"channel:{chat_id}")],
+            [InlineKeyboardButton(text=toggle,              callback_data=f"fb_toggle:{chat_id}")],
+            [InlineKeyboardButton(text="👤 Кому пересылать",  callback_data=f"fb_target:{chat_id}")],
+            [InlineKeyboardButton(text="◀️ Назад",              callback_data=f"channel_by_chat:{chat_id}")],
         ]),
     )
     await callback.answer()
@@ -60,8 +64,7 @@ async def on_feedback_toggle(callback: CallbackQuery, platform_user: dict | None
         new_val, platform_user["user_id"], chat_id,
     )
     await callback.answer("✅ Включена" if new_val else "❌ Выключена")
-    callback.data = f"ch_feedback:{chat_id}"
-    await on_feedback_settings(callback, platform_user)
+    await _show_feedback(callback, platform_user, chat_id)
 
 
 @router.callback_query(F.data.startswith("fb_target:"))
@@ -81,8 +84,7 @@ async def on_feedback_target(callback: CallbackQuery, platform_user: dict | None
     )
     label = "Всем администраторам" if new_target == "all" else "Только владельцу"
     await callback.answer(f"Получатель: {label}")
-    callback.data = f"ch_feedback:{chat_id}"
-    await on_feedback_settings(callback, platform_user)
+    await _show_feedback(callback, platform_user, chat_id)
 
 
 # ── Обработка входящих сообщений от участников (форвардинг) ──

@@ -66,6 +66,63 @@ def kb_mailing_control(mailing_id: int, paused: bool, speed: str) -> InlineKeybo
     ])
 
 
+# ── Рассылка для конкретной площадки (из меню площадки) ────────
+@router.callback_query(F.data.startswith("ch_mailing:"))
+async def on_ch_mailing(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    tariff = platform_user["tariff"]
+    if tariff == "free":
+        await callback.answer("Рассылка доступна с тарифа Старт.", show_alert=True)
+        return
+    chat_id = int(callback.data.split(":")[1])
+    ch = await db.fetchrow(
+        "SELECT chat_title FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint",
+        platform_user["user_id"], chat_id,
+    )
+    title = ch["chat_title"] if ch else "Площадка"
+    await callback.message.edit_text(
+        f"📨 <b>Рассылка</b>\n\n"
+        f"Выберите действие ≫",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="➕ Создать рассылку",  callback_data=f"mailing_start:{chat_id}")],
+            [InlineKeyboardButton(text="📅 Запланированные",  callback_data=f"mailing_scheduled:{chat_id}")],
+            [InlineKeyboardButton(text="◀️ Назад",             callback_data=f"channel_by_chat:{chat_id}")],
+        ]),
+    )
+    await callback.answer()
+
+
+# ── Запланированные для конкретного канала ──────────────────────
+@router.callback_query(F.data.startswith("mailing_scheduled:"))
+async def on_mailing_scheduled_channel(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    chat_id = int(callback.data.split(":")[1])
+    owner_id = platform_user["user_id"]
+    rows = await db.fetch(
+        """SELECT id, text, scheduled_at, status FROM mailings
+           WHERE owner_id=$1 AND chat_id=$2::bigint AND status IN ('pending','scheduled')
+           ORDER BY scheduled_at ASC LIMIT 10""",
+        owner_id, chat_id,
+    )
+    if not rows:
+        await callback.answer("Нет запланированных рассылок.", show_alert=True)
+        return
+    text = "📅 <b>Запланированные рассылки</b>\n\n"
+    for r in rows:
+        dt = r["scheduled_at"].strftime("%d.%m %H:%M") if r["scheduled_at"] else "Сейчас"
+        preview = (r["text"] or "")[:40]
+        text += f"• [{dt}] {preview}…\n"
+    await callback.message.edit_text(
+        text,
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="◀️ Назад", callback_data=f"ch_mailing:{chat_id}")],
+        ]),
+    )
+    await callback.answer()
+
+
 # ── Главный экран рассылки ─────────────────────────────────────
 @router.callback_query(F.data == "menu:mailing")
 async def on_mailing_menu(callback: CallbackQuery, platform_user: dict | None):

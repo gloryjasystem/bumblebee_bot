@@ -66,8 +66,18 @@ async def _poll_child_bot(child_bot_id: int, owner_id: int, bot_username: str, r
     retry_delay = 5
 
     try:
-        # Сбрасываем webhook если был установлен
-        await bot.delete_webhook(drop_pending_updates=True)
+        # Сбрасываем webhook — отдельный try чтобы невалидный токен не крашил таску
+        try:
+            await bot.delete_webhook(drop_pending_updates=True)
+        except TelegramUnauthorizedError:
+            logger.error(f"Child bot @{bot_username} (id={child_bot_id}): token revoked — deactivating")
+            await db.execute(
+                "UPDATE bot_chats SET is_active=false WHERE child_bot_id=$1", child_bot_id
+            )
+            return
+        except Exception as e:
+            logger.warning(f"Child bot @{bot_username} delete_webhook error: {e} — continuing anyway")
+
         # Ждём немного чтобы старый инстанс (при редеплое) успел умереть,
         # затем делаем быстрый вызов чтобы "захватить" сессию у старого polling-а
         await asyncio.sleep(3)
@@ -90,6 +100,9 @@ async def _poll_child_bot(child_bot_id: int, owner_id: int, bot_username: str, r
 
             except TelegramUnauthorizedError:
                 logger.error(f"Child bot @{bot_username}: token revoked — stopping")
+                await db.execute(
+                    "UPDATE bot_chats SET is_active=false WHERE child_bot_id=$1", child_bot_id
+                )
                 break
             except asyncio.CancelledError:
                 raise

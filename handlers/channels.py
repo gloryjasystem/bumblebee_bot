@@ -89,10 +89,10 @@ async def on_channel_new(callback: CallbackQuery, state: FSMContext, platform_us
         return
     await state.clear()
     await callback.message.edit_text(
-        "🤖 <b>Твой бот для канала</b>\n\n"
-        "Создай бота — и получи полное управление\n"
+        "🐝 <b>Создай бота</b> — и получи полное управление "
         "каналом или группой в одном месте.\n\n"
-        "❭ Что сможет твой бот:\n\n"
+        "Что сможет твой бот:\n\n"
+        "<blockquote>"
         "🛡 принимать заявки автоматически\n"
         "   и отсеивать спам через капчу\n\n"
         "👋 встречать каждого нового участника\n"
@@ -105,7 +105,8 @@ async def on_channel_new(callback: CallbackQuery, state: FSMContext, platform_us
         "   по языку, имени, фото и символам\n\n"
         "📊 видеть глубокую аналитику активности\n"
         "   и настраивать обработку сообщений в боте\n\n"
-        "👥 удобно управлять командой и многое другое ❮\n\n"
+        "👥 удобно управлять командой и многое другое"
+        "</blockquote>\n\n"
         "🐝 Всё в одном боте — без лишних сервисов.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🚀 Создать бота", callback_data="bot_type:welcome")],
@@ -113,6 +114,7 @@ async def on_channel_new(callback: CallbackQuery, state: FSMContext, platform_us
         ]),
     )
     await callback.answer()
+
 
 
 # ══════════════════════════════════════════════════════════════

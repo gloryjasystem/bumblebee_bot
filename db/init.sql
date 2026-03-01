@@ -191,3 +191,10 @@ CREATE TABLE IF NOT EXISTS audit_log (
 );
 CREATE INDEX IF NOT EXISTS idx_audit_owner_created ON audit_log(owner_id, created_at DESC);
 
+-- ════════════════════════════════════════════════════════════
+-- МИГРАЦИИ (безопасны при повторном запуске)
+-- ════════════════════════════════════════════════════════════
+
+-- Добавить child_bot_id в bot_chats (если не существует)
+ALTER TABLE bot_chats
+    ADD COLUMN IF NOT EXISTS child_bot_id INTEGER REFERENCES child_bots(id) ON DELETE CASCADE;

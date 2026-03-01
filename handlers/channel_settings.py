@@ -38,26 +38,74 @@ class SettingsFSM(StatesGroup):
 # ══════════════════════════════════════════════════════════════
 # Обработка заявок
 # ══════════════════════════════════════════════════════════════
-def kb_requests(ch: dict) -> InlineKeyboardMarkup:
-    auto = ch["autoaccept"]
-    delay = ch["autoaccept_delay"] or 0
-    captcha = ch["captcha_enabled"]
-    chat_id = ch["chat_id"]
 
-    mode = "⏰ Отложенное" if (auto and delay > 0) else ("✅ Авто" if auto else ("🔑 Капча" if captcha else "👤 Вручную"))
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=f"Режим: {mode}", callback_data="noop")],
-        [
-            InlineKeyboardButton(text="✅ Авто-принятие",  callback_data=f"req_mode:{chat_id}:auto"),
-            InlineKeyboardButton(text="⏰ Отложенное",     callback_data=f"req_mode:{chat_id}:delay"),
-        ],
-        [
-            InlineKeyboardButton(text="🔑 Капча",          callback_data=f"req_mode:{chat_id}:captcha"),
-            InlineKeyboardButton(text="👤 Вручную",        callback_data=f"req_mode:{chat_id}:manual"),
-        ],
-        [InlineKeyboardButton(text="⚙️ Настройки капчи",  callback_data=f"captcha_settings:{chat_id}")],
-        [InlineKeyboardButton(text="◀️ Назад",             callback_data=f"channel_by_chat:{chat_id}")],
-    ])
+# Цикл интервалов отложенного принятия (по ТЗ)
+_DELAY_CYCLE = [0, 1, 5, 15, 30, 60, 180, 360, 720, 1080, 1440]
+
+
+def _delay_label(minutes: int) -> str:
+    if minutes == 0:
+        return "ВЫКЛ 🔴"
+    if minutes < 60:
+        return f"{minutes} мин 🟡"
+    hours = minutes // 60
+    return f"{hours} ч 🟡"
+
+
+def _next_delay(current: int) -> int:
+    """Следующий интервал в цикле ТЗ."""
+    try:
+        idx = _DELAY_CYCLE.index(current)
+    except ValueError:
+        idx = 0
+    return _DELAY_CYCLE[(idx + 1) % len(_DELAY_CYCLE)]
+
+
+async def _show_requests_menu(callback: CallbackQuery, platform_user: dict, chat_id: int):
+    """Рендерит экран Обработка заявок по ТЗ."""
+    owner_id = platform_user["user_id"]
+    ch = await db.fetchrow(
+        "SELECT * FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint",
+        owner_id, chat_id,
+    )
+    if not ch:
+        await callback.answer("Площадка не найдена", show_alert=True)
+        return
+
+    # Кол-во ожидающих заявок
+    pending = await db.fetchval(
+        "SELECT COUNT(*) FROM join_requests WHERE owner_id=$1 AND chat_id=$2::bigint AND status='pending'",
+        owner_id, chat_id,
+    ) or 0
+
+    auto   = ch["autoaccept"]
+    delay  = ch["autoaccept_delay"] or 0
+
+    auto_label  = "✅ Автопринятие: ВКЛ 🟢"  if auto else "☑️ Автопринятие: ВЫКЛ 🔴"
+    delay_label = f"⏰ Отложенное: {_delay_label(delay)}"
+
+    text = (
+        "✅ <b>Обработка заявок</b>\n\n"
+        f"🔍 Заявок в очереди: <b>{pending}</b>\n\n"
+        "💡 <i>Автопринятие</i> — заявки одобряются автоматически.\n"
+        "   Бот проверяет каждого по чёрному списку.\n\n"
+        "⏰ <i>Отложенное принятие</i> — заявка принимается\n"
+        "   через заданное время. Используется для прогрева."
+    )
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=auto_label,   callback_data=f"req_auto_toggle:{chat_id}")],
+            [
+                InlineKeyboardButton(text="✔️ Принять всё",   callback_data=f"req_accept_all:{chat_id}"),
+                InlineKeyboardButton(text="✖️ Отклонить всё", callback_data=f"req_decline_all:{chat_id}"),
+            ],
+            [InlineKeyboardButton(text=delay_label,  callback_data=f"req_delay_cycle:{chat_id}")],
+            [InlineKeyboardButton(text="◀️ Назад",    callback_data=f"channel_by_chat:{chat_id}")],
+        ]),
+    )
+    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("ch_requests:"))
@@ -65,114 +113,138 @@ async def on_requests_menu(callback: CallbackQuery, platform_user: dict | None):
     if not platform_user:
         return
     chat_id = int(callback.data.split(":")[1])
+    await _show_requests_menu(callback, platform_user, chat_id)
+
+
+@router.callback_query(F.data.startswith("req_auto_toggle:"))
+async def on_req_auto_toggle(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    chat_id = int(callback.data.split(":")[1])
     ch = await db.fetchrow(
-        "SELECT * FROM bot_chats WHERE owner_id=$1 AND chat_id=$2",
+        "SELECT autoaccept FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint",
         platform_user["user_id"], chat_id,
     )
     if not ch:
         return
-    await callback.message.edit_text(
-        "✅ <b>Обработка заявок</b>\n\n"
-        "Выберите режим принятия новых участников:",
-        reply_markup=kb_requests(dict(ch)),
+    new_auto = not ch["autoaccept"]
+    await db.execute(
+        "UPDATE bot_chats SET autoaccept=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
+        new_auto, platform_user["user_id"], chat_id,
     )
-    await callback.answer()
+    await callback.answer("✅ ВКЛ" if new_auto else "🔴 ВЫКЛ")
+    await _show_requests_menu(callback, platform_user, chat_id)
 
 
-@router.callback_query(F.data.startswith("req_mode:"))
-async def on_req_mode(callback: CallbackQuery, state: FSMContext, platform_user: dict | None):
+@router.callback_query(F.data.startswith("req_delay_cycle:"))
+async def on_req_delay_cycle(callback: CallbackQuery, platform_user: dict | None):
     if not platform_user:
         return
-    parts = callback.data.split(":")
-    chat_id, mode = int(parts[1]), parts[2]
-
-    if mode == "auto":
-        await db.execute(
-            "UPDATE bot_chats SET autoaccept=true, captcha_enabled=false, autoaccept_delay=0 "
-            "WHERE owner_id=$1 AND chat_id=$2",
-            platform_user["user_id"], chat_id,
-        )
-        await callback.answer("✅ Авто-принятие включено")
-        await _refresh_requests(callback, platform_user, chat_id)
-
-    elif mode == "delay":
-        await state.set_state(SettingsFSM.waiting_for_delay)
-        await state.update_data(chat_id=chat_id, owner_id=platform_user["user_id"])
-        await callback.message.edit_text(
-            "⏰ <b>Отложенное принятие</b>\n\n"
-            "Через сколько минут принимать заявку?\n"
-            "Допустимо: от 1 до 1440 минут (24 часа)",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="5 мин",  callback_data="delay_preset:5")],
-                [InlineKeyboardButton(text="30 мин", callback_data="delay_preset:30")],
-                [InlineKeyboardButton(text="60 мин", callback_data="delay_preset:60")],
-                [InlineKeyboardButton(text="🚫 Отмена", callback_data=f"ch_requests:{chat_id}")],
-            ]),
-        )
-        await callback.answer()
-
-    elif mode == "captcha":
-        await db.execute(
-            "UPDATE bot_chats SET autoaccept=false, captcha_enabled=true "
-            "WHERE owner_id=$1 AND chat_id=$2",
-            platform_user["user_id"], chat_id,
-        )
-        await callback.answer("🔑 Капча включена")
-        await _refresh_requests(callback, platform_user, chat_id)
-
-    elif mode == "manual":
-        await db.execute(
-            "UPDATE bot_chats SET autoaccept=false, captcha_enabled=false "
-            "WHERE owner_id=$1 AND chat_id=$2",
-            platform_user["user_id"], chat_id,
-        )
-        await callback.answer("👤 Ручной режим включён")
-        await _refresh_requests(callback, platform_user, chat_id)
-
-
-@router.callback_query(F.data.startswith("delay_preset:"))
-async def on_delay_preset(callback: CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    minutes = int(callback.data.split(":")[1])
-    owner_id = data.get("owner_id")
-    chat_id = data.get("chat_id")
-    await db.execute(
-        "UPDATE bot_chats SET autoaccept=true, captcha_enabled=false, autoaccept_delay=$1 "
-        "WHERE owner_id=$2 AND chat_id=$3",
-        minutes, owner_id, chat_id,
-    )
-    await state.clear()
-    await callback.answer(f"⏰ Отложенное: {minutes} мин")
-    await _refresh_requests(callback, {"user_id": owner_id}, chat_id)
-
-
-@router.message(SettingsFSM.waiting_for_delay)
-async def on_delay_input(message: Message, state: FSMContext):
-    data = await state.get_data()
-    try:
-        minutes = max(1, min(1440, int(message.text.strip())))
-    except ValueError:
-        await message.answer("❌ Введите число от 1 до 1440")
-        return
-    await db.execute(
-        "UPDATE bot_chats SET autoaccept=true, captcha_enabled=false, autoaccept_delay=$1 "
-        "WHERE owner_id=$2 AND chat_id=$3",
-        minutes, data["owner_id"], data["chat_id"],
-    )
-    await state.clear()
-    await message.answer(f"✅ Отложенное принятие: {minutes} мин")
-
-
-async def _refresh_requests(callback: CallbackQuery, platform_user: dict, chat_id: int):
+    chat_id = int(callback.data.split(":")[1])
     ch = await db.fetchrow(
-        "SELECT * FROM bot_chats WHERE owner_id=$1 AND chat_id=$2",
+        "SELECT autoaccept_delay FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint",
         platform_user["user_id"], chat_id,
     )
-    if ch:
-        await callback.message.edit_text(
-            "✅ <b>Обработка заявок</b>\n\nВыберите режим принятия новых участников:",
-            reply_markup=kb_requests(dict(ch)),
-        )
+    current = ch["autoaccept_delay"] or 0 if ch else 0
+    new_delay = _next_delay(current)
+    await db.execute(
+        "UPDATE bot_chats SET autoaccept_delay=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
+        new_delay, platform_user["user_id"], chat_id,
+    )
+    await callback.answer(f"⏰ {_delay_label(new_delay)}")
+    await _show_requests_menu(callback, platform_user, chat_id)
+
+
+@router.callback_query(F.data.startswith("req_accept_all:"))
+async def on_req_accept_all(callback: CallbackQuery, bot: Bot, platform_user: dict | None):
+    if not platform_user:
+        return
+    chat_id = int(callback.data.split(":")[1])
+    owner_id = platform_user["user_id"]
+
+    # Получаем токен дочернего бота
+    bot_row = await db.fetchrow(
+        """SELECT cb.token_encrypted FROM child_bots cb
+           JOIN bot_chats bc ON bc.child_bot_id = cb.id
+           WHERE bc.owner_id=$1 AND bc.chat_id=$2::bigint AND bc.is_active=true""",
+        owner_id, chat_id,
+    )
+
+    pending = await db.fetch(
+        "SELECT user_id FROM join_requests WHERE owner_id=$1 AND chat_id=$2::bigint AND status='pending'",
+        owner_id, chat_id,
+    )
+    if not pending:
+        await callback.answer("Нет заявок в очереди", show_alert=True)
+        return
+
+    from aiogram import Bot as AioBot
+    from services.security import decrypt_token
+    child_bot = AioBot(token=decrypt_token(bot_row["token_encrypted"])) if bot_row else bot
+
+    approved = 0
+    for row in pending:
+        try:
+            await child_bot.approve_chat_join_request(chat_id, row["user_id"])
+            approved += 1
+        except Exception:
+            pass
+    if bot_row:
+        await child_bot.session.close()
+
+    await db.execute(
+        "UPDATE join_requests SET status='approved', resolved_at=now() "
+        "WHERE owner_id=$1 AND chat_id=$2::bigint AND status='pending'",
+        owner_id, chat_id,
+    )
+    await callback.answer(f"✔️ Принято: {approved}", show_alert=True)
+    await _show_requests_menu(callback, platform_user, chat_id)
+
+
+@router.callback_query(F.data.startswith("req_decline_all:"))
+async def on_req_decline_all(callback: CallbackQuery, bot: Bot, platform_user: dict | None):
+    if not platform_user:
+        return
+    chat_id = int(callback.data.split(":")[1])
+    owner_id = platform_user["user_id"]
+
+    bot_row = await db.fetchrow(
+        """SELECT cb.token_encrypted FROM child_bots cb
+           JOIN bot_chats bc ON bc.child_bot_id = cb.id
+           WHERE bc.owner_id=$1 AND bc.chat_id=$2::bigint AND bc.is_active=true""",
+        owner_id, chat_id,
+    )
+
+    pending = await db.fetch(
+        "SELECT user_id FROM join_requests WHERE owner_id=$1 AND chat_id=$2::bigint AND status='pending'",
+        owner_id, chat_id,
+    )
+    if not pending:
+        await callback.answer("Нет заявок в очереди", show_alert=True)
+        return
+
+    from aiogram import Bot as AioBot
+    from services.security import decrypt_token
+    child_bot = AioBot(token=decrypt_token(bot_row["token_encrypted"])) if bot_row else bot
+
+    declined = 0
+    for row in pending:
+        try:
+            await child_bot.decline_chat_join_request(chat_id, row["user_id"])
+            declined += 1
+        except Exception:
+            pass
+    if bot_row:
+        await child_bot.session.close()
+
+    await db.execute(
+        "UPDATE join_requests SET status='declined', resolved_at=now() "
+        "WHERE owner_id=$1 AND chat_id=$2::bigint AND status='pending'",
+        owner_id, chat_id,
+    )
+    await callback.answer(f"✖️ Отклонено: {declined}", show_alert=True)
+    await _show_requests_menu(callback, platform_user, chat_id)
+
 
 
 # ══════════════════════════════════════════════════════════════
@@ -195,7 +267,7 @@ async def on_captcha_settings(callback: CallbackQuery, platform_user: dict | Non
         return
     chat_id = int(callback.data.split(":")[1])
     ch = await db.fetchrow(
-        "SELECT * FROM bot_chats WHERE owner_id=$1 AND chat_id=$2",
+        "SELECT * FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint",
         platform_user["user_id"], chat_id,
     )
     if not ch:
@@ -220,12 +292,12 @@ async def on_captcha_delete_toggle(callback: CallbackQuery, platform_user: dict 
         return
     chat_id = int(callback.data.split(":")[1])
     ch = await db.fetchrow(
-        "SELECT captcha_delete FROM bot_chats WHERE owner_id=$1 AND chat_id=$2",
+        "SELECT captcha_delete FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint",
         platform_user["user_id"], chat_id,
     )
     new_val = not (ch["captcha_delete"] if ch else False)
     await db.execute(
-        "UPDATE bot_chats SET captcha_delete=$1 WHERE owner_id=$2 AND chat_id=$3",
+        "UPDATE bot_chats SET captcha_delete=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
         new_val, platform_user["user_id"], chat_id,
     )
     await callback.answer("✅ Изменено")
@@ -260,7 +332,7 @@ async def on_timer_preset(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     secs = int(callback.data.split(":")[1])
     await db.execute(
-        "UPDATE bot_chats SET captcha_timer=$1 WHERE owner_id=$2 AND chat_id=$3",
+        "UPDATE bot_chats SET captcha_timer=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
         secs, data["owner_id"], data["chat_id"],
     )
     await state.clear()
@@ -294,7 +366,7 @@ async def on_captcha_text_input(message: Message, state: FSMContext):
     data = await state.get_data()
     text = sanitize(message.text, max_len=512)
     await db.execute(
-        "UPDATE bot_chats SET captcha_text=$1 WHERE owner_id=$2 AND chat_id=$3",
+        "UPDATE bot_chats SET captcha_text=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
         text, data["owner_id"], data["chat_id"],
     )
     await state.clear()
@@ -322,7 +394,7 @@ async def on_messages_menu(callback: CallbackQuery, platform_user: dict | None):
         return
     chat_id = int(callback.data.split(":")[1])
     ch = await db.fetchrow(
-        "SELECT * FROM bot_chats WHERE owner_id=$1 AND chat_id=$2",
+        "SELECT * FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint",
         platform_user["user_id"], chat_id,
     )
     if not ch:
@@ -344,7 +416,7 @@ async def on_welcome_set(callback: CallbackQuery, state: FSMContext, platform_us
     await state.update_data(chat_id=int(chat_id), owner_id=platform_user["user_id"])
 
     ch = await db.fetchrow(
-        "SELECT welcome_text FROM bot_chats WHERE owner_id=$1 AND chat_id=$2",
+        "SELECT welcome_text FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint",
         platform_user["user_id"], int(chat_id),
     )
     current = f"\n\nТекущий текст:\n<i>{ch['welcome_text'][:200]}</i>" if ch and ch.get("welcome_text") else ""
@@ -366,7 +438,7 @@ async def on_welcome_input(message: Message, state: FSMContext):
     data = await state.get_data()
     text = sanitize(message.text or message.caption or "", max_len=1024)
     await db.execute(
-        "UPDATE bot_chats SET welcome_text=$1 WHERE owner_id=$2 AND chat_id=$3",
+        "UPDATE bot_chats SET welcome_text=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
         text, data["owner_id"], data["chat_id"],
     )
     await state.clear()
@@ -379,7 +451,7 @@ async def on_welcome_del(callback: CallbackQuery, platform_user: dict | None):
         return
     chat_id = int(callback.data.split(":")[1])
     await db.execute(
-        "UPDATE bot_chats SET welcome_text=NULL WHERE owner_id=$1 AND chat_id=$2",
+        "UPDATE bot_chats SET welcome_text=NULL WHERE owner_id=$1 AND chat_id=$2::bigint",
         platform_user["user_id"], chat_id,
     )
     await callback.answer("✅ Приветствие удалено")
@@ -412,7 +484,7 @@ async def on_farewell_input(message: Message, state: FSMContext):
     data = await state.get_data()
     text = sanitize(message.text or "", max_len=512)
     await db.execute(
-        "UPDATE bot_chats SET farewell_text=$1 WHERE owner_id=$2 AND chat_id=$3",
+        "UPDATE bot_chats SET farewell_text=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
         text, data["owner_id"], data["chat_id"],
     )
     await state.clear()
@@ -425,7 +497,7 @@ async def on_farewell_del(callback: CallbackQuery, platform_user: dict | None):
         return
     chat_id = int(callback.data.split(":")[1])
     await db.execute(
-        "UPDATE bot_chats SET farewell_text=NULL WHERE owner_id=$1 AND chat_id=$2",
+        "UPDATE bot_chats SET farewell_text=NULL WHERE owner_id=$1 AND chat_id=$2::bigint",
         platform_user["user_id"], chat_id,
     )
     await callback.answer("✅ Прощание удалено")
@@ -465,7 +537,7 @@ async def on_reactions_set(callback: CallbackQuery, platform_user: dict | None):
         return
     chat_id = int(callback.data.split(":")[1])
     ch = await db.fetchrow(
-        "SELECT reaction_emojis FROM bot_chats WHERE owner_id=$1 AND chat_id=$2",
+        "SELECT reaction_emojis FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint",
         platform_user["user_id"], chat_id,
     )
     current = list(ch["reaction_emojis"] or []) if ch else []
@@ -486,7 +558,7 @@ async def on_reaction_toggle(callback: CallbackQuery, platform_user: dict | None
     max_r = 3 if platform_user["tariff"] in ("pro", "business") else 1
 
     ch = await db.fetchrow(
-        "SELECT reaction_emojis FROM bot_chats WHERE owner_id=$1 AND chat_id=$2",
+        "SELECT reaction_emojis FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint",
         platform_user["user_id"], chat_id,
     )
     current = list(ch["reaction_emojis"] or []) if ch else []
@@ -500,7 +572,7 @@ async def on_reaction_toggle(callback: CallbackQuery, platform_user: dict | None
         current.append(emoji)
 
     await db.execute(
-        "UPDATE bot_chats SET reaction_emojis=$1::text[] WHERE owner_id=$2 AND chat_id=$3",
+        "UPDATE bot_chats SET reaction_emojis=$1::text[] WHERE owner_id=$2 AND chat_id=$3::bigint",
         current, platform_user["user_id"], chat_id,
     )
     await callback.answer()
@@ -553,12 +625,12 @@ async def on_filter_rtl(callback: CallbackQuery, platform_user: dict | None):
         return
     chat_id = int(callback.data.split(":")[1])
     ch = await db.fetchrow(
-        "SELECT filter_rtl FROM bot_chats WHERE owner_id=$1 AND chat_id=$2",
+        "SELECT filter_rtl FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint",
         platform_user["user_id"], chat_id,
     )
     new_val = not (ch["filter_rtl"] if ch else False)
     await db.execute(
-        "UPDATE bot_chats SET filter_rtl=$1 WHERE owner_id=$2 AND chat_id=$3",
+        "UPDATE bot_chats SET filter_rtl=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
         new_val, platform_user["user_id"], chat_id,
     )
     await callback.answer("RTL-фильтр: " + ("✅ Вкл" if new_val else "☐ Выкл"))
@@ -570,12 +642,12 @@ async def on_filter_hier(callback: CallbackQuery, platform_user: dict | None):
         return
     chat_id = int(callback.data.split(":")[1])
     ch = await db.fetchrow(
-        "SELECT filter_hieroglyph FROM bot_chats WHERE owner_id=$1 AND chat_id=$2",
+        "SELECT filter_hieroglyph FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint",
         platform_user["user_id"], chat_id,
     )
     new_val = not (ch["filter_hieroglyph"] if ch else False)
     await db.execute(
-        "UPDATE bot_chats SET filter_hieroglyph=$1 WHERE owner_id=$2 AND chat_id=$3",
+        "UPDATE bot_chats SET filter_hieroglyph=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
         new_val, platform_user["user_id"], chat_id,
     )
     await callback.answer("Иероглифы: " + ("✅ Вкл" if new_val else "☐ Выкл"))
@@ -587,12 +659,12 @@ async def on_filter_photo(callback: CallbackQuery, platform_user: dict | None):
         return
     chat_id = int(callback.data.split(":")[1])
     ch = await db.fetchrow(
-        "SELECT filter_no_photo FROM bot_chats WHERE owner_id=$1 AND chat_id=$2",
+        "SELECT filter_no_photo FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint",
         platform_user["user_id"], chat_id,
     )
     new_val = not (ch["filter_no_photo"] if ch else False)
     await db.execute(
-        "UPDATE bot_chats SET filter_no_photo=$1 WHERE owner_id=$2 AND chat_id=$3",
+        "UPDATE bot_chats SET filter_no_photo=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
         new_val, platform_user["user_id"], chat_id,
     )
     await callback.answer("Без фото: " + ("✅ Вкл" if new_val else "☐ Выкл"))
@@ -605,7 +677,7 @@ async def on_lang_filters(callback: CallbackQuery, platform_user: dict | None):
         return
     chat_id = int(callback.data.split(":")[1])
     blocked = await db.fetch(
-        "SELECT language_code FROM language_filters WHERE owner_id=$1 AND chat_id=$2",
+        "SELECT language_code FROM language_filters WHERE owner_id=$1 AND chat_id=$2::bigint",
         platform_user["user_id"], chat_id,
     )
     blocked_codes = {r["language_code"] for r in blocked}
@@ -636,12 +708,12 @@ async def on_lang_toggle(callback: CallbackQuery, platform_user: dict | None):
     chat_id, code = int(parts[1]), parts[2]
 
     exists = await db.fetchrow(
-        "SELECT 1 FROM language_filters WHERE owner_id=$1 AND chat_id=$2 AND language_code=$3",
+        "SELECT 1 FROM language_filters WHERE owner_id=$1 AND chat_id=$2::bigint AND language_code=$3",
         platform_user["user_id"], chat_id, code,
     )
     if exists:
         await db.execute(
-            "DELETE FROM language_filters WHERE owner_id=$1 AND chat_id=$2 AND language_code=$3",
+            "DELETE FROM language_filters WHERE owner_id=$1 AND chat_id=$2::bigint AND language_code=$3",
             platform_user["user_id"], chat_id, code,
         )
         await callback.answer(f"✅ {LANGUAGE_OPTIONS.get(code,'?')} разрешён")
@@ -668,26 +740,26 @@ async def on_ch_stats(callback: CallbackQuery, platform_user: dict | None):
     owner_id = platform_user["user_id"]
 
     total   = await db.fetchval(
-        "SELECT COUNT(*) FROM bot_users WHERE owner_id=$1 AND chat_id=$2 AND is_active=true",
+        "SELECT COUNT(*) FROM bot_users WHERE owner_id=$1 AND chat_id=$2::bigint AND is_active=true",
         owner_id, chat_id,
     )
     active_bot = await db.fetchval(
-        "SELECT COUNT(*) FROM bot_users WHERE owner_id=$1 AND chat_id=$2 "
+        "SELECT COUNT(*) FROM bot_users WHERE owner_id=$1 AND chat_id=$2::bigint "
         "AND is_active=true AND bot_activated=true",
         owner_id, chat_id,
     )
     premium = await db.fetchval(
-        "SELECT COUNT(*) FROM bot_users WHERE owner_id=$1 AND chat_id=$2 "
+        "SELECT COUNT(*) FROM bot_users WHERE owner_id=$1 AND chat_id=$2::bigint "
         "AND is_active=true AND is_premium=true",
         owner_id, chat_id,
     )
     today = await db.fetchval(
-        "SELECT COUNT(*) FROM bot_users WHERE owner_id=$1 AND chat_id=$2 "
+        "SELECT COUNT(*) FROM bot_users WHERE owner_id=$1 AND chat_id=$2::bigint "
         "AND joined_at > now() - interval '24 hours'",
         owner_id, chat_id,
     )
     week = await db.fetchval(
-        "SELECT COUNT(*) FROM bot_users WHERE owner_id=$1 AND chat_id=$2 "
+        "SELECT COUNT(*) FROM bot_users WHERE owner_id=$1 AND chat_id=$2::bigint "
         "AND joined_at > now() - interval '7 days'",
         owner_id, chat_id,
     )

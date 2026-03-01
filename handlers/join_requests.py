@@ -85,21 +85,26 @@ async def on_join_request(event: ChatJoinRequest, bot: Bot):
         await _log_action(owner_id, event.chat.id, "reject_hieroglyph", user.id)
         return
 
-    # 5. Автопринятие / капча / отложенное
+    # 5. Автопринятие / капча / отложенное / ручное
     if settings_row["autoaccept"]:
         delay = settings_row["autoaccept_delay"] or 0
         if delay > 0:
-            await asyncio.sleep(delay * 60)
-        await event.approve()
-        await _register_user(owner_id, event.chat.id, user)
-        await _send_welcome(bot, event.chat.id, user, settings_row)
-        await _log_action(owner_id, event.chat.id, "approve", user.id)
+            # Сохраняем заявку и обрабатываем в фоне через asyncio.sleep
+            await _save_pending(owner_id, event.chat.id, user)
+            asyncio.create_task(_delayed_approve(event, owner_id, delay))
+        else:
+            await event.approve()
+            await _register_user(owner_id, event.chat.id, user)
+            await _send_welcome(bot, event.chat.id, user, settings_row)
+            await _log_action(owner_id, event.chat.id, "approve", user.id)
     elif settings_row["captcha_enabled"]:
+        await _save_pending(owner_id, event.chat.id, user)
         await _send_captcha(bot, event, settings_row)
     else:
-        await event.approve()
-        await _register_user(owner_id, event.chat.id, user)
-        await _send_welcome(bot, event.chat.id, user, settings_row)
+        # Ручной режим — сохраняем в очередь для ревью владельцем
+        await _save_pending(owner_id, event.chat.id, user)
+        logger.info(f"[JOIN] Request from {user.id} saved for manual review in {event.chat.id}")
+
 
 
 # ── ОТКРЫТЫЙ КАНАЛ: ChatMemberUpdated ─────────────────────────
@@ -159,6 +164,42 @@ async def on_member_update(event: ChatMemberUpdated, bot: Bot):
                     await bot.send_message(user.id, settings_row["farewell_text"])
                 except Exception:
                     pass
+
+
+async def _save_pending(owner_id: int, chat_id: int, user):
+    """Сохраняет заявку в join_requests со статусом pending."""
+    await db.execute(
+        """
+        INSERT INTO join_requests (owner_id, chat_id, user_id, username, first_name)
+        VALUES ($1, $2, $3, $4, $5)
+        ON CONFLICT (owner_id, chat_id, user_id)
+        DO UPDATE SET status='pending', requested_at=now(), resolved_at=NULL
+        """,
+        owner_id, chat_id, user.id, user.username,
+        user.first_name or "",
+    )
+
+
+async def _delayed_approve(event: ChatJoinRequest, owner_id: int, delay_minutes: int):
+    """Принимает заявку через delay_minutes минут (в фоне)."""
+    await asyncio.sleep(delay_minutes * 60)
+    try:
+        await event.approve()
+        await db.execute(
+            "UPDATE join_requests SET status='approved', resolved_at=now() "
+            "WHERE owner_id=$1 AND chat_id=$2 AND user_id=$3",
+            owner_id, event.chat.id, event.from_user.id,
+        )
+        settings_row = await _get_owner(event.chat.id)
+        if settings_row:
+            await _register_user(owner_id, event.chat.id, event.from_user)
+    except Exception as e:
+        logger.debug(f"[DELAYED] approve failed for {event.from_user.id}: {e}")
+        await db.execute(
+            "UPDATE join_requests SET status='expired', resolved_at=now() "
+            "WHERE owner_id=$1 AND chat_id=$2 AND user_id=$3",
+            owner_id, event.chat.id, event.from_user.id,
+        )
 
 
 # ── Вспомогательные функции ───────────────────────────────────

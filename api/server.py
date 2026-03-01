@@ -53,6 +53,12 @@ def create_app(bot: Bot, dp: Dispatcher) -> FastAPI:
         setup_scheduler(bot).start()
         logger.info("Scheduler started")
 
+        # Дочерние боты — запускаем polling для каждого
+        from scheduler.child_bot_runner import init_runner, start_all_child_bots
+        init_runner(bot)
+        await start_all_child_bots()
+        logger.info("Child bot runner started")
+
         # Устанавливаем webhook (SERVER_URL уже известен)
         from config import settings
         if settings.server_url:

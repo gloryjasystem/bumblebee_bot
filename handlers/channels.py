@@ -148,6 +148,23 @@ async def on_token_received(message: Message, state: FSMContext, platform_user: 
         await state.clear()
         return
 
+    # Запускаем polling для нового дочернего бота (слушает my_chat_member и join requests)
+    try:
+        from scheduler.child_bot_runner import start_child_bot
+        bot_row = await db.fetchrow(
+            "SELECT token_encrypted FROM child_bots WHERE id=$1",
+            bot_info["id"],
+        )
+        if bot_row:
+            await start_child_bot(
+                bot_info["id"],
+                platform_user["user_id"],
+                bot_info["bot_username"],
+                bot_row["token_encrypted"],
+            )
+    except Exception as e:
+        logger.warning(f"Could not start child bot runner: {e}")
+
     # Сохраняем child_bot_id в state для следующих шагов
     await state.update_data(
         child_bot_id=bot_info["id"],
@@ -156,6 +173,7 @@ async def on_token_received(message: Message, state: FSMContext, platform_user: 
     await state.set_state(ChannelFSM.waiting_for_chat_verify)
 
     username = bot_info["bot_username"]
+
     deep_channel = f"https://t.me/{username}?startchannel=true&admin=post_messages+delete_messages+invite_users+restrict_members+pin_messages"
     deep_group   = f"https://t.me/{username}?startgroup=true&admin=post_messages+delete_messages+invite_users+restrict_members+pin_messages"
 

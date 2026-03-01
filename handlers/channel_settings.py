@@ -56,7 +56,7 @@ def kb_requests(ch: dict) -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="👤 Вручную",        callback_data=f"req_mode:{chat_id}:manual"),
         ],
         [InlineKeyboardButton(text="⚙️ Настройки капчи",  callback_data=f"captcha_settings:{chat_id}")],
-        [InlineKeyboardButton(text="◀️ Назад",             callback_data=f"channel:{chat_id}")],
+        [InlineKeyboardButton(text="◀️ Назад",             callback_data=f"channel_by_chat:{chat_id}")],
     ])
 
 
@@ -312,7 +312,7 @@ def kb_messages(ch: dict) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text=f"👋 Приветствие — {has_welcome}", callback_data=f"welcome_set:{chat_id}")],
         [InlineKeyboardButton(text=f"👋 Прощание — {has_farewell}",  callback_data=f"farewell_set:{chat_id}")],
         [InlineKeyboardButton(text="😄 Реакции на сообщения",         callback_data=f"reactions_set:{chat_id}")],
-        [InlineKeyboardButton(text="◀️ Назад",                        callback_data=f"channel:{chat_id}")],
+        [InlineKeyboardButton(text="◀️ Назад",                        callback_data=f"channel_by_chat:{chat_id}")],
     ])
 
 
@@ -533,7 +533,7 @@ def kb_protection(ch: dict, blocked_langs: list) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text=f"{hiero} Фильтр иероглифов",      callback_data=f"filter_hier:{chat_id}")],
         [InlineKeyboardButton(text=f"{no_photo} Фильтр без фото",     callback_data=f"filter_photo:{chat_id}")],
         [InlineKeyboardButton(text="🌍 Языковые фильтры",              callback_data=f"lang_filters:{chat_id}")],
-        [InlineKeyboardButton(text="◀️ Назад",                         callback_data=f"channel:{chat_id}")],
+        [InlineKeyboardButton(text="◀️ Назад",                         callback_data=f"channel_by_chat:{chat_id}")],
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -617,7 +617,7 @@ async def on_lang_filters(callback: CallbackQuery, platform_user: dict | None):
             text=f"{mark} {label}",
             callback_data=f"lang_toggle:{chat_id}:{code}",
         )])
-    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"channel:{chat_id}")])
+    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"channel_by_chat:{chat_id}")])
 
     await callback.message.edit_text(
         "🌍 <b>Языковые фильтры</b>\n\n"
@@ -705,7 +705,7 @@ async def on_ch_stats(callback: CallbackQuery, platform_user: dict | None):
         f"└ За 7 дней: {week:,}\n\n"
         f"🛡 Чёрный список (всего): {bl_count:,}",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="◀️ Назад", callback_data=f"channel:{chat_id}")]
+            [InlineKeyboardButton(text="◀️ Назад", callback_data=f"channel_by_chat:{chat_id}")]
         ]),
     )
     await callback.answer()

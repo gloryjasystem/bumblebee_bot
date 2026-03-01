@@ -179,7 +179,7 @@ async def on_bl_sweep(callback: CallbackQuery, platform_user: dict | None):
     owner_id = platform_user["user_id"]
 
     count = await db.fetchval(
-        "SELECT COUNT(*) FROM bot_users WHERE owner_id=$1 AND chat_id=$2 AND is_active=true",
+        "SELECT COUNT(*) FROM bot_users WHERE owner_id=$1 AND chat_id=$2::bigint AND is_active=true",
         owner_id, chat_id,
     )
     violators = await db.fetch(
@@ -188,7 +188,7 @@ async def on_bl_sweep(callback: CallbackQuery, platform_user: dict | None):
         INNER JOIN blacklist bl ON bl.owner_id=bu.owner_id
           AND ((bl.user_id IS NOT NULL AND bl.user_id=bu.user_id)
                OR (bl.username IS NOT NULL AND bl.username=bu.username))
-        WHERE bu.owner_id=$1 AND bu.chat_id=$2 AND bu.is_active=true
+        WHERE bu.owner_id=$1 AND bu.chat_id=$2::bigint AND bu.is_active=true
         """,
         owner_id, chat_id,
     )

@@ -75,7 +75,7 @@ async def _poll_child_bot(child_bot_id: int, owner_id: int, bot_username: str, r
                 updates = await bot.get_updates(
                     offset=offset,
                     timeout=30,
-                    allowed_updates=["my_chat_member", "chat_join_request", "message"],
+                    allowed_updates=["my_chat_member", "chat_join_request", "chat_member", "message"],
                 )
                 for update in updates:
                     offset = update.update_id + 1
@@ -106,9 +106,13 @@ async def _handle_child_update(
         if update.my_chat_member:
             await _handle_my_chat_member(bot, child_bot_id, owner_id, bot_username, update.my_chat_member)
 
-        # ── Заявка на вступление ──────────────────────────────
+        # ── Заявка на вступление (закрытый канал) ─────────────
         elif update.chat_join_request:
             await _handle_join_request(bot, child_bot_id, update.chat_join_request)
+
+        # ── Пользователь вступил/вышел (открытый канал/группа) ─
+        elif update.chat_member:
+            await _handle_chat_member(bot, child_bot_id, update.chat_member)
 
     except Exception as e:
         logger.error(f"Child bot @{bot_username} update error: {e}")
@@ -194,18 +198,18 @@ async def _handle_join_request(bot: Bot, child_bot_id: int, event: ChatJoinReque
     if not chat_settings:
         return
 
-    # Записываем участника в bot_users
+    owner_id = chat_settings["owner_id"]
+
+    # Сохраняем заявку в join_requests (очередь)
     await db.execute(
         """
-        INSERT INTO bot_users (owner_id, chat_id, user_id, username, first_name,
-                               language_code, is_premium, joined_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, now())
-        ON CONFLICT (owner_id, chat_id, user_id) DO UPDATE
-            SET is_active=true, left_at=NULL
+        INSERT INTO join_requests (owner_id, chat_id, user_id, username, first_name)
+        VALUES ($1, $2, $3, $4, $5)
+        ON CONFLICT (owner_id, chat_id, user_id)
+        DO UPDATE SET status='pending', requested_at=now(), resolved_at=NULL
         """,
-        chat_settings["owner_id"], chat_id, user.id,
-        user.username, user.first_name, user.language_code,
-        getattr(user, "is_premium", False),
+        owner_id, chat_id, user.id,
+        user.username or "", user.first_name or "",
     )
 
     autoaccept = chat_settings["autoaccept"]
@@ -217,6 +221,25 @@ async def _handle_join_request(bot: Bot, child_bot_id: int, event: ChatJoinReque
             await asyncio.sleep(delay * 60)
         try:
             await bot.approve_chat_join_request(chat_id, user.id)
+            # Регистрируем в bot_users после одобрения
+            await db.execute(
+                """
+                INSERT INTO bot_users (owner_id, chat_id, user_id, username, first_name,
+                                       language_code, is_premium, joined_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, now())
+                ON CONFLICT (owner_id, chat_id, user_id) DO UPDATE
+                    SET is_active=true, left_at=NULL,
+                        username=EXCLUDED.username
+                """,
+                owner_id, chat_id, user.id,
+                user.username, user.first_name, user.language_code,
+                getattr(user, "is_premium", False),
+            )
+            await db.execute(
+                "UPDATE join_requests SET status='approved', resolved_at=now() "
+                "WHERE owner_id=$1 AND chat_id=$2 AND user_id=$3",
+                owner_id, chat_id, user.id,
+            )
             # Приветственное сообщение
             welcome = chat_settings.get("welcome_text")
             if welcome:
@@ -226,4 +249,61 @@ async def _handle_join_request(bot: Bot, child_bot_id: int, event: ChatJoinReque
                     pass  # Пользователь не открыл диалог с ботом
         except Exception as e:
             logger.warning(f"approve join request error: {e}")
-    # Если autoaccept=false — заявка ждёт ручного одобрения (в Telegram)
+    # Если autoaccept=false — заявка остаётся в очереди со статусом pending
+
+
+async def _handle_chat_member(bot: Bot, child_bot_id: int, event: ChatMemberUpdated):
+    """Пользователь вступил или вышел из открытого канала/группы."""
+    new_status = event.new_chat_member.status
+    old_status = event.old_chat_member.status if event.old_chat_member else None
+    user = event.new_chat_member.user
+    chat_id = event.chat.id
+
+    # Получаем настройки площадки
+    chat_settings = await db.fetchrow(
+        """
+        SELECT owner_id, welcome_text
+        FROM bot_chats
+        WHERE child_bot_id=$1 AND chat_id=$2 AND is_active=true
+        """,
+        child_bot_id, chat_id,
+    )
+    if not chat_settings:
+        return
+
+    owner_id = chat_settings["owner_id"]
+
+    # ── Пользователь вступил ──────────────────────────────────
+    if new_status == "member" and old_status in (None, "left", "kicked"):
+        await db.execute(
+            """
+            INSERT INTO bot_users (owner_id, chat_id, user_id, username, first_name,
+                                   language_code, is_premium, joined_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, now())
+            ON CONFLICT (owner_id, chat_id, user_id) DO UPDATE
+                SET is_active=true, left_at=NULL,
+                    username=EXCLUDED.username,
+                    first_name=EXCLUDED.first_name
+            """,
+            owner_id, chat_id, user.id,
+            user.username, user.first_name, user.language_code,
+            getattr(user, "is_premium", False),
+        )
+        logger.info(f"[MEMBER] User {user.id} joined chat {chat_id} (owner={owner_id})")
+
+        # Приветственное сообщение (если юзер открыл бота)
+        welcome = chat_settings.get("welcome_text")
+        if welcome:
+            try:
+                await bot.send_message(user.id, welcome, parse_mode="HTML")
+            except Exception:
+                pass  # Пользователь не начал диалог с ботом
+
+    # ── Пользователь вышел/забанен ────────────────────────────
+    elif new_status in ("left", "kicked") and old_status == "member":
+        await db.execute(
+            "UPDATE bot_users SET is_active=false, left_at=now() "
+            "WHERE owner_id=$1 AND chat_id=$2 AND user_id=$3",
+            owner_id, chat_id, user.id,
+        )
+        logger.info(f"[MEMBER] User {user.id} left chat {chat_id} (owner={owner_id})")

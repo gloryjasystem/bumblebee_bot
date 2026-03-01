@@ -15,34 +15,48 @@ CREATE TABLE IF NOT EXISTS platform_users (
     created_at      TIMESTAMPTZ DEFAULT now()
 );
 
--- 2. Подключённые площадки (каналы и группы)
+-- 2. Дочерние боты пользователей (созданные через BotFather)
+CREATE TABLE IF NOT EXISTS child_bots (
+    id              SERIAL PRIMARY KEY,
+    owner_id        BIGINT REFERENCES platform_users(user_id) ON DELETE CASCADE,
+    bot_id          BIGINT NOT NULL,              -- TG id бота
+    bot_username    VARCHAR(64) NOT NULL,         -- @username без @
+    bot_name        VARCHAR(128) NOT NULL,        -- display name
+    token_encrypted TEXT NOT NULL,               -- Fernet-зашифрованный токен
+    created_at      TIMESTAMPTZ DEFAULT now(),
+    UNIQUE(owner_id, bot_id)
+);
+
+-- 3. Подключённые площадки (каналы и группы)
 CREATE TABLE IF NOT EXISTS bot_chats (
     id              SERIAL PRIMARY KEY,
     owner_id        BIGINT REFERENCES platform_users(user_id) ON DELETE CASCADE,
+    child_bot_id    INTEGER REFERENCES child_bots(id) ON DELETE CASCADE,
     chat_id         BIGINT NOT NULL,
     chat_title      VARCHAR(256),
     chat_type       VARCHAR(16),               -- channel | supergroup | group
     is_active       BOOLEAN DEFAULT true,
     captcha_enabled BOOLEAN DEFAULT false,
-    captcha_type    VARCHAR(16) DEFAULT 'button', -- button
+    captcha_type    VARCHAR(16) DEFAULT 'button',
     captcha_text    TEXT,
-    captcha_timer   INTEGER DEFAULT 60,        -- секунды
-    captcha_delete  BOOLEAN DEFAULT false,     -- авто-удаление сообщения капчи (Про+)
+    captcha_timer   INTEGER DEFAULT 60,
+    captcha_delete  BOOLEAN DEFAULT false,
     welcome_text    TEXT,
-    welcome_media   TEXT,                      -- file_id
+    welcome_media   TEXT,
     farewell_text   TEXT,
     autoaccept      BOOLEAN DEFAULT false,
-    autoaccept_delay INTEGER DEFAULT 0,        -- минуты
+    autoaccept_delay INTEGER DEFAULT 0,
     filter_rtl      BOOLEAN DEFAULT false,
     filter_hieroglyph BOOLEAN DEFAULT false,
     filter_no_photo  BOOLEAN DEFAULT false,
-    reaction_emojis TEXT[],                    -- массив эмодзи, до 3
+    reaction_emojis TEXT[],
     feedback_enabled BOOLEAN DEFAULT false,
-    feedback_target  VARCHAR(16) DEFAULT 'owner', -- owner | all
+    feedback_target  VARCHAR(16) DEFAULT 'owner',
     timezone        VARCHAR(64) DEFAULT 'UTC',
     added_at        TIMESTAMPTZ DEFAULT now(),
     UNIQUE(owner_id, chat_id)
 );
+
 
 -- 3. Языковые фильтры для площадки
 CREATE TABLE IF NOT EXISTS language_filters (

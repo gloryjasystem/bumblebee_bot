@@ -1,240 +1,388 @@
 """
-handlers/channels.py — Подключение и управление площадками (каналами/группами).
+handlers/channels.py — Подключение площадок через дочерний бот.
+Флоу: Виды ботов → Ввод токена → Валидация → Добавить в канал/группу → Проверка → Подключено!
 """
-from aiogram import Router, F, Bot
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+import logging
+from aiogram import Router, F
+from aiogram.types import (
+    Message, CallbackQuery,
+    InlineKeyboardMarkup, InlineKeyboardButton,
+)
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
 import db.pool as db
+from services.child_bot_service import validate_and_save_child_bot, verify_bot_is_admin
 from config import settings
 
+logger = logging.getLogger(__name__)
 router = Router()
 
 
-# ── FSM ──────────────────────────────────────────────────────
-class AddChannelFSM(StatesGroup):
-    waiting_for_channel = State()
+class ChannelFSM(StatesGroup):
+    waiting_for_token        = State()   # Ввод токена
+    waiting_for_chat_verify  = State()   # Ввод @username или ID канала для проверки
 
 
-# ── Клавиатуры ───────────────────────────────────────────────
-def kb_channels_list(channels: list) -> InlineKeyboardMarkup:
-    buttons = []
-    for ch in channels:
-        status = "🟢" if ch["is_active"] else "⏸"
-        buttons.append([
-            InlineKeyboardButton(
-                text=f"{status} {ch['chat_title'][:30]}",
-                callback_data=f"channel:{ch['chat_id']}",
-            )
-        ])
-    buttons.append([InlineKeyboardButton(text="➕ Подключить новую площадку", callback_data="channel:add")])
-    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data="menu:main")])
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
-
-
-def kb_channel_detail(chat_id: int, is_active: bool) -> InlineKeyboardMarkup:
-    status_text = "🟢 Активна" if is_active else "⏸ Приостановлена"
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ Обработка заявок", callback_data=f"ch_requests:{chat_id}")],
-        [
-            InlineKeyboardButton(text="💬 Сообщения", callback_data=f"ch_messages:{chat_id}"),
-            InlineKeyboardButton(text="🛡 Защита",    callback_data=f"ch_protection:{chat_id}"),
-        ],
-        [
-            InlineKeyboardButton(text="🔗 Ссылки",    callback_data=f"ch_links:{chat_id}"),
-            InlineKeyboardButton(text="📊 Статистика", callback_data=f"ch_stats:{chat_id}"),
-        ],
-        [InlineKeyboardButton(text=status_text, callback_data=f"ch_toggle:{chat_id}")],
-        [InlineKeyboardButton(text="🗑 Удалить площадку", callback_data=f"ch_delete:{chat_id}")],
-        [InlineKeyboardButton(text="◀️ Назад", callback_data="menu:channels")],
-    ])
-
-
-# ── Список площадок ───────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════
+# 1. Список площадок
+# ══════════════════════════════════════════════════════════════
 @router.callback_query(F.data == "menu:channels")
-async def on_channels_list(callback: CallbackQuery, platform_user: dict | None):
+async def on_channels_menu(callback: CallbackQuery, platform_user: dict | None):
     if not platform_user:
-        await callback.answer("Сначала зарегистрируйтесь через /start", show_alert=True)
+        await callback.answer("Выполните /start")
         return
+    owner_id = platform_user["user_id"]
 
     channels = await db.fetch(
-        "SELECT * FROM bot_chats WHERE owner_id=$1 ORDER BY added_at DESC",
-        platform_user["user_id"],
+        """
+        SELECT bc.id, bc.chat_title, bc.chat_type, bc.is_active,
+               cb.bot_username
+        FROM bot_chats bc
+        JOIN child_bots cb ON bc.child_bot_id = cb.id
+        WHERE bc.owner_id = $1
+        ORDER BY bc.added_at DESC
+        """,
+        owner_id,
     )
 
-    if not channels:
-        text = "📡 <b>Мои площадки</b>\n\nУ вас ещё нет подключённых площадок."
-    else:
-        text = f"📡 <b>Мои площадки</b>\n\nПодключено: {len(channels)}"
+    tariff = platform_user["tariff"]
+    limit  = settings.channel_limits.get(tariff, 1)
+    count  = len(channels)
 
-    await callback.message.edit_text(text, reply_markup=kb_channels_list(list(channels)))
+    buttons = []
+    for ch in channels:
+        icon = "🟢" if ch["is_active"] else "🔴"
+        type_icon = "📢" if ch["chat_type"] == "channel" else "👥"
+        buttons.append([InlineKeyboardButton(
+            text=f"{icon} {type_icon} {ch['chat_title'] or 'Без названия'} · @{ch['bot_username']}",
+            callback_data=f"channel:{ch['id']}",
+        )])
+
+    if count < limit:
+        buttons.append([InlineKeyboardButton(
+            text="➕ Подключить новую площадку",
+            callback_data="channel:new",
+        )])
+    else:
+        buttons.append([InlineKeyboardButton(
+            text=f"🔒 Лимит площадок ({count}/{limit}) — улучшите тариф",
+            callback_data="menu:tariffs",
+        )])
+
+    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data="menu:main")])
+
+    await callback.message.edit_text(
+        f"📡 <b>Мои площадки</b>\n\n"
+        f"Подключено: {count}/{limit} (тариф {tariff.capitalize()})",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+    )
     await callback.answer()
 
 
-# ── Добавить площадку ────────────────────────────────────────
-@router.callback_query(F.data == "channel:add")
-async def on_channel_add(callback: CallbackQuery, state: FSMContext, platform_user: dict | None):
+# ══════════════════════════════════════════════════════════════
+# 2. Выбор типа бота (Виды ботов)
+# ══════════════════════════════════════════════════════════════
+@router.callback_query(F.data == "channel:new")
+async def on_channel_new(callback: CallbackQuery, state: FSMContext, platform_user: dict | None):
     if not platform_user:
-        await callback.answer()
         return
-
-    # Проверка лимита тарифа
-    tariff = platform_user["tariff"]
-    limit = settings.channel_limits.get(tariff, 1)
-    count = await db.fetchval(
-        "SELECT COUNT(*) FROM bot_chats WHERE owner_id=$1 AND is_active=true",
-        platform_user["user_id"],
-    )
-    if count >= limit:
-        await callback.answer(
-            f"Достигнут лимит площадок для тарифа {tariff.title()} ({limit} шт.).\n"
-            f"Обновите тариф для добавления большего числа каналов.",
-            show_alert=True,
-        )
-        return
-
-    await state.set_state(AddChannelFSM.waiting_for_channel)
+    await state.clear()
     await callback.message.edit_text(
-        "➕ <b>Подключение площадки</b>\n\n"
-        "👉 Сделайте бота администратором вашего канала/группы,\n"
-        "затем отправьте <b>ссылку на канал</b> или его <b>ID</b>:\n\n"
-        "Примеры:\n• @mychannel\n• https://t.me/mychannel\n• -100123456789",
+        "🐝 <b>Виды ботов</b>\n\n"
+        "👋 <b>Бот приветствий</b> — автоматически обрабатывает заявки, "
+        "отправляет приветственные сообщения и собирает базу пользователей для рассылок.\n\n"
+        "<b>Выберите действие:</b>",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🚫 Отменить", callback_data="menu:channels")]
+            [InlineKeyboardButton(text="👋 Бот приветствий", callback_data="bot_type:welcome")],
+            [InlineKeyboardButton(text="🚫 Отменить",         callback_data="menu:channels")],
         ]),
     )
     await callback.answer()
 
 
-@router.message(AddChannelFSM.waiting_for_channel)
-async def on_channel_input(message: Message, state: FSMContext, bot: Bot, platform_user: dict | None):
+# ══════════════════════════════════════════════════════════════
+# 3. Запрос токена
+# ══════════════════════════════════════════════════════════════
+@router.callback_query(F.data == "bot_type:welcome")
+async def on_bot_type_welcome(callback: CallbackQuery, state: FSMContext, platform_user: dict | None):
+    if not platform_user:
+        return
+    await state.set_state(ChannelFSM.waiting_for_token)
+    await state.update_data(owner_id=platform_user["user_id"])
+
+    await callback.message.edit_text(
+        "👋 Чтобы создать <b>«Бота приветствий»</b>, мне нужен токен:\n\n"
+        "① Перейдите в @BotFather\n\n"
+        "② Отправьте @BotFather команду: <code>/newbot</code>\n\n"
+        "③ Придумайте название и юзернейм для вашего бота,\n"
+        '   например: "Новости" → <code>@newsbot</code>\n\n'
+        "④ @BotFather выдаст вам токен бота. Пример токена:\n"
+        "   <code>5827254996:AAEBu9108achvHoWvPmvr6kueDgmFpJMjHo</code>\n\n"
+        "<b>Отправьте токен бота</b> 👇",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🚫 Отменить", callback_data="menu:channels")],
+        ]),
+    )
+    await callback.answer()
+
+
+@router.message(ChannelFSM.waiting_for_token)
+async def on_token_received(message: Message, state: FSMContext, platform_user: dict | None):
     if not platform_user:
         return
 
-    raw = message.text.strip()
-
-    # Преобразуем ссылку в username или ID
-    if raw.startswith("https://t.me/"):
-        raw = "@" + raw.split("/")[-1]
+    token = message.text.strip() if message.text else ""
+    msg = await message.answer("⏳ Проверяю токен...")
 
     try:
-        chat = await bot.get_chat(raw)
-    except Exception:
-        await message.answer(
-            "❌ Не удалось найти канал/группу.\n"
-            "Убедитесь что:\n"
-            "• Бот добавлен как администратор\n"
-            "• Ссылка или ID указаны верно"
+        bot_info = await validate_and_save_child_bot(platform_user["user_id"], token)
+    except ValueError as e:
+        await msg.edit_text(
+            f"❌ {e}",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🔄 Попробовать снова", callback_data="bot_type:welcome")],
+                [InlineKeyboardButton(text="🚫 Отменить",          callback_data="menu:channels")],
+            ]),
         )
+        await state.clear()
         return
 
-    # Проверка прав бота
-    try:
-        bot_member = await bot.get_chat_member(chat.id, (await bot.get_me()).id)
-        if bot_member.status not in ("administrator", "creator"):
-            await message.answer(
-                "❌ Бот не является администратором этого канала/группы.\n"
-                "Добавьте бота как администратора и попробуйте снова."
-            )
-            return
-    except Exception:
-        await message.answer("❌ Нет доступа к этому каналу. Проверьте права бота.")
-        return
+    # Сохраняем child_bot_id в state для следующих шагов
+    await state.update_data(
+        child_bot_id=bot_info["id"],
+        bot_username=bot_info["bot_username"],
+    )
+    await state.set_state(ChannelFSM.waiting_for_chat_verify)
 
-    # Compat: тип площадки
-    chat_type = chat.type  # channel | supergroup | group
+    username = bot_info["bot_username"]
+    deep_channel = f"https://t.me/{username}?startchannel=true&admin=post_messages+delete_messages+invite_users+restrict_members+pin_messages"
+    deep_group   = f"https://t.me/{username}?startgroup=true&admin=post_messages+delete_messages+invite_users+restrict_members+pin_messages"
 
-    try:
-        await db.execute(
-            """
-            INSERT INTO bot_chats (owner_id, chat_id, chat_title, chat_type)
-            VALUES ($1, $2, $3, $4)
-            ON CONFLICT (owner_id, chat_id) DO UPDATE
-              SET chat_title=$3, is_active=true
-            """,
-            platform_user["user_id"], chat.id, chat.title, chat_type,
-        )
-    except Exception as e:
-        await message.answer(f"❌ Ошибка сохранения: {e}")
-        return
-
-    await state.clear()
-    await message.answer(
-        f"✅ Площадка подключена!\n\n"
-        f"📢 <b>{chat.title}</b>\n"
-        f"Тип: {'Канал' if chat_type == 'channel' else 'Группа'}\n\n"
-        f"Теперь настройте её параметры в списке площадок."
+    await msg.edit_text(
+        f"✅ Бот: @{username} создан\n\n"
+        f"➕ Добавьте бота в <b>канал или группу</b> в качестве администратора "
+        f"с правами на «Добавление участников» (ios) → «Пригласительные ссылки» (android).\n\n"
+        f"👥 Он будет обрабатывать заявки, приветствовать пользователей "
+        f"и собирать их в базу для рассылок.\n\n"
+        f"<b>Выберите действие</b> 👇",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="→ Добавить в канал", url=deep_channel)],
+            [InlineKeyboardButton(text="→ Добавить в группу", url=deep_group)],
+            [InlineKeyboardButton(text="✅ Проверить подключение", callback_data=f"verify_bot:{bot_info['id']}")],
+            [InlineKeyboardButton(text="⊃ В меню", callback_data="menu:channels")],
+        ]),
     )
 
 
-# ── Детали площадки ───────────────────────────────────────────
-@router.callback_query(F.data.startswith("channel:") & ~F.data.endswith("add"))
-async def on_channel_detail(callback: CallbackQuery, platform_user: dict | None):
+# ══════════════════════════════════════════════════════════════
+# 4. Проверка подключения
+# ══════════════════════════════════════════════════════════════
+@router.callback_query(F.data.startswith("verify_bot:"))
+async def on_verify_bot(callback: CallbackQuery, state: FSMContext, platform_user: dict | None):
+    if not platform_user:
+        return
+    child_bot_id = int(callback.data.split(":")[1])
+    await state.set_state(ChannelFSM.waiting_for_chat_verify)
+    await state.update_data(child_bot_id=child_bot_id, owner_id=platform_user["user_id"])
+
+    await callback.message.edit_text(
+        "📡 <b>Проверить подключение</b>\n\n"
+        "Введите <b>@username</b> или <b>ID</b> канала/группы, "
+        "куда вы добавили бота:\n\n"
+        "Например: <code>@mychannel</code> или <code>-1001234567890</code>",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🚫 Отменить", callback_data="menu:channels")],
+        ]),
+    )
+    await callback.answer()
+
+
+@router.message(ChannelFSM.waiting_for_chat_verify)
+async def on_chat_verify_input(message: Message, state: FSMContext, platform_user: dict | None):
     if not platform_user:
         return
 
-    chat_id = int(callback.data.split(":")[1])
+    data = await state.get_data()
+    child_bot_id = data.get("child_bot_id")
+    owner_id     = platform_user["user_id"]
+
+    if not child_bot_id:
+        await state.clear()
+        return
+
+    chat_input = message.text.strip() if message.text else ""
+    msg = await message.answer("⏳ Проверяю подключение...")
+
+    try:
+        chat_info = await verify_bot_is_admin(owner_id, child_bot_id, chat_input)
+    except ValueError as e:
+        await msg.edit_text(
+            f"❌ {e}",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🔄 Попробовать снова", callback_data=f"verify_bot:{child_bot_id}")],
+                [InlineKeyboardButton(text="⊃ В меню",             callback_data="menu:channels")],
+            ]),
+        )
+        return
+
+    # Проверяем лимит
+    tariff = platform_user["tariff"]
+    limit  = settings.channel_limits.get(tariff, 1)
+    count  = await db.fetchval(
+        "SELECT COUNT(*) FROM bot_chats WHERE owner_id=$1", owner_id,
+    )
+    if count >= limit:
+        await msg.edit_text(
+            f"🔒 Достигнут лимит площадок ({limit}) для тарифа {tariff.capitalize()}.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="💳 Улучшить тариф", callback_data="menu:tariffs")],
+                [InlineKeyboardButton(text="◀️ Назад",           callback_data="menu:channels")],
+            ]),
+        )
+        await state.clear()
+        return
+
+    # Сохраняем площадку в БД
+    await db.execute(
+        """
+        INSERT INTO bot_chats (owner_id, child_bot_id, chat_id, chat_title, chat_type)
+        VALUES ($1, $2, $3, $4, $5)
+        ON CONFLICT (owner_id, chat_id)
+        DO UPDATE SET chat_title=EXCLUDED.chat_title,
+                      child_bot_id=EXCLUDED.child_bot_id,
+                      is_active=true
+        """,
+        owner_id, child_bot_id,
+        chat_info["chat_id"], chat_info["chat_title"], chat_info["chat_type"],
+    )
+    await state.clear()
+
+    type_icon = "📢" if chat_info["chat_type"] == "channel" else "👥"
+    await msg.edit_text(
+        f"🎉 {type_icon} <b>{chat_info['chat_title']}</b> подключён!\n\n"
+        f"Бот активен и готов к работе. Перейдите в настройки площадки.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="⚙️ Настройки площадки", callback_data=f"channel_by_chat:{chat_info['chat_id']}")],
+            [InlineKeyboardButton(text="📡 Мои площадки",        callback_data="menu:channels")],
+        ]),
+    )
+
+
+# ══════════════════════════════════════════════════════════════
+# 5. Детали площадки
+# ══════════════════════════════════════════════════════════════
+@router.callback_query(F.data.startswith("channel:"))
+async def on_channel_detail(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    ch_id_str = callback.data.split(":")[1]
+    if ch_id_str == "new":
+        return
+
+    ch_id = int(ch_id_str)
     ch = await db.fetchrow(
-        "SELECT * FROM bot_chats WHERE owner_id=$1 AND chat_id=$2",
-        platform_user["user_id"], chat_id,
+        """
+        SELECT bc.*, cb.bot_username, cb.bot_name
+        FROM bot_chats bc
+        JOIN child_bots cb ON bc.child_bot_id = cb.id
+        WHERE bc.id=$1 AND bc.owner_id=$2
+        """,
+        ch_id, platform_user["user_id"],
     )
     if not ch:
         await callback.answer("Площадка не найдена", show_alert=True)
         return
 
-    # Счётчики
-    total = await db.fetchval(
-        "SELECT COUNT(*) FROM bot_users WHERE owner_id=$1 AND chat_id=$2 AND is_active=true",
-        platform_user["user_id"], chat_id,
-    )
+    status = "🟢 Активна" if ch["is_active"] else "🔴 Отключена"
+    type_label = "📢 Канал" if ch["chat_type"] == "channel" else "👥 Группа"
+    toggle_text = "🔴 Выключить" if ch["is_active"] else "🟢 Включить"
 
     await callback.message.edit_text(
-        f"📡 <b>{ch['chat_title']}</b>\n\n"
-        f"👥 Участников в базе: {total}\n"
-        f"Тип: {'Закрытый канал 🔒' if ch['chat_type'] == 'channel' else 'Группа 👥'}\n"
-        f"Статус: {'🟢 Активна' if ch['is_active'] else '⏸ Приостановлена'}",
-        reply_markup=kb_channel_detail(chat_id, ch["is_active"]),
+        f"{type_label}: <b>{ch['chat_title']}</b>\n"
+        f"Бот: @{ch['bot_username']}\n"
+        f"Статус: {status}",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Заявки",        callback_data=f"ch_requests:{ch['chat_id']}")],
+            [InlineKeyboardButton(text="💬 Сообщения",     callback_data=f"ch_messages:{ch['chat_id']}")],
+            [InlineKeyboardButton(text="🛡 Чёрный список", callback_data=f"ch_protection:{ch['chat_id']}")],
+            [InlineKeyboardButton(text="📨 Рассылка",      callback_data=f"ch_mailing:{ch['chat_id']}")],
+            [InlineKeyboardButton(text="🔗 Ссылки",        callback_data=f"ch_links:{ch['chat_id']}")],
+            [InlineKeyboardButton(text="📊 Статистика",    callback_data=f"ch_stats:{ch['chat_id']}")],
+            [
+                InlineKeyboardButton(text=toggle_text,     callback_data=f"ch_toggle:{ch['id']}"),
+                InlineKeyboardButton(text="🗑 Удалить",    callback_data=f"ch_delete:{ch['id']}"),
+            ],
+            [InlineKeyboardButton(text="◀️ Назад",         callback_data="menu:channels")],
+        ]),
     )
     await callback.answer()
 
 
-# ── Вкл/выкл площадки ────────────────────────────────────────
-@router.callback_query(F.data.startswith("ch_toggle:"))
-async def on_channel_toggle(callback: CallbackQuery, platform_user: dict | None):
+@router.callback_query(F.data.startswith("channel_by_chat:"))
+async def on_channel_by_chat(callback: CallbackQuery, platform_user: dict | None):
+    """Переход в настройки площадки по chat_id."""
     if not platform_user:
         return
-
     chat_id = int(callback.data.split(":")[1])
     ch = await db.fetchrow(
-        "SELECT is_active FROM bot_chats WHERE owner_id=$1 AND chat_id=$2",
+        "SELECT id FROM bot_chats WHERE owner_id=$1 AND chat_id=$2",
         platform_user["user_id"], chat_id,
+    )
+    if ch:
+        callback.data = f"channel:{ch['id']}"
+        await on_channel_detail(callback, platform_user)
+    else:
+        await callback.answer("Площадка не найдена")
+
+
+@router.callback_query(F.data.startswith("ch_toggle:"))
+async def on_ch_toggle(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    ch_id = int(callback.data.split(":")[1])
+    ch = await db.fetchrow(
+        "SELECT is_active FROM bot_chats WHERE id=$1 AND owner_id=$2",
+        ch_id, platform_user["user_id"],
     )
     if not ch:
         return
-
-    new_status = not ch["is_active"]
+    new_val = not ch["is_active"]
     await db.execute(
-        "UPDATE bot_chats SET is_active=$1 WHERE owner_id=$2 AND chat_id=$3",
-        new_status, platform_user["user_id"], chat_id,
+        "UPDATE bot_chats SET is_active=$1 WHERE id=$2 AND owner_id=$3",
+        new_val, ch_id, platform_user["user_id"],
     )
-    status = "🟢 Активна" if new_status else "⏸ Приостановлена"
-    await callback.answer(f"Площадка: {status}")
-    # Обновляем клавиатуру
+    await callback.answer("🟢 Включена" if new_val else "🔴 Выключена")
+    callback.data = f"channel:{ch_id}"
     await on_channel_detail(callback, platform_user)
 
 
-# ── Удаление площадки ─────────────────────────────────────────
 @router.callback_query(F.data.startswith("ch_delete:"))
-async def on_channel_delete(callback: CallbackQuery, platform_user: dict | None):
+async def on_ch_delete(callback: CallbackQuery, platform_user: dict | None):
     if not platform_user:
         return
+    ch_id = int(callback.data.split(":")[1])
 
-    chat_id = int(callback.data.split(":")[1])
+    # Подтверждение
+    await callback.message.edit_text(
+        "⚠️ <b>Удалить площадку?</b>\n\nВся история, настройки и ЧС для этой площадки будут удалены.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Да, удалить", callback_data=f"ch_delete_confirm:{ch_id}")],
+            [InlineKeyboardButton(text="🚫 Отмена",      callback_data=f"channel:{ch_id}")],
+        ]),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("ch_delete_confirm:"))
+async def on_ch_delete_confirm(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    ch_id = int(callback.data.split(":")[1])
     await db.execute(
-        "DELETE FROM bot_chats WHERE owner_id=$1 AND chat_id=$2",
-        platform_user["user_id"], chat_id,
+        "DELETE FROM bot_chats WHERE id=$1 AND owner_id=$2",
+        ch_id, platform_user["user_id"],
     )
     await callback.answer("✅ Площадка удалена")
-    # Возврат к списку
-    await on_channels_list(callback, platform_user)
+    callback.data = "menu:channels"
+    await on_channels_menu(callback, platform_user)

@@ -120,3 +120,50 @@ async def _show_main_menu(message: Message, platform_user: dict | None):
         f"⇨ Главное меню",
         reply_markup=kb_main_menu(),
     )
+
+
+# ── Управление аккаунтом ──────────────────────────────────────
+@router.callback_query(F.data == "menu:settings")
+async def on_settings_menu(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        await callback.answer("Сначала выполните /start", show_alert=True)
+        return
+
+    tariff = platform_user["tariff"]
+    tariff_labels = {
+        "free": "🆓 Free", "start": "🌱 Старт",
+        "pro": "⭐ Про", "business": "💼 Бизнес",
+    }
+    label = tariff_labels.get(tariff, "🆓 Free")
+    until = ""
+    if platform_user.get("tariff_until"):
+        until = f"\nДействует до: {platform_user['tariff_until'].strftime('%d.%m.%Y')}"
+
+    lang_cur = "🇷🇺 Русский" if platform_user.get("language", "ru") == "ru" else "🇺🇸 English"
+
+    await callback.message.edit_text(
+        f"🔑 <b>Управление аккаунтом</b>\n\n"
+        f"👤 ID: <code>{platform_user['user_id']}</code>\n"
+        f"📦 Тариф: {label}{until}\n"
+        f"🌍 Язык: {lang_cur}",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🌍 Сменить язык",    callback_data="settings:lang")],
+            [InlineKeyboardButton(text="💳 Тарифы и оплата", callback_data="menu:tariffs")],
+            [InlineKeyboardButton(text="◀️ Назад",           callback_data="menu:main")],
+        ]),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "settings:lang")
+async def on_settings_lang(callback: CallbackQuery):
+    await callback.message.edit_text(
+        "🌍 <b>Выберите язык / Choose language:</b>",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🇷🇺 Русский", callback_data="lang:ru")],
+            [InlineKeyboardButton(text="🇺🇸 English",  callback_data="lang:en")],
+            [InlineKeyboardButton(text="◀️ Назад",    callback_data="menu:settings")],
+        ]),
+    )
+    await callback.answer()
+

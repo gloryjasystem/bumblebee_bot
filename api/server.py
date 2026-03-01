@@ -90,9 +90,13 @@ def create_app(bot: Bot, dp: Dispatcher) -> FastAPI:
     # ── Telegram Bot Webhook ───────────────────────────────────
     @app.post("/bot/webhook")
     async def bot_webhook(request: Request):
-        data = await request.json()
-        update = Update(**data)
-        await _dp.feed_update(_bot, update)
+        try:
+            data = await request.json()
+            update = Update(**data)
+            await _dp.feed_update(_bot, update)
+        except Exception as e:
+            # Логируем ошибку, но всегда возвращаем 200 — иначе Telegram будет повторять
+            logger.exception(f"Error processing update: {e}")
         return {"ok": True}
 
     # ── WebApp API: создать платёж ─────────────────────────────

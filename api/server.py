@@ -1,8 +1,11 @@
 """
-api/server.py — FastAPI сервер: webhook бота, NOWPayments webhook, WebApp API.
+api/server.py — FastAPI сервер с lifespan для Railway.
+/health отвечает сразу после старта — ДО инициализации бота.
 """
 import json
 import logging
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -27,17 +30,69 @@ def create_app(bot: Bot, dp: Dispatcher) -> FastAPI:
     _bot = bot
     _dp = dp
 
-    app = FastAPI(title="Bumblebee Bot API", docs_url=None, redoc_url=None)
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        """
+        Запускается ВНУТРИ уже стартовавшего uvicorn сервера.
+        /health уже доступен до этого момента — Railway healthcheck пройдёт.
+        """
+        # ── Startup ──────────────────────────────────────────
+        logger.info("Lifespan startup...")
+        await db.create_pool()
+        logger.info("DB pool created")
 
-    # WebApp статические файлы
+        # Применяем схему
+        with open("db/init.sql", "r", encoding="utf-8") as f:
+            sql = f.read()
+        async with db.get_pool().acquire() as conn:
+            await conn.execute(sql)
+        logger.info("DB schema applied")
+
+        # Планировщик
+        from scheduler.jobs import setup_scheduler
+        setup_scheduler(bot).start()
+        logger.info("Scheduler started")
+
+        # Устанавливаем webhook (SERVER_URL уже известен)
+        from config import settings
+        if settings.server_url:
+            await bot.set_webhook(
+                url=f"{settings.server_url}/bot/webhook",
+                drop_pending_updates=True,
+                allowed_updates=["message", "callback_query", "chat_join_request", "chat_member"],
+            )
+            logger.info(f"Webhook set: {settings.server_url}/bot/webhook")
+        else:
+            logger.warning("SERVER_URL not set — webhook not configured!")
+
+        logger.info("Bot started successfully ✅")
+        yield
+        # ── Shutdown ─────────────────────────────────────────
+        logger.info("Shutting down...")
+        await db.close_pool()
+        await bot.session.close()
+
+    app = FastAPI(
+        title="Bumblebee Bot API",
+        docs_url=None,
+        redoc_url=None,
+        lifespan=lifespan,
+    )
+
+    # Статические файлы WebApp
     app.mount("/webapp", StaticFiles(directory="webapp", html=True), name="webapp")
+
+    # ── Health check (отвечает СРАЗУ при старте сервера) ──────
+    @app.get("/health")
+    async def health():
+        return {"status": "ok"}
 
     # ── Telegram Bot Webhook ───────────────────────────────────
     @app.post("/bot/webhook")
     async def bot_webhook(request: Request):
         data = await request.json()
         update = Update(**data)
-        await dp.feed_update(bot, update)
+        await _dp.feed_update(_bot, update)
         return {"ok": True}
 
     # ── WebApp API: создать платёж ─────────────────────────────
@@ -48,7 +103,6 @@ def create_app(bot: Bot, dp: Dispatcher) -> FastAPI:
         except Exception:
             return JSONResponse({"error": "Invalid JSON"}, status_code=400)
 
-        # Валидация tg.initData (КРИТИЧНО — защита от подмены user_id)
         init_data = data.get("init_data", "")
         user_info = verify_init_data(init_data)
         if not user_info:
@@ -69,7 +123,7 @@ def create_app(bot: Bot, dp: Dispatcher) -> FastAPI:
             logger.error(f"create_invoice error: {e}")
             return JSONResponse({"error": str(e)}, status_code=500)
 
-    # ── WebApp API: статус платежа (polling каждые 4 сек) ─────
+    # ── WebApp API: статус платежа ─────────────────────────────
     @app.get("/api/payment-status")
     async def payment_status(payment_id: str):
         return await get_payment_status(payment_id)
@@ -77,7 +131,7 @@ def create_app(bot: Bot, dp: Dispatcher) -> FastAPI:
     # ── NOWPayments Webhook ────────────────────────────────────
     @app.post("/nowpayments/webhook")
     async def nowpayments_webhook(request: Request):
-        payload = await request.body()  # сырые байты — ВАЖНО для HMAC
+        payload   = await request.body()
         signature = request.headers.get("x-nowpayments-sig", "")
 
         if not verify_nowpayments_sig(payload, signature):
@@ -85,12 +139,10 @@ def create_app(bot: Bot, dp: Dispatcher) -> FastAPI:
             return JSONResponse({"status": "forbidden"}, status_code=403)
 
         data = json.loads(payload)
-        logger.info(f"NOWPayments webhook: status={data.get('payment_status')}, order={data.get('order_id')}")
+        logger.info(f"NOWPayments: status={data.get('payment_status')}, order={data.get('order_id')}")
 
         if data.get("payment_status") == "finished":
             payment_id = data.get("order_id")
-
-            # Idempotency: обновляем ТОЛЬКО если статус pending
             result = await db.execute(
                 """
                 UPDATE payments
@@ -99,9 +151,7 @@ def create_app(bot: Bot, dp: Dispatcher) -> FastAPI:
                 """,
                 payment_id, str(data.get("payment_id", "")),
             )
-
             if result == "UPDATE 1":
-                # Только первый вебхук активирует тариф (защита от дублей)
                 row = await db.fetchrow(
                     "SELECT user_id, tariff, period FROM payments WHERE id=$1",
                     payment_id,
@@ -111,12 +161,6 @@ def create_app(bot: Bot, dp: Dispatcher) -> FastAPI:
                     await notify_user_paid(_bot, row["user_id"], row["tariff"], row["period"])
                     await notify_owner_payment(_bot, row["user_id"], data)
 
-        # Всегда 200 — иначе NOWPayments будет слать снова
-        return {"status": "ok"}
-
-    # ── Health check ───────────────────────────────────────────
-    @app.get("/health")
-    async def health():
         return {"status": "ok"}
 
     return app

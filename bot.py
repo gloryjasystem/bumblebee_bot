@@ -1,6 +1,5 @@
 """
 bot.py — Точка входа Bumblebee Bot.
-Запуск: python bot.py
 """
 import asyncio
 import logging
@@ -39,57 +38,10 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-async def on_startup(bot: Bot):
-    logger.info("Starting Bumblebee Bot...")
-    await create_pool()
-    logger.info("DB pool created")
-
-    # Применяем схему БД (CREATE TABLE IF NOT EXISTS — безопасно при каждом запуске)
-    from db.pool import get_pool
-    with open("db/init.sql", "r", encoding="utf-8") as f:
-        sql = f.read()
-    async with get_pool().acquire() as conn:
-        await conn.execute(sql)
-    logger.info("DB schema applied")
-
-    # Запуск планировщика
-    scheduler = setup_scheduler(bot)
-    scheduler.start()
-    logger.info("Scheduler started")
-
-    if settings.bot_mode == "webhook":
-        await bot.set_webhook(
-            url=f"{settings.server_url}/bot/webhook",
-            drop_pending_updates=True,
-            allowed_updates=["message", "callback_query", "chat_join_request", "chat_member"],
-        )
-        logger.info(f"Webhook set: {settings.server_url}/bot/webhook")
-    else:
-        await bot.delete_webhook(drop_pending_updates=True)
-
-    logger.info("Bot started successfully ✅")
-
-
-async def on_shutdown(bot: Bot):
-    logger.info("Shutting down...")
-    await close_pool()
-    await bot.session.close()
-
-
-async def main():
-    bot = Bot(
-        token=settings.bot_token,
-        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
-    )
-
-    storage = MemoryStorage()
-    dp = Dispatcher(storage=storage)
-
-    # ── Мидлвары ──────────────────────────────────────────────
+def build_dispatcher() -> Dispatcher:
+    dp = Dispatcher(storage=MemoryStorage())
     dp.message.middleware(OwnerMiddleware())
     dp.callback_query.middleware(OwnerMiddleware())
-
-    # ── Роутеры ───────────────────────────────────────────────
     dp.include_router(start_router)
     dp.include_router(channels_router)
     dp.include_router(blacklist_router)
@@ -100,19 +52,28 @@ async def main():
     dp.include_router(payment_router)
     dp.include_router(channel_settings_router)
     dp.include_router(feedback_router)
+    return dp
 
-    # ── Webhook (Railway) или Polling (локально) ──────────────
+
+async def main():
+    bot = Bot(
+        token=settings.bot_token,
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+    )
+    dp = build_dispatcher()
+
     if settings.bot_mode == "webhook":
-        # Railway передаёт $PORT через переменную окружения
+        # ── Railway / Webhook режим ──────────────────────────
+        # Сервер стартует ПЕРВЫМ → /health отвечает → Railway доволен.
+        # Инициализация (DB, scheduler, set_webhook) — внутри lifespan FastAPI.
         port = int(os.environ.get("PORT", 8000))
+
         from api.server import create_app
         import uvicorn
+
         app = create_app(bot, dp)
-        logger.info(f"Starting webhook server on port {port}")
 
-        # Инициализируем бота перед запуском сервера
-        await on_startup(bot)
-
+        logger.info(f"Starting webhook server on 0.0.0.0:{port}")
         config = uvicorn.Config(
             app,
             host="0.0.0.0",
@@ -120,13 +81,25 @@ async def main():
             log_level="info",
         )
         server = uvicorn.Server(config)
-        try:
-            await server.serve()
-        finally:
-            await on_shutdown(bot)
+        await server.serve()
 
     else:
-        # Polling — регистрируем хуки через dp
+        # ── Polling (локальная разработка) ───────────────────
+        async def on_startup(bot: Bot):
+            await create_pool()
+            from db.pool import get_pool
+            with open("db/init.sql", "r", encoding="utf-8") as f:
+                sql = f.read()
+            async with get_pool().acquire() as conn:
+                await conn.execute(sql)
+            setup_scheduler(bot).start()
+            await bot.delete_webhook(drop_pending_updates=True)
+            logger.info("Bot started in polling mode ✅")
+
+        async def on_shutdown(bot: Bot):
+            await close_pool()
+            await bot.session.close()
+
         dp.startup.register(on_startup)
         dp.shutdown.register(on_shutdown)
         await dp.start_polling(

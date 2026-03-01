@@ -7,9 +7,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=".env",          # для локальной разработки (игнорируется если нет файла)
         env_file_encoding="utf-8",
+        env_ignore_empty=True,
         extra="ignore",
+        case_sensitive=False,     # BOT_TOKEN == bot_token
     )
 
     # Telegram
@@ -61,7 +63,7 @@ class Settings(BaseSettings):
         "free":     1,
         "start":    3,
         "pro":      10,
-        "business": 999_999,  # безлимит
+        "business": 999_999,
     }
 
     # ── Trial ──────────────────────────────────────────

@@ -1535,10 +1535,27 @@ async def _bs_channel_picker(callback: CallbackQuery, platform_user: dict,
 
 @router.callback_query(F.data.startswith("bs_mailing:"))
 async def on_bs_mailing(callback: CallbackQuery, platform_user: dict | None):
+    """Рассылка: показываем экран выбора действия сразу, без выбора площадки."""
     if not platform_user:
         return
-    await _bs_channel_picker(callback, platform_user, int(callback.data.split(":")[1]),
-                             "ch_mailing", "📨 <b>Рассылка</b>")
+    child_bot_id = int(callback.data.split(":")[1])
+    tariff = platform_user["tariff"]
+    if tariff == "free":
+        await callback.answer("Рассылка доступна с тарифа Старт.", show_alert=True)
+        return
+
+    await callback.message.edit_text(
+        "📨 <b>Рассылка</b>\n\nВыберите действие ⬇️",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="➕ Создать рассылку",
+                                  callback_data=f"mailing_bot_start:{child_bot_id}")],
+            [InlineKeyboardButton(text="📅 Запланированные",
+                                  callback_data=f"mailing_bot_scheduled:{child_bot_id}")],
+            [InlineKeyboardButton(text="◀️ Назад",
+                                  callback_data=f"bot_settings:{child_bot_id}")],
+        ]),
+    )
+    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("bs_links:"))

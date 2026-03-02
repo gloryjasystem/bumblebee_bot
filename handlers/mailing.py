@@ -157,6 +157,107 @@ async def on_ch_mailing(callback: CallbackQuery, platform_user: dict | None):
 
 
 # ══════════════════════════════════════════════════════════════
+# Bot-level mailing: из главного экрана (без выбора площадки)
+# ══════════════════════════════════════════════════════════════
+
+@router.callback_query(F.data.startswith("mailing_bot_start:"))
+async def on_mailing_bot_start(callback: CallbackQuery, state: FSMContext,
+                                platform_user: dict | None):
+    """Создать рассылку на уровне бота — выбираем первую активную площадку."""
+    if not platform_user:
+        return
+    child_bot_id = int(callback.data.split(":")[1])
+    owner_id = platform_user["user_id"]
+
+    # Берём первую активную площадку этого бота для рассылки
+    ch = await db.fetchrow(
+        "SELECT chat_id FROM bot_chats WHERE owner_id=$1 AND child_bot_id=$2 AND is_active=true LIMIT 1",
+        owner_id, child_bot_id,
+    )
+    if not ch:
+        await callback.answer("Нет активных площадок у этого бота.", show_alert=True)
+        return
+    chat_id = ch["chat_id"]
+
+    # Суммарное количество активных получателей по всем площадкам бота
+    count = await db.fetchval(
+        "SELECT COUNT(DISTINCT bu.user_id) FROM bot_users bu "
+        "JOIN bot_chats bc ON bu.chat_id=bc.chat_id AND bu.owner_id=bc.owner_id "
+        "WHERE bc.child_bot_id=$1 AND bc.owner_id=$2 AND bu.is_active=true AND bu.bot_activated=true",
+        child_bot_id, owner_id,
+    ) or 0
+
+    await state.update_data(chat_id=chat_id, owner_id=owner_id, child_bot_id=child_bot_id)
+    await state.set_state(MailingFSM.waiting_for_text)
+
+    await callback.message.edit_text(
+        f"📨 Отправьте сообщение для рассылки.\n\n"
+        f"<b>Переменные:</b>\n"
+        f"├ Имя: <code>{{name}}</code>\n"
+        f"├ ФИО: <code>{{allname}}</code>\n"
+        f"├ Юзер: <code>{{username}}</code>\n"
+        f"├ Площадка: <code>{{chat}}</code>\n"
+        f"└ Текущая дата: <code>{{day}}</code>\n\n"
+        f"ⓘ Можно прикрепить медиа.\n\n"
+        f"👥 Получателей по всем площадкам: <b>{count:,}</b>",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="◀️ Отмена",
+                                   callback_data=f"bs_mailing:{child_bot_id}")],
+        ]),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("mailing_bot_scheduled:"))
+async def on_mailing_bot_scheduled(callback: CallbackQuery, platform_user: dict | None):
+    """Запланированные рассылки на уровне бота."""
+    if not platform_user:
+        return
+    child_bot_id = int(callback.data.split(":")[1])
+    owner_id = platform_user["user_id"]
+
+    rows = await db.fetch(
+        """SELECT m.id, m.text, m.scheduled_at, bc.chat_title
+           FROM mailings m
+           JOIN bot_chats bc ON m.chat_id=bc.chat_id AND m.owner_id=bc.owner_id
+           WHERE bc.child_bot_id=$1 AND m.owner_id=$2
+             AND m.status IN ('pending','scheduled')
+           ORDER BY m.scheduled_at ASC LIMIT 10""",
+        child_bot_id, owner_id,
+    )
+
+    if not rows:
+        await callback.message.edit_text(
+            "📅 <b>Запланированные рассылки</b>\n\nНет запланированных рассылок.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="◀️ Назад",
+                                       callback_data=f"bs_mailing:{child_bot_id}")],
+            ]),
+        )
+        await callback.answer()
+        return
+
+    buttons = []
+    for r in rows:
+        dt = r["scheduled_at"].strftime("%d.%m %H:%M") if r.get("scheduled_at") else "—"
+        title = (r.get("chat_title") or "")[:10]
+        preview = (r["text"] or "")[:20]
+        buttons.append([InlineKeyboardButton(
+            text=f"📅 {dt} [{title}] {preview}…",
+            callback_data=f"mailing_view:{r['id']}",
+        )])
+    buttons.append([InlineKeyboardButton(text="◀️ Назад",
+                                          callback_data=f"bs_mailing:{child_bot_id}")])
+
+    await callback.message.edit_text(
+        "📅 <b>Запланированные рассылки</b>",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+    )
+    await callback.answer()
+
+
+
+# ══════════════════════════════════════════════════════════════
 # Запланированные рассылки
 # ══════════════════════════════════════════════════════════════
 

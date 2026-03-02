@@ -65,10 +65,14 @@ async def _show_ch_messages(callback: CallbackQuery, chat_id: int, owner_id: int
         await callback.answer("Площадка не найдена", show_alert=True)
         return
 
-    captcha_type    = ch.get("captcha_type") or "off"
-    typing_on       = ch.get("typing_action", False)
-    reaction        = ch.get("reaction_emoji") or "👍"
-    delete_min      = ch.get("auto_delete_min") or 0
+    captcha_type   = ch.get("captcha_type") or "off"
+    typing_on      = ch.get("typing_action", False)
+    reaction       = ch.get("reaction_emoji") or "👍"
+    delete_min     = ch.get("auto_delete_min") or 0
+
+    # Куда вернуться: главный экран бота
+    child_bot_id = ch.get("child_bot_id")
+    back_cb = f"bot_settings:{child_bot_id}" if child_bot_id else "menu:channels"
 
     captcha_label = {"off": "🔒 Капча: выкл", "simple": "🔒 Капча: простая",
                      "random": "🔒 Капча: рандомная"}.get(captcha_type, "🔒 Капча")
@@ -95,7 +99,7 @@ async def _show_ch_messages(callback: CallbackQuery, chat_id: int, owner_id: int
                 InlineKeyboardButton(text=reaction_label, callback_data=f"ch_reactions:{chat_id}"),
             ],
             [InlineKeyboardButton(text=delete_label, callback_data=f"ch_delete_toggle:{chat_id}")],
-            [InlineKeyboardButton(text="◀️ Назад",    callback_data=f"ch_back_to_channel:{chat_id}")],
+            [InlineKeyboardButton(text="◀️ Назад",    callback_data=back_cb)],
         ]),
     )
     await callback.answer()
@@ -616,33 +620,3 @@ async def on_ch_ar_del(callback: CallbackQuery, platform_user: dict | None):
     callback.data = f"ch_autoreply:{chat_id}"
     await on_ch_autoreply(callback, platform_user)
 
-
-# ── Кнопка «Назад» из экрана ch_messages ──────────────────────
-
-@router.callback_query(F.data.startswith("ch_back_to_channel:"))
-async def on_ch_back_to_channel(callback: CallbackQuery, platform_user: dict | None):
-    """Назад из меню Сообщений → главный экран бота (bot_settings)."""
-    if not platform_user:
-        return
-    chat_id  = int(callback.data.split(":")[1])
-    owner_id = platform_user["user_id"]
-
-    #找к какому боту принадлежит площадка
-    row = await db.fetchrow(
-        "SELECT child_bot_id FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint",
-        owner_id, chat_id,
-    )
-    child_bot_id = row["child_bot_id"] if row else None
-
-    if child_bot_id:
-        # Перенаправляем к главному экрану бота (статистика + кнопки)
-        callback.data = f"bot_settings:{child_bot_id}"
-    else:
-        # Если площадка без привязки к боту — в список каналов
-        callback.data = "menu:channels"
-
-    from handlers.channels import on_bot_settings, on_channels_menu
-    if child_bot_id:
-        await on_bot_settings(callback, platform_user)
-    else:
-        await on_channels_menu(callback, platform_user)

@@ -283,25 +283,50 @@ async def on_link_budget(event, state: FSMContext, bot: Bot):
     child_bot_id = data.get("child_bot_id", "0")
     link_type = data.get("link_type", "request")
     member_limit = data.get("member_limit")
+    owner_id = data.get("owner_id")
+
+    # ── Получаем токен дочернего бота ──────────────────────────
+    # Именно дочерний бот является администратором канала/группы,
+    # поэтому только он может создавать ссылки-приглашения.
+    bot_row = await db.fetchrow(
+        """SELECT cb.token_encrypted
+           FROM child_bots cb
+           JOIN bot_chats bc ON bc.child_bot_id = cb.id
+           WHERE bc.owner_id=$1 AND bc.chat_id=$2::bigint AND bc.is_active=true
+           LIMIT 1""",
+        owner_id, chat_id,
+    )
+
+    from services.security import decrypt_token
+    from aiogram import Bot as AioBot
+
+    if bot_row:
+        child_bot_instance = AioBot(token=decrypt_token(bot_row["token_encrypted"]))
+    else:
+        child_bot_instance = bot  # Fallback — маловероятен, но не ломает
+
+    respond = event.answer if isinstance(event, Message) else event.message.edit_text
 
     try:
         if link_type == "request":
-            tg_link = await bot.create_chat_invite_link(
+            tg_link = await child_bot_instance.create_chat_invite_link(
                 chat_id, creates_join_request=True, name=data["name"]
             )
         elif link_type == "onetime":
-            tg_link = await bot.create_chat_invite_link(
+            tg_link = await child_bot_instance.create_chat_invite_link(
                 chat_id, member_limit=1, name=data["name"]
             )
         else:
             kwargs = {"name": data["name"]}
             if member_limit:
                 kwargs["member_limit"] = member_limit
-            tg_link = await bot.create_chat_invite_link(chat_id, **kwargs)
+            tg_link = await child_bot_instance.create_chat_invite_link(chat_id, **kwargs)
     except Exception as e:
-        respond = event.answer if isinstance(event, Message) else event.message.edit_text
         await respond(f"❌ Не удалось создать ссылку: {e}")
         return
+    finally:
+        if bot_row:
+            await child_bot_instance.session.close()
 
     link_id = await db.fetchval(
         """
@@ -309,11 +334,10 @@ async def on_link_budget(event, state: FSMContext, bot: Bot):
           (owner_id, chat_id, name, link, link_type, member_limit, budget, budget_currency)
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id
         """,
-        data["owner_id"], chat_id, data["name"], tg_link.invite_link,
+        owner_id, chat_id, data["name"], tg_link.invite_link,
         link_type, member_limit, budget, budget_currency,
     )
 
-    respond = event.answer if isinstance(event, Message) else event.message.edit_text
     await respond(
         f"✅ <b>Ссылка создана!</b>\n\n"
         f"<code>{tg_link.invite_link}</code>",

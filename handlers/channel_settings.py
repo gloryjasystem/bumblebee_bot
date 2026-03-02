@@ -1059,19 +1059,21 @@ async def on_bs_messages(callback: CallbackQuery, platform_user: dict | None):
         return
     child_bot_id = int(callback.data.split(":")[1])
     owner_id = platform_user["user_id"]
-    ch = await _get_bot_first_chat(owner_id, child_bot_id)
-    if not ch:
-        await callback.answer("Нет активных площадок", show_alert=True)
+    chats = await db.fetch(
+        "SELECT chat_id, chat_title FROM bot_chats WHERE child_bot_id=$1 AND owner_id=$2 AND is_active=true",
+        child_bot_id, owner_id,
+    )
+    if not chats:
+        await callback.answer("Нет активных площадок у бота", show_alert=True)
         return
-    has_welcome  = "✏️ Изменить" if ch.get("welcome_text")  else "➕ Настроить"
-    has_farewell = "✏️ Изменить" if ch.get("farewell_text") else "➕ Настроить"
+    buttons = [[InlineKeyboardButton(
+        text=f"📍 {ch['chat_title'] or ch['chat_id']}",
+        callback_data=f"ch_messages:{ch['chat_id']}",
+    )] for ch in chats]
+    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"bot_settings:{child_bot_id}")])
     await callback.message.edit_text(
-        "💬 <b>Сообщения</b> (все площадки)\n\nПрименяется ко всем каналам бота одновременно.",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=f"👋 Приветствие — {has_welcome}", callback_data=f"bs_welcome:{child_bot_id}")],
-            [InlineKeyboardButton(text=f"👋 Прощание — {has_farewell}",   callback_data=f"bs_farewell:{child_bot_id}")],
-            [InlineKeyboardButton(text="◀️ Назад",                        callback_data=f"bot_settings:{child_bot_id}")],
-        ]),
+        "💬 <b>Сообщения</b>\n\nВыберите площадку:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
     )
     await callback.answer()
 

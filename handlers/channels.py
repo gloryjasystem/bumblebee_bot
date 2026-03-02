@@ -671,7 +671,61 @@ async def on_channel_in_bot(callback: CallbackQuery, platform_user: dict | None)
         return
     parts = callback.data.split(":")
     ch_id = int(parts[1])
-    await _show_channel_detail(callback, platform_user, ch_id)
+    child_bot_id = int(parts[2]) if len(parts) > 2 and parts[2] else None
+    owner_id = platform_user["user_id"]
+
+    ch = await db.fetchrow(
+        "SELECT * FROM bot_chats WHERE id=$1 AND owner_id=$2",
+        ch_id, owner_id,
+    )
+    if not ch:
+        await callback.answer("Площадка не найдена", show_alert=True)
+        return
+
+    status_label = "🟢 Активна" if ch["is_active"] else "🔴 Неактивна"
+    toggle_text  = "⏸ Остановить" if ch["is_active"] else "▶️ Запустить"
+    added = ch["added_at"].strftime("%d.%m.%Y") if ch.get("added_at") else "—"
+    type_icon = "📢" if ch.get("chat_type") == "channel" else "👥"
+    title = ch["chat_title"] or f"Чат {ch['chat_id']}"
+    back_cb = f"bot_chats_list:{child_bot_id}" if child_bot_id else "menu:channels"
+
+    await callback.message.edit_text(
+        f"📍 <b>Площадка:</b> {type_icon} {title}\n\n"
+        f"📅 <b>Дата добавления:</b> {added}\n\n"
+        f"Выберите действие ⬇️",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=status_label, callback_data=f"ch_in_bot_toggle:{ch_id}:{child_bot_id or ''}")],
+            [InlineKeyboardButton(text="🗑 Удалить",  callback_data=f"ch_delete:{ch_id}:{child_bot_id or ''}")],
+            [InlineKeyboardButton(text="◀️ Назад",    callback_data=back_cb)],
+        ]),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("ch_in_bot_toggle:"))
+async def on_ch_in_bot_toggle(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    parts = callback.data.split(":")
+    ch_id = int(parts[1])
+    child_bot_id = int(parts[2]) if len(parts) > 2 and parts[2] else None
+    owner_id = platform_user["user_id"]
+
+    ch = await db.fetchrow(
+        "SELECT is_active FROM bot_chats WHERE id=$1 AND owner_id=$2",
+        ch_id, owner_id,
+    )
+    if not ch:
+        return
+    new_val = not ch["is_active"]
+    await db.execute(
+        "UPDATE bot_chats SET is_active=$1 WHERE id=$2 AND owner_id=$3",
+        new_val, ch_id, owner_id,
+    )
+    await callback.answer("🟢 Включена" if new_val else "🔴 Выключена")
+    # Перерендер экрана
+    callback.data = f"channel_in_bot:{ch_id}:{child_bot_id or ''}"
+    await on_channel_in_bot(callback, platform_user)
 
 
 @router.callback_query(F.data.startswith("channel_by_chat:"))

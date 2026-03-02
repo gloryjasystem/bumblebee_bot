@@ -1279,25 +1279,266 @@ async def on_bs_settings(callback: CallbackQuery, platform_user: dict | None):
     if not platform_user:
         return
     child_bot_id = int(callback.data.split(":")[1])
-    owner_id = platform_user["user_id"]
-    bot = await db.fetchrow(
-        "SELECT bot_username, created_at FROM child_bots WHERE id=$1 AND owner_id=$2", child_bot_id, owner_id)
-    if not bot:
-        await callback.answer("Бот не найден", show_alert=True)
-        return
-    chats_count = await db.fetchval(
-        "SELECT COUNT(*) FROM bot_chats WHERE child_bot_id=$1 AND owner_id=$2", child_bot_id, owner_id) or 0
-    added = bot["created_at"].strftime("%d.%m.%Y") if bot.get("created_at") else "—"
     await callback.message.edit_text(
-        f"⚙️ <b>Управление ботом</b>\n\n"
-        f"🤖 @{bot['bot_username']}\n📅 Создан: {added}\n📍 Площадок: {chats_count}",
+        "⚙️ <b>Управление</b>\n\nВыберите действие ⬇️",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="📍 Площадки",   callback_data=f"bot_chats_list:{child_bot_id}")],
-            [InlineKeyboardButton(text="🗑 Удалить бот", callback_data=f"bot_delete:{child_bot_id}")],
-            [InlineKeyboardButton(text="◀️ Назад",       callback_data=f"bot_settings:{child_bot_id}")],
+            [InlineKeyboardButton(text="🗄 База",          callback_data=f"bs_base:{child_bot_id}")],
+            [InlineKeyboardButton(text="👥 Команда",       callback_data=f"bs_team:{child_bot_id}")],
+            [InlineKeyboardButton(text="🕐 Часовой пояс",  callback_data=f"bs_timezone:{child_bot_id}")],
+            [InlineKeyboardButton(text="◀️ Назад",          callback_data=f"bot_settings:{child_bot_id}")],
         ]),
     )
     await callback.answer()
+
+
+# ── База пользователей ────────────────────────────────────────
+@router.callback_query(F.data.startswith("bs_base:"))
+async def on_bs_base(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    child_bot_id = int(callback.data.split(":")[1])
+    owner_id = platform_user["user_id"]
+
+    total = await db.fetchval(
+        """SELECT COUNT(*) FROM bot_users bu
+           JOIN bot_chats bc ON bu.chat_id=bc.chat_id AND bu.owner_id=bc.owner_id
+           WHERE bc.child_bot_id=$1 AND bc.owner_id=$2""",
+        child_bot_id, owner_id,
+    ) or 0
+    active = await db.fetchval(
+        """SELECT COUNT(*) FROM bot_users bu
+           JOIN bot_chats bc ON bu.chat_id=bc.chat_id AND bu.owner_id=bc.owner_id
+           WHERE bc.child_bot_id=$1 AND bc.owner_id=$2 AND bu.is_active=true AND bu.bot_activated=true""",
+        child_bot_id, owner_id,
+    ) or 0
+    premium = await db.fetchval(
+        """SELECT COUNT(*) FROM bot_users bu
+           JOIN bot_chats bc ON bu.chat_id=bc.chat_id AND bu.owner_id=bc.owner_id
+           WHERE bc.child_bot_id=$1 AND bc.owner_id=$2 AND bu.is_premium=true""",
+        child_bot_id, owner_id,
+    ) or 0
+    inactive = max(total - active, 0)
+
+    await callback.message.edit_text(
+        "🗄 <b>База пользователей</b>\n\n"
+        "<blockquote>"
+        "Здесь хранятся все пользователи, которые взаимодействовали "
+        "с каналами и группами вашего бота.\n\n"
+        "Вы можете выгрузить базу в формате CSV — это удобно для "
+        "аналитики, рассылок через сторонние сервисы или резервной копии."
+        "</blockquote>\n\n"
+        f"👥 <b>Всего в базе:</b> {total:,}\n"
+        f"🟢 <b>Активных (в боте):</b> {active:,}\n"
+        f"🔴 <b>Неактивных:</b> {inactive:,}\n"
+        f"⭐ <b>Premium:</b> {premium:,}",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(
+                text="📥 Выгрузить всю базу (CSV)",
+                callback_data=f"bs_base_export:{child_bot_id}:all",
+            )],
+            [InlineKeyboardButton(
+                text="🟢 Выгрузить активных",
+                callback_data=f"bs_base_export:{child_bot_id}:active",
+            )],
+            [InlineKeyboardButton(
+                text="⭐ Выгрузить Premium",
+                callback_data=f"bs_base_export:{child_bot_id}:premium",
+            )],
+            [InlineKeyboardButton(text="◀️ Назад", callback_data=f"bs_settings:{child_bot_id}")],
+        ]),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("bs_base_export:"))
+async def on_bs_base_export(callback: CallbackQuery, bot: Bot, platform_user: dict | None):
+    if not platform_user:
+        return
+    parts = callback.data.split(":")
+    child_bot_id = int(parts[1])
+    mode = parts[2] if len(parts) > 2 else "all"
+    owner_id = platform_user["user_id"]
+
+    await callback.answer("⏳ Формирую файл...", show_alert=False)
+
+    # Формируем WHERE в зависимости от режима
+    extra_filter = ""
+    label = "все"
+    if mode == "active":
+        extra_filter = "AND bu.is_active=true AND bu.bot_activated=true"
+        label = "активные"
+    elif mode == "premium":
+        extra_filter = "AND bu.is_premium=true"
+        label = "premium"
+
+    rows = await db.fetch(
+        f"""SELECT bu.user_id, bu.username, bu.first_name, bu.language_code,
+                   bu.is_premium, bu.is_active, bu.bot_activated,
+                   bu.joined_at, bc.chat_title
+            FROM bot_users bu
+            JOIN bot_chats bc ON bu.chat_id=bc.chat_id AND bu.owner_id=bc.owner_id
+            WHERE bc.child_bot_id=$1 AND bc.owner_id=$2 {extra_filter}
+            ORDER BY bu.joined_at DESC""",
+        child_bot_id, owner_id,
+    )
+
+    if not rows:
+        try:
+            await callback.message.edit_text(
+                "🗄 <b>База пользователей</b>\n\n"
+                "⚠️ Нет пользователей для выгрузки по выбранному фильтру.",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="◀️ Назад", callback_data=f"bs_base:{child_bot_id}")],
+                ]),
+            )
+        except Exception:
+            pass
+        return
+
+    # Генерируем CSV в памяти
+    import csv
+    import io
+    from datetime import datetime
+
+    output = io.StringIO()
+    writer = csv.writer(output, delimiter=";", quoting=csv.QUOTE_MINIMAL)
+    writer.writerow(["user_id", "username", "first_name", "language",
+                     "premium", "active", "bot_activated", "joined_at", "channel"])
+    for r in rows:
+        writer.writerow([
+            r["user_id"],
+            r["username"] or "",
+            r["first_name"] or "",
+            r["language_code"] or "",
+            "да" if r["is_premium"] else "нет",
+            "да" if r["is_active"] else "нет",
+            "да" if r["bot_activated"] else "нет",
+            r["joined_at"].strftime("%d.%m.%Y %H:%M") if r["joined_at"] else "",
+            r["chat_title"] or "",
+        ])
+
+    csv_bytes = output.getvalue().encode("utf-8-sig")  # BOM для Excel
+    filename = f"users_{label}_{datetime.now().strftime('%Y%m%d_%H%M')}.csv"
+
+    from aiogram.types import BufferedInputFile
+    file = BufferedInputFile(csv_bytes, filename=filename)
+
+    bot_row = await db.fetchrow(
+        "SELECT bot_username FROM child_bots WHERE id=$1", child_bot_id)
+    caption = (
+        f"📊 <b>База пользователей @{bot_row['bot_username'] if bot_row else ''}</b>\n\n"
+        f"🔖 Фильтр: <b>{label}</b>\n"
+        f"👥 Записей: <b>{len(rows):,}</b>\n\n"
+        "Формат: CSV (разделитель ;)\n"
+        "Кодировка: UTF-8 с BOM (совместимо с Excel)"
+    )
+
+    try:
+        await bot.send_document(
+            chat_id=owner_id,
+            document=file,
+            caption=caption,
+            parse_mode="HTML",
+        )
+        # Обновляем сообщение-меню
+        await callback.message.edit_text(
+            "🗄 <b>База пользователей</b>\n\n"
+            f"✅ Файл <code>{filename}</code> отправлен.\n"
+            f"Записей: <b>{len(rows):,}</b>",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="◀️ Назад", callback_data=f"bs_base:{child_bot_id}")],
+            ]),
+        )
+    except Exception as e:
+        logger.error(f"CSV export error: {e}")
+        await callback.message.edit_text(
+            "❌ Ошибка при отправке файла. Попробуйте позже.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="◀️ Назад", callback_data=f"bs_base:{child_bot_id}")],
+            ]),
+        )
+
+
+# ── Команда ───────────────────────────────────────────────────
+@router.callback_query(F.data.startswith("bs_team:"))
+async def on_bs_team(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    child_bot_id = int(callback.data.split(":")[1])
+    await callback.message.edit_text(
+        "👥 <b>Команда</b>\n\n"
+        "<blockquote>Раздел для управления командой модераторов.\n\n"
+        "Здесь можно будет добавлять администраторов, ограничивать доступ "
+        "к разделам и следить за действиями команды.</blockquote>\n\n"
+        "🔧 Функция находится в разработке и появится в ближайшем обновлении.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="◀️ Назад", callback_data=f"bs_settings:{child_bot_id}")],
+        ]),
+    )
+    await callback.answer()
+
+
+# ── Часовой пояс ─────────────────────────────────────────────
+_BS_TIMEZONES = [
+    ("UTC+3 Москва",          "Europe/Moscow"),
+    ("UTC+0 Лондон",          "UTC"),
+    ("UTC+1 Берлин",          "Europe/Berlin"),
+    ("UTC+2 Киев",            "Europe/Kiev"),
+    ("UTC+5 Екатеринбург",    "Asia/Yekaterinburg"),
+    ("UTC+6 Омск",            "Asia/Omsk"),
+    ("UTC+7 Красноярск",      "Asia/Krasnoyarsk"),
+    ("UTC+8 Иркутск",         "Asia/Irkutsk"),
+    ("UTC+9 Якутск",          "Asia/Yakutsk"),
+    ("UTC+10 Владивосток",    "Asia/Vladivostok"),
+]
+
+
+@router.callback_query(F.data.startswith("bs_timezone:"))
+async def on_bs_timezone(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    child_bot_id = int(callback.data.split(":")[1])
+    owner_id = platform_user["user_id"]
+
+    ch = await _get_bot_first_chat(owner_id, child_bot_id)
+    current_tz = ch["timezone"] if ch and ch.get("timezone") else "UTC"
+
+    buttons = []
+    for label, tz in _BS_TIMEZONES:
+        mark = "✅ " if tz == current_tz else ""
+        buttons.append([InlineKeyboardButton(
+            text=f"{mark}{label}",
+            callback_data=f"bs_tz_set:{child_bot_id}:{tz}",
+        )])
+    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"bs_settings:{child_bot_id}")])
+
+    await callback.message.edit_text(
+        f"🕐 <b>Часовой пояс</b>\n\n"
+        f"Текущий: <code>{current_tz}</code>\n\n"
+        "Применяется ко всем площадкам бота (время рассылок, отчётов):",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("bs_tz_set:"))
+async def on_bs_tz_set(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    parts = callback.data.split(":")
+    child_bot_id = int(parts[1])
+    tz = ":".join(parts[2:])
+    owner_id = platform_user["user_id"]
+
+    await db.execute(
+        "UPDATE bot_chats SET timezone=$1 WHERE child_bot_id=$2 AND owner_id=$3",
+        tz, child_bot_id, owner_id,
+    )
+    await callback.answer(f"✅ Часовой пояс: {tz}")
+    # Перерисовываем экран
+    callback.data = f"bs_timezone:{child_bot_id}"
+    await on_bs_timezone(callback, platform_user)
+
 
 
 # ── Рассылка / Ссылки / Обратная связь — выбор канала ────────

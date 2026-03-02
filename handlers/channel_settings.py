@@ -437,10 +437,16 @@ async def on_welcome_set(callback: CallbackQuery, state: FSMContext, platform_us
 async def on_welcome_input(message: Message, state: FSMContext):
     data = await state.get_data()
     text = sanitize(message.text or message.caption or "", max_len=1024)
-    await db.execute(
-        "UPDATE bot_chats SET welcome_text=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
-        text, data["owner_id"], data["chat_id"],
-    )
+    if data.get("mode") == "bot" and data.get("child_bot_id"):
+        await db.execute(
+            "UPDATE bot_chats SET welcome_text=$1 WHERE child_bot_id=$2 AND owner_id=$3",
+            text, data["child_bot_id"], data["owner_id"],
+        )
+    else:
+        await db.execute(
+            "UPDATE bot_chats SET welcome_text=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
+            text, data["owner_id"], data["chat_id"],
+        )
     await state.clear()
     await message.answer("✅ Приветствие сохранено")
 
@@ -483,10 +489,16 @@ async def on_farewell_set(callback: CallbackQuery, state: FSMContext, platform_u
 async def on_farewell_input(message: Message, state: FSMContext):
     data = await state.get_data()
     text = sanitize(message.text or "", max_len=512)
-    await db.execute(
-        "UPDATE bot_chats SET farewell_text=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
-        text, data["owner_id"], data["chat_id"],
-    )
+    if data.get("mode") == "bot" and data.get("child_bot_id"):
+        await db.execute(
+            "UPDATE bot_chats SET farewell_text=$1 WHERE child_bot_id=$2 AND owner_id=$3",
+            text, data["child_bot_id"], data["owner_id"],
+        )
+    else:
+        await db.execute(
+            "UPDATE bot_chats SET farewell_text=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
+            text, data["owner_id"], data["chat_id"],
+        )
     await state.clear()
     await message.answer("✅ Прощание сохранено")
 
@@ -879,3 +891,455 @@ async def on_ch_tz_set(callback: CallbackQuery, platform_user: dict | None):
         ]),
     )
 
+
+# ══════════════════════════════════════════════════════════════
+# ██ БОТ-УРОВЕНЬ: bs_* handlers (применяют к ВСЕМ каналам бота)
+# ══════════════════════════════════════════════════════════════
+
+async def _get_bot_first_chat(owner_id: int, child_bot_id: int):
+    """Возвращает первый активный bot_chats для чтения текущих настроек."""
+    return await db.fetchrow(
+        "SELECT * FROM bot_chats WHERE child_bot_id=$1 AND owner_id=$2 AND is_active=true LIMIT 1",
+        child_bot_id, owner_id,
+    )
+
+
+# ── Обработка заявок ─────────────────────────────────────────
+async def _show_bs_requests(callback: CallbackQuery, platform_user: dict, child_bot_id: int):
+    owner_id = platform_user["user_id"]
+    ch = await _get_bot_first_chat(owner_id, child_bot_id)
+    if not ch:
+        await callback.answer("Нет активных площадок у бота", show_alert=True)
+        return
+    pending = await db.fetchval(
+        """SELECT COUNT(*) FROM join_requests jr
+           JOIN bot_chats bc ON jr.chat_id=bc.chat_id AND jr.owner_id=bc.owner_id
+           WHERE bc.child_bot_id=$1 AND bc.owner_id=$2 AND jr.status='pending'""",
+        child_bot_id, owner_id,
+    ) or 0
+    auto  = ch["autoaccept"]
+    delay = ch["autoaccept_delay"] or 0
+    auto_label  = "✅ Автопринятие: ВКЛ 🟢" if auto else "☑️ Автопринятие: ВЫКЛ 🔴"
+    delay_label = f"⏰ Отложенное: {_delay_label(delay)}"
+    await callback.message.edit_text(
+        "✅ <b>Обработка заявок</b> (все площадки)\n\n"
+        f"🔍 Заявок в очереди: <b>{pending}</b>\n\n"
+        "💡 <i>Настройки применяются ко всем каналам бота.</i>",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=auto_label,           callback_data=f"bs_req_auto:{child_bot_id}")],
+            [
+                InlineKeyboardButton(text="✔️ Принять всё",  callback_data=f"bs_req_accept_all:{child_bot_id}"),
+                InlineKeyboardButton(text="✖️ Отклонить всё",callback_data=f"bs_req_decline_all:{child_bot_id}"),
+            ],
+            [InlineKeyboardButton(text=delay_label,          callback_data=f"bs_req_delay:{child_bot_id}")],
+            [InlineKeyboardButton(text="◀️ Назад",            callback_data=f"bot_settings:{child_bot_id}")],
+        ]),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("bs_requests:"))
+async def on_bs_requests(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    await _show_bs_requests(callback, platform_user, int(callback.data.split(":")[1]))
+
+
+@router.callback_query(F.data.startswith("bs_req_auto:"))
+async def on_bs_req_auto(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    child_bot_id = int(callback.data.split(":")[1])
+    owner_id = platform_user["user_id"]
+    ch = await _get_bot_first_chat(owner_id, child_bot_id)
+    if not ch:
+        return
+    new_val = not ch["autoaccept"]
+    await db.execute(
+        "UPDATE bot_chats SET autoaccept=$1 WHERE child_bot_id=$2 AND owner_id=$3",
+        new_val, child_bot_id, owner_id,
+    )
+    await callback.answer("✅ ВКЛ" if new_val else "🔴 ВЫКЛ")
+    await _show_bs_requests(callback, platform_user, child_bot_id)
+
+
+@router.callback_query(F.data.startswith("bs_req_delay:"))
+async def on_bs_req_delay(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    child_bot_id = int(callback.data.split(":")[1])
+    owner_id = platform_user["user_id"]
+    ch = await _get_bot_first_chat(owner_id, child_bot_id)
+    current = ch["autoaccept_delay"] or 0 if ch else 0
+    new_delay = _next_delay(current)
+    await db.execute(
+        "UPDATE bot_chats SET autoaccept_delay=$1 WHERE child_bot_id=$2 AND owner_id=$3",
+        new_delay, child_bot_id, owner_id,
+    )
+    await callback.answer(f"⏰ {_delay_label(new_delay)}")
+    await _show_bs_requests(callback, platform_user, child_bot_id)
+
+
+@router.callback_query(F.data.startswith("bs_req_accept_all:"))
+async def on_bs_req_accept_all(callback: CallbackQuery, bot: Bot, platform_user: dict | None):
+    if not platform_user:
+        return
+    child_bot_id = int(callback.data.split(":")[1])
+    owner_id = platform_user["user_id"]
+    from aiogram import Bot as AioBot
+    from services.security import decrypt_token
+    bot_row = await db.fetchrow(
+        "SELECT token_encrypted FROM child_bots WHERE id=$1 AND owner_id=$2", child_bot_id, owner_id)
+    chats = await db.fetch(
+        "SELECT chat_id FROM bot_chats WHERE child_bot_id=$1 AND owner_id=$2 AND is_active=true",
+        child_bot_id, owner_id)
+    child_bot_instance = AioBot(token=decrypt_token(bot_row["token_encrypted"])) if bot_row else bot
+    approved = 0
+    for chat_row in chats:
+        pending = await db.fetch(
+            "SELECT user_id FROM join_requests WHERE owner_id=$1 AND chat_id=$2::bigint AND status='pending'",
+            owner_id, chat_row["chat_id"])
+        for row in pending:
+            try:
+                await child_bot_instance.approve_chat_join_request(chat_row["chat_id"], row["user_id"])
+                approved += 1
+            except Exception:
+                pass
+        if pending:
+            await db.execute(
+                "UPDATE join_requests SET status='approved', resolved_at=now() "
+                "WHERE owner_id=$1 AND chat_id=$2::bigint AND status='pending'",
+                owner_id, chat_row["chat_id"])
+    if bot_row:
+        await child_bot_instance.session.close()
+    await callback.answer(f"✔️ Принято: {approved}", show_alert=True)
+    await _show_bs_requests(callback, platform_user, child_bot_id)
+
+
+@router.callback_query(F.data.startswith("bs_req_decline_all:"))
+async def on_bs_req_decline_all(callback: CallbackQuery, bot: Bot, platform_user: dict | None):
+    if not platform_user:
+        return
+    child_bot_id = int(callback.data.split(":")[1])
+    owner_id = platform_user["user_id"]
+    from aiogram import Bot as AioBot
+    from services.security import decrypt_token
+    bot_row = await db.fetchrow(
+        "SELECT token_encrypted FROM child_bots WHERE id=$1 AND owner_id=$2", child_bot_id, owner_id)
+    chats = await db.fetch(
+        "SELECT chat_id FROM bot_chats WHERE child_bot_id=$1 AND owner_id=$2 AND is_active=true",
+        child_bot_id, owner_id)
+    child_bot_instance = AioBot(token=decrypt_token(bot_row["token_encrypted"])) if bot_row else bot
+    declined = 0
+    for chat_row in chats:
+        pending = await db.fetch(
+            "SELECT user_id FROM join_requests WHERE owner_id=$1 AND chat_id=$2::bigint AND status='pending'",
+            owner_id, chat_row["chat_id"])
+        for row in pending:
+            try:
+                await child_bot_instance.decline_chat_join_request(chat_row["chat_id"], row["user_id"])
+                declined += 1
+            except Exception:
+                pass
+        if pending:
+            await db.execute(
+                "UPDATE join_requests SET status='declined', resolved_at=now() "
+                "WHERE owner_id=$1 AND chat_id=$2::bigint AND status='pending'",
+                owner_id, chat_row["chat_id"])
+    if bot_row:
+        await child_bot_instance.session.close()
+    await callback.answer(f"✖️ Отклонено: {declined}", show_alert=True)
+    await _show_bs_requests(callback, platform_user, child_bot_id)
+
+
+# ── Сообщения ────────────────────────────────────────────────
+@router.callback_query(F.data.startswith("bs_messages:"))
+async def on_bs_messages(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    child_bot_id = int(callback.data.split(":")[1])
+    owner_id = platform_user["user_id"]
+    ch = await _get_bot_first_chat(owner_id, child_bot_id)
+    if not ch:
+        await callback.answer("Нет активных площадок", show_alert=True)
+        return
+    has_welcome  = "✏️ Изменить" if ch.get("welcome_text")  else "➕ Настроить"
+    has_farewell = "✏️ Изменить" if ch.get("farewell_text") else "➕ Настроить"
+    await callback.message.edit_text(
+        "💬 <b>Сообщения</b> (все площадки)\n\nПрименяется ко всем каналам бота одновременно.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=f"👋 Приветствие — {has_welcome}", callback_data=f"bs_welcome:{child_bot_id}")],
+            [InlineKeyboardButton(text=f"👋 Прощание — {has_farewell}",   callback_data=f"bs_farewell:{child_bot_id}")],
+            [InlineKeyboardButton(text="◀️ Назад",                        callback_data=f"bot_settings:{child_bot_id}")],
+        ]),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("bs_welcome:"))
+async def on_bs_welcome(callback: CallbackQuery, state: FSMContext, platform_user: dict | None):
+    if not platform_user:
+        return
+    child_bot_id = int(callback.data.split(":")[1])
+    owner_id = platform_user["user_id"]
+    ch = await _get_bot_first_chat(owner_id, child_bot_id)
+    current = f"\n\nТекущий текст:\n<i>{ch['welcome_text'][:200]}</i>" if ch and ch.get("welcome_text") else ""
+    await state.set_state(SettingsFSM.waiting_for_welcome_text)
+    await state.update_data(child_bot_id=child_bot_id, owner_id=owner_id, mode="bot")
+    await callback.message.edit_text(
+        f"👋 <b>Приветствие</b>{current}\n\n"
+        "Отправьте новый текст — он применится ко всем площадкам бота.\n"
+        "Переменные: <code>{name}</code>, <code>{channel}</code>",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🗑 Удалить", callback_data=f"bs_welcome_del:{child_bot_id}")],
+            [InlineKeyboardButton(text="🚫 Отмена",  callback_data=f"bs_messages:{child_bot_id}")],
+        ]),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("bs_welcome_del:"))
+async def on_bs_welcome_del(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    child_bot_id = int(callback.data.split(":")[1])
+    await db.execute(
+        "UPDATE bot_chats SET welcome_text=NULL WHERE child_bot_id=$1 AND owner_id=$2",
+        child_bot_id, platform_user["user_id"])
+    await callback.answer("✅ Приветствие удалено")
+    callback.data = f"bs_messages:{child_bot_id}"
+    await on_bs_messages(callback, platform_user)
+
+
+@router.callback_query(F.data.startswith("bs_farewell:"))
+async def on_bs_farewell(callback: CallbackQuery, state: FSMContext, platform_user: dict | None):
+    if not platform_user:
+        return
+    child_bot_id = int(callback.data.split(":")[1])
+    owner_id = platform_user["user_id"]
+    await state.set_state(SettingsFSM.waiting_for_farewell_text)
+    await state.update_data(child_bot_id=child_bot_id, owner_id=owner_id, mode="bot")
+    await callback.message.edit_text(
+        "👋 <b>Прощание</b>\n\nПрименяется ко всем площадкам бота.\n"
+        "Переменные: <code>{name}</code>, <code>{channel}</code>",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🗑 Удалить", callback_data=f"bs_farewell_del:{child_bot_id}")],
+            [InlineKeyboardButton(text="🚫 Отмена",  callback_data=f"bs_messages:{child_bot_id}")],
+        ]),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("bs_farewell_del:"))
+async def on_bs_farewell_del(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    child_bot_id = int(callback.data.split(":")[1])
+    await db.execute(
+        "UPDATE bot_chats SET farewell_text=NULL WHERE child_bot_id=$1 AND owner_id=$2",
+        child_bot_id, platform_user["user_id"])
+    await callback.answer("✅ Прощание удалено")
+    callback.data = f"bs_messages:{child_bot_id}"
+    await on_bs_messages(callback, platform_user)
+
+
+# ── Защита ────────────────────────────────────────────────────
+async def _show_bs_protection(callback: CallbackQuery, platform_user: dict, child_bot_id: int):
+    owner_id = platform_user["user_id"]
+    ch = await _get_bot_first_chat(owner_id, child_bot_id)
+    if not ch:
+        await callback.answer("Нет активных площадок", show_alert=True)
+        return
+    rtl      = "✅" if ch.get("filter_rtl")       else "☐"
+    hiero    = "✅" if ch.get("filter_hieroglyph") else "☐"
+    no_photo = "✅" if ch.get("filter_no_photo")   else "☐"
+    await callback.message.edit_text(
+        "🛡 <b>Защита</b> (все площадки)\n\nФильтры применяются ко всем каналам бота.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=f"{rtl} Фильтр RTL-имён",       callback_data=f"bs_filter_rtl:{child_bot_id}")],
+            [InlineKeyboardButton(text=f"{hiero} Фильтр иероглифов",    callback_data=f"bs_filter_hier:{child_bot_id}")],
+            [InlineKeyboardButton(text=f"{no_photo} Фильтр без фото",   callback_data=f"bs_filter_photo:{child_bot_id}")],
+            [InlineKeyboardButton(text="🌍 Языковые фильтры",            callback_data=f"bs_lang_filters:{child_bot_id}")],
+            [InlineKeyboardButton(text="◀️ Назад",                       callback_data=f"bot_settings:{child_bot_id}")],
+        ]),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("bs_protection:"))
+async def on_bs_protection(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    await _show_bs_protection(callback, platform_user, int(callback.data.split(":")[1]))
+
+
+@router.callback_query(F.data.startswith("bs_filter_rtl:"))
+async def on_bs_filter_rtl(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    child_bot_id = int(callback.data.split(":")[1])
+    owner_id = platform_user["user_id"]
+    ch = await _get_bot_first_chat(owner_id, child_bot_id)
+    new_val = not (ch["filter_rtl"] if ch else False)
+    await db.execute("UPDATE bot_chats SET filter_rtl=$1 WHERE child_bot_id=$2 AND owner_id=$3",
+                     new_val, child_bot_id, owner_id)
+    await callback.answer("RTL: " + ("✅ Вкл" if new_val else "☐ Выкл"))
+    await _show_bs_protection(callback, platform_user, child_bot_id)
+
+
+@router.callback_query(F.data.startswith("bs_filter_hier:"))
+async def on_bs_filter_hier(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    child_bot_id = int(callback.data.split(":")[1])
+    owner_id = platform_user["user_id"]
+    ch = await _get_bot_first_chat(owner_id, child_bot_id)
+    new_val = not (ch["filter_hieroglyph"] if ch else False)
+    await db.execute("UPDATE bot_chats SET filter_hieroglyph=$1 WHERE child_bot_id=$2 AND owner_id=$3",
+                     new_val, child_bot_id, owner_id)
+    await callback.answer("Иероглифы: " + ("✅ Вкл" if new_val else "☐ Выкл"))
+    await _show_bs_protection(callback, platform_user, child_bot_id)
+
+
+@router.callback_query(F.data.startswith("bs_filter_photo:"))
+async def on_bs_filter_photo(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    child_bot_id = int(callback.data.split(":")[1])
+    owner_id = platform_user["user_id"]
+    ch = await _get_bot_first_chat(owner_id, child_bot_id)
+    new_val = not (ch["filter_no_photo"] if ch else False)
+    await db.execute("UPDATE bot_chats SET filter_no_photo=$1 WHERE child_bot_id=$2 AND owner_id=$3",
+                     new_val, child_bot_id, owner_id)
+    await callback.answer("Без фото: " + ("✅ Вкл" if new_val else "☐ Выкл"))
+    await _show_bs_protection(callback, platform_user, child_bot_id)
+
+
+@router.callback_query(F.data.startswith("bs_lang_filters:"))
+async def on_bs_lang_filters(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    child_bot_id = int(callback.data.split(":")[1])
+    owner_id = platform_user["user_id"]
+    ch = await _get_bot_first_chat(owner_id, child_bot_id)
+    if not ch:
+        await callback.answer("Нет площадок", show_alert=True)
+        return
+    chat_id = ch["chat_id"]
+    blocked = await db.fetch(
+        "SELECT language_code FROM language_filters WHERE owner_id=$1 AND chat_id=$2::bigint",
+        owner_id, chat_id)
+    blocked_codes = {r["language_code"] for r in blocked}
+    buttons = []
+    for code, label in LANGUAGE_OPTIONS.items():
+        mark = "🚫" if code in blocked_codes else "🌍"
+        buttons.append([InlineKeyboardButton(text=f"{mark} {label}",
+                                             callback_data=f"bs_lang_toggle:{child_bot_id}:{code}")])
+    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"bs_protection:{child_bot_id}")])
+    await callback.message.edit_text(
+        "🌍 <b>Языковые фильтры</b> (все площадки)\n\n🚫 — заблокирован | 🌍 — разрешён",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("bs_lang_toggle:"))
+async def on_bs_lang_toggle(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    parts = callback.data.split(":")
+    child_bot_id, code = int(parts[1]), parts[2]
+    owner_id = platform_user["user_id"]
+    chats = await db.fetch(
+        "SELECT chat_id FROM bot_chats WHERE child_bot_id=$1 AND owner_id=$2", child_bot_id, owner_id)
+    if not chats:
+        return
+    first = chats[0]["chat_id"]
+    exists = await db.fetchrow(
+        "SELECT 1 FROM language_filters WHERE owner_id=$1 AND chat_id=$2::bigint AND language_code=$3",
+        owner_id, first, code)
+    for chat_row in chats:
+        cid = chat_row["chat_id"]
+        if exists:
+            await db.execute(
+                "DELETE FROM language_filters WHERE owner_id=$1 AND chat_id=$2::bigint AND language_code=$3",
+                owner_id, cid, code)
+        else:
+            await db.execute(
+                "INSERT INTO language_filters (owner_id, chat_id, language_code) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING",
+                owner_id, cid, code)
+    msg = f"✅ {LANGUAGE_OPTIONS.get(code,'?')} разрешён" if exists else f"🚫 {LANGUAGE_OPTIONS.get(code,'?')} заблокирован"
+    await callback.answer(msg)
+    callback.data = f"bs_lang_filters:{child_bot_id}"
+    await on_bs_lang_filters(callback, platform_user)
+
+
+# ── Управление ботом ─────────────────────────────────────────
+@router.callback_query(F.data.startswith("bs_settings:"))
+async def on_bs_settings(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    child_bot_id = int(callback.data.split(":")[1])
+    owner_id = platform_user["user_id"]
+    bot = await db.fetchrow(
+        "SELECT bot_username, created_at FROM child_bots WHERE id=$1 AND owner_id=$2", child_bot_id, owner_id)
+    if not bot:
+        await callback.answer("Бот не найден", show_alert=True)
+        return
+    chats_count = await db.fetchval(
+        "SELECT COUNT(*) FROM bot_chats WHERE child_bot_id=$1 AND owner_id=$2", child_bot_id, owner_id) or 0
+    added = bot["created_at"].strftime("%d.%m.%Y") if bot.get("created_at") else "—"
+    await callback.message.edit_text(
+        f"⚙️ <b>Управление ботом</b>\n\n"
+        f"🤖 @{bot['bot_username']}\n📅 Создан: {added}\n📍 Площадок: {chats_count}",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📍 Площадки",   callback_data=f"bot_chats_list:{child_bot_id}")],
+            [InlineKeyboardButton(text="🗑 Удалить бот", callback_data=f"bot_delete:{child_bot_id}")],
+            [InlineKeyboardButton(text="◀️ Назад",       callback_data=f"bot_settings:{child_bot_id}")],
+        ]),
+    )
+    await callback.answer()
+
+
+# ── Рассылка / Ссылки / Обратная связь — выбор канала ────────
+async def _bs_channel_picker(callback: CallbackQuery, platform_user: dict,
+                             child_bot_id: int, section: str, title: str):
+    owner_id = platform_user["user_id"]
+    chats = await db.fetch(
+        "SELECT chat_id, chat_title FROM bot_chats WHERE child_bot_id=$1 AND owner_id=$2 AND is_active=true",
+        child_bot_id, owner_id)
+    if not chats:
+        await callback.answer("Нет активных площадок у бота", show_alert=True)
+        return
+    buttons = [[InlineKeyboardButton(
+        text=f"📍 {ch['chat_title'] or ch['chat_id']}",
+        callback_data=f"{section}:{ch['chat_id']}",
+    )] for ch in chats]
+    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"bot_settings:{child_bot_id}")])
+    await callback.message.edit_text(
+        f"{title}\n\nВыберите площадку:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("bs_mailing:"))
+async def on_bs_mailing(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    await _bs_channel_picker(callback, platform_user, int(callback.data.split(":")[1]),
+                             "ch_mailing", "📨 <b>Рассылка</b>")
+
+
+@router.callback_query(F.data.startswith("bs_links:"))
+async def on_bs_links(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    await _bs_channel_picker(callback, platform_user, int(callback.data.split(":")[1]),
+                             "ch_links", "🔗 <b>Ссылки</b>")
+
+
+@router.callback_query(F.data.startswith("bs_feedback:"))
+async def on_bs_feedback(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    await _bs_channel_picker(callback, platform_user, int(callback.data.split(":")[1]),
+                             "ch_feedback", "📣 <b>Обратная связь</b>")

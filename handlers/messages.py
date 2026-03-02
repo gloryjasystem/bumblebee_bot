@@ -86,8 +86,8 @@ async def _show_ch_messages(callback: CallbackQuery, chat_id: int, owner_id: int
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text=captcha_label,  callback_data=f"ch_captcha:{chat_id}")],
             [
-                InlineKeyboardButton(text="👋 Приветствие", callback_data=f"ch_welcome:{chat_id}"),
-                InlineKeyboardButton(text="🤚 Прощание",    callback_data=f"ch_farewell:{chat_id}"),
+                InlineKeyboardButton(text="👋 Приветствие", callback_data=f"welcome_set:{chat_id}"),
+                InlineKeyboardButton(text="🤚 Прощание",    callback_data=f"farewell_set:{chat_id}"),
             ],
             [InlineKeyboardButton(text="💬 Автоответчик",   callback_data=f"ch_autoreply:{chat_id}")],
             [
@@ -95,7 +95,7 @@ async def _show_ch_messages(callback: CallbackQuery, chat_id: int, owner_id: int
                 InlineKeyboardButton(text=reaction_label, callback_data=f"ch_reactions:{chat_id}"),
             ],
             [InlineKeyboardButton(text=delete_label, callback_data=f"ch_delete_toggle:{chat_id}")],
-            [InlineKeyboardButton(text="◀️ Назад",    callback_data=f"channel_by_chat:{chat_id}")],
+            [InlineKeyboardButton(text="◀️ Назад",    callback_data=f"ch_back_to_channel:{chat_id}")],
         ]),
     )
     await callback.answer()
@@ -615,3 +615,51 @@ async def on_ch_ar_del(callback: CallbackQuery, platform_user: dict | None):
     await callback.answer("🗑 Удалено")
     callback.data = f"ch_autoreply:{chat_id}"
     await on_ch_autoreply(callback, platform_user)
+
+
+# ── Кнопка «Назад» из экрана ch_messages ──────────────────────
+
+@router.callback_query(F.data.startswith("ch_back_to_channel:"))
+async def on_ch_back_to_channel(callback: CallbackQuery, platform_user: dict | None):
+    """Назад из меню Сообщений → карточка канала (channel_in_bot)."""
+    if not platform_user:
+        return
+    chat_id  = int(callback.data.split(":")[1])
+    owner_id = platform_user["user_id"]
+    row = await db.fetchrow(
+        "SELECT id, child_bot_id FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint",
+        owner_id, chat_id,
+    )
+    if row:
+        ch_id        = row["id"]
+        child_bot_id = row["child_bot_id"] or ""
+        callback.data = f"channel_in_bot:{ch_id}:{child_bot_id}"
+    else:
+        callback.data = "menu:channels"
+    # Перенаправляем на обработчик channel_in_bot или channels
+    from handlers.channels import router as ch_router  # локальный импорт
+    for handler in ch_router.callback_query.handlers:
+        pass  # просто используем edit_text напрямую
+
+    if row:
+        ch = await db.fetchrow("SELECT * FROM bot_chats WHERE id=$1", row["id"])
+        if ch:
+            title     = ch["chat_title"] or f"Чат {ch['chat_id']}"
+            status    = "🟢 Активна" if ch["is_active"] else "🔴 Неактивна"
+            added     = ch["added_at"].strftime("%d.%m.%Y") if ch.get("added_at") else "—"
+            type_icon = "📢" if ch.get("chat_type") == "channel" else "👥"
+            cbot      = row["child_bot_id"] or ""
+            from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton as IKB
+            await callback.message.edit_text(
+                f"📍 <b>Площадка:</b> {type_icon} {title}\n\n"
+                f"📅 <b>Дата добавления:</b> {added}\n\n"
+                "Выберите действие ⬇️",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [IKB(text=status, callback_data=f"ch_in_bot_toggle:{row['id']}:{cbot}")],
+                    [IKB(text="🗑 Удалить",  callback_data=f"ch_delete:{row['id']}:{cbot}")],
+                    [IKB(text="◀️ Назад",    callback_data=f"bot_chats_list:{cbot}" if cbot else "menu:channels")],
+                ]),
+            )
+            await callback.answer()
+            return
+    await callback.answer("Не удалось найти площадку", show_alert=True)

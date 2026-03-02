@@ -373,37 +373,6 @@ async def on_captcha_text_input(message: Message, state: FSMContext):
     await message.answer("✅ Текст капчи сохранён")
 
 
-# ══════════════════════════════════════════════════════════════
-# Настройки сообщений (из ch_messages:)
-# ══════════════════════════════════════════════════════════════
-def kb_messages(ch: dict) -> InlineKeyboardMarkup:
-    chat_id = ch["chat_id"]
-    has_welcome  = "✏️ Изменить" if ch.get("welcome_text") else "➕ Настроить"
-    has_farewell = "✏️ Изменить" if ch.get("farewell_text") else "➕ Настроить"
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=f"👋 Приветствие — {has_welcome}", callback_data=f"welcome_set:{chat_id}")],
-        [InlineKeyboardButton(text=f"👋 Прощание — {has_farewell}",  callback_data=f"farewell_set:{chat_id}")],
-        [InlineKeyboardButton(text="😄 Реакции на сообщения",         callback_data=f"reactions_set:{chat_id}")],
-        [InlineKeyboardButton(text="◀️ Назад",                        callback_data=f"channel_by_chat:{chat_id}")],
-    ])
-
-
-@router.callback_query(F.data.startswith("ch_messages:"))
-async def on_messages_menu(callback: CallbackQuery, platform_user: dict | None):
-    if not platform_user:
-        return
-    chat_id = int(callback.data.split(":")[1])
-    ch = await db.fetchrow(
-        "SELECT * FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint",
-        platform_user["user_id"], chat_id,
-    )
-    if not ch:
-        return
-    await callback.message.edit_text(
-        "💬 <b>Сообщения</b>\n\nНастройте приветствие, прощание и реакции:",
-        reply_markup=kb_messages(dict(ch)),
-    )
-    await callback.answer()
 
 
 # ── Приветствие ───────────────────────────────────────────────

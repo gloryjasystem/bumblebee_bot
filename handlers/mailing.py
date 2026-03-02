@@ -1,9 +1,9 @@
 """
-handlers/mailing.py — UI рассылки: создание, предпросмотр, запуск, управление.
+handlers/mailing.py — Рассылка: создание, настройки черновика, URL-кнопки, запуск.
 """
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from aiogram import Router, F, Bot
 from aiogram.types import (
     Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
@@ -22,51 +22,114 @@ router = Router()
 class MailingFSM(StatesGroup):
     waiting_for_text     = State()
     waiting_for_schedule = State()
+    waiting_for_buttons  = State()
 
 
-def kb_mailing_main(channels: list) -> InlineKeyboardMarkup:
-    buttons = [[
-        InlineKeyboardButton(
-            text=f"📢 {ch['chat_title'][:28]}",
-            callback_data=f"mailing_start:{ch['chat_id']}",
-        )
-    ] for ch in channels]
-    buttons.append([InlineKeyboardButton(text="📅 Запланированные", callback_data="mailing_scheduled")])
-    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data="menu:main")])
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
+# ══════════════════════════════════════════════════════════════
+# Вспомогательные функции
+# ══════════════════════════════════════════════════════════════
+
+def _yn(value: bool) -> str:
+    return "да" if value else "нет"
+
+def _resolve_vars(text: str, user: dict | None = None, chat_title: str = "") -> str:
+    """Подставляет переменные в текст рассылки."""
+    if not text:
+        return text
+    now = datetime.now(timezone.utc)
+    fname = (user or {}).get("first_name", "")
+    lname = (user or {}).get("last_name", "")
+    username = (user or {}).get("username", "")
+    text = text.replace("{name}", fname)
+    text = text.replace("{allname}", f"{fname} {lname}".strip())
+    text = text.replace("{username}", f"@{username}" if username else fname)
+    text = text.replace("{chat}", chat_title)
+    text = text.replace("{day}", now.strftime("%d.%m.%Y"))
+    return text
 
 
-def kb_mailing_compose() -> InlineKeyboardMarkup:
+def _kb_draft(m: dict) -> InlineKeyboardMarkup:
+    """Клавиатура настроек черновика (Экран 4)."""
+    mid = m["id"]
+    media_icon   = "📎 Медиа: ✅" if m.get("media_file_id") else "📎 Медиа: ⬇"
+    preview_icon = "👁 Превью: да" if not m.get("disable_preview") else "👁 Превью: нет"
+    notify_icon  = f"🔔 Уведомить: {_yn(m.get('notify_users', True))}"
+    protect_icon = f"🔒 Защитить: {_yn(m.get('protect_content', False))}"
+    pin_icon     = f"📌 Закрепить: {_yn(m.get('pin_message', False))}"
+    delete_icon  = f"🗑 Удалить: {_yn(m.get('delete_after_send', False))}"
+
     return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✏️ URL-кнопки", callback_data=f"ml_url_buttons:{mid}")],
         [
-            InlineKeyboardButton(text="👁 Предпросмотр", callback_data="mailing_preview"),
-            InlineKeyboardButton(text="🚫 Отмена",       callback_data="menu:mailing"),
+            InlineKeyboardButton(text=media_icon,   callback_data=f"ml_toggle:{mid}:media"),
+            InlineKeyboardButton(text=preview_icon, callback_data=f"ml_toggle:{mid}:preview"),
         ],
+        [
+            InlineKeyboardButton(text=notify_icon,  callback_data=f"ml_toggle:{mid}:notify"),
+            InlineKeyboardButton(text=protect_icon, callback_data=f"ml_toggle:{mid}:protect"),
+        ],
+        [
+            InlineKeyboardButton(text=pin_icon,    callback_data=f"ml_toggle:{mid}:pin"),
+            InlineKeyboardButton(text=delete_icon, callback_data=f"ml_toggle:{mid}:delete"),
+        ],
+        [
+            InlineKeyboardButton(text="🗓 Запланировать", callback_data=f"mailing_schedule:{m['chat_id']}:{mid}"),
+            InlineKeyboardButton(text="➡ Запустить",      callback_data=f"mailing_run:{m['chat_id']}:{mid}"),
+        ],
+        [InlineKeyboardButton(text="◀️ Назад", callback_data=f"ch_mailing:{m['chat_id']}")],
     ])
 
 
-def kb_mailing_confirm(chat_id: int) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="▶ Запустить сейчас",  callback_data=f"mailing_run:{chat_id}")],
-        [InlineKeyboardButton(text="⏱ Запланировать",     callback_data=f"mailing_schedule:{chat_id}")],
-        [InlineKeyboardButton(text="✏ Редактировать",     callback_data=f"mailing_edit:{chat_id}")],
-        [InlineKeyboardButton(text="🗑 Удалить черновик", callback_data="menu:mailing")],
-    ])
+def _draft_settings_text(m: dict) -> str:
+    """Текст блока настроек под превью."""
+    scheduled = m.get("scheduled_at")
+    dt_str = scheduled.strftime("%d.%m.%Y %H:%M") if scheduled else datetime.now(timezone.utc).strftime("%d.%m.%Y %H:%M")
+    return (
+        f"\n\n📅 <b>Дата рассылки:</b> {dt_str}\n"
+        f"🗑 <b>Удалить после:</b> {_yn(m.get('delete_after_send', False))}\n"
+        f"📌 <b>Закрепить:</b> {_yn(m.get('pin_message', False))}"
+    )
 
 
-def kb_mailing_control(mailing_id: int, paused: bool, speed: str) -> InlineKeyboardMarkup:
-    pause_text = "▶ Возобновить" if paused else "⏸ Пауза"
-    speed_map = {"low": "🟢 Низкая", "medium": "🟡 Средняя", "high": "🔴 Высокая"}
-    next_speed = {"low": "medium", "medium": "high", "high": "low"}
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=pause_text,            callback_data=f"ml_pause:{mailing_id}")],
-        [InlineKeyboardButton(text="⏹ Остановить",       callback_data=f"ml_cancel:{mailing_id}")],
-        [InlineKeyboardButton(text=f"⚡ Скорость: {speed_map.get(speed,'🟢 Низкая')}",
-                              callback_data=f"ml_speed:{mailing_id}:{next_speed.get(speed,'medium')}")],
-    ])
+async def _show_draft(callback: CallbackQuery, m: dict):
+    """Показывает Экран 4: превью сообщения + блок настроек."""
+    text  = m.get("text") or ""
+    media = m.get("media_file_id")
+    media_type = m.get("media_type")
+    settings_text = _draft_settings_text(m)
+
+    if media:
+        # Если есть медиа — отправляем новое сообщение с медиа, а текущее редактируем
+        caption = (text[:1000] if text else "") + settings_text
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass
+        send_fn = {
+            "photo": callback.message.answer_photo,
+            "video": callback.message.answer_video,
+            "document": callback.message.answer_document,
+        }.get(media_type, callback.message.answer_photo)
+        await send_fn(
+            media,
+            caption=caption,
+            parse_mode="HTML",
+            reply_markup=_kb_draft(m),
+        )
+    else:
+        preview = (text[:1200] if text else "—") + settings_text
+        await callback.message.edit_text(
+            preview,
+            parse_mode="HTML",
+            reply_markup=_kb_draft(m),
+        )
+    await callback.answer()
 
 
-# ── Рассылка для конкретной площадки (из меню площадки) ────────
+# ══════════════════════════════════════════════════════════════
+# Экран 2: меню рассылки для канала (ch_mailing:{chat_id})
+# ══════════════════════════════════════════════════════════════
+
 @router.callback_query(F.data.startswith("ch_mailing:"))
 async def on_ch_mailing(callback: CallbackQuery, platform_user: dict | None):
     if not platform_user:
@@ -81,11 +144,11 @@ async def on_ch_mailing(callback: CallbackQuery, platform_user: dict | None):
         platform_user["user_id"], chat_id,
     )
     title = ch["chat_title"] if ch else "Площадка"
+
     await callback.message.edit_text(
-        f"📨 <b>Рассылка</b>\n\n"
-        f"Выберите действие ≫",
+        f"📨 <b>Рассылка</b>\n\nВыберите действие ⬇️",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="➕ Создать рассылку",  callback_data=f"mailing_start:{chat_id}")],
+            [InlineKeyboardButton(text="➕ Создать рассылку", callback_data=f"mailing_start:{chat_id}")],
             [InlineKeyboardButton(text="📅 Запланированные",  callback_data=f"mailing_scheduled:{chat_id}")],
             [InlineKeyboardButton(text="◀️ Назад",             callback_data=f"channel_by_chat:{chat_id}")],
         ]),
@@ -93,61 +156,56 @@ async def on_ch_mailing(callback: CallbackQuery, platform_user: dict | None):
     await callback.answer()
 
 
-# ── Запланированные для конкретного канала ──────────────────────
+# ══════════════════════════════════════════════════════════════
+# Запланированные рассылки
+# ══════════════════════════════════════════════════════════════
+
 @router.callback_query(F.data.startswith("mailing_scheduled:"))
-async def on_mailing_scheduled_channel(callback: CallbackQuery, platform_user: dict | None):
+async def on_mailing_scheduled(callback: CallbackQuery, platform_user: dict | None):
     if not platform_user:
         return
     chat_id = int(callback.data.split(":")[1])
     owner_id = platform_user["user_id"]
+
     rows = await db.fetch(
-        """SELECT id, text, scheduled_at, status FROM mailings
+        """SELECT id, text, scheduled_at FROM mailings
            WHERE owner_id=$1 AND chat_id=$2::bigint AND status IN ('pending','scheduled')
            ORDER BY scheduled_at ASC LIMIT 10""",
         owner_id, chat_id,
     )
     if not rows:
-        await callback.answer("Нет запланированных рассылок.", show_alert=True)
+        await callback.message.edit_text(
+            "📅 <b>Запланированные рассылки</b>\n\nНет запланированных рассылок.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="◀️ Назад", callback_data=f"ch_mailing:{chat_id}")],
+            ]),
+        )
+        await callback.answer()
         return
+
     text = "📅 <b>Запланированные рассылки</b>\n\n"
+    buttons = []
     for r in rows:
         dt = r["scheduled_at"].strftime("%d.%m %H:%M") if r["scheduled_at"] else "Сейчас"
-        preview = (r["text"] or "")[:40]
+        preview = (r["text"] or "")[:35]
         text += f"• [{dt}] {preview}…\n"
+        buttons.append([InlineKeyboardButton(
+            text=f"🗓 {dt} — {preview[:20]}…",
+            callback_data=f"ml_view_draft:{r['id']}:{chat_id}",
+        )])
+    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"ch_mailing:{chat_id}")])
+
     await callback.message.edit_text(
-        text,
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="◀️ Назад", callback_data=f"ch_mailing:{chat_id}")],
-        ]),
+        text, parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
     )
     await callback.answer()
 
 
-# ── Главный экран рассылки ─────────────────────────────────────
-@router.callback_query(F.data == "menu:mailing")
-async def on_mailing_menu(callback: CallbackQuery, platform_user: dict | None):
-    if not platform_user:
-        return
-    tariff = platform_user["tariff"]
-    if tariff == "free":
-        await callback.answer("Рассылка доступна с тарифа Старт.", show_alert=True)
-        return
+# ══════════════════════════════════════════════════════════════
+# Экран 3: создание рассылки (ввод текста + переменные)
+# ══════════════════════════════════════════════════════════════
 
-    channels = await db.fetch(
-        "SELECT * FROM bot_chats WHERE owner_id=$1 AND is_active=true",
-        platform_user["user_id"],
-    )
-    await callback.message.edit_text(
-        "📨 <b>Массовая рассылка</b>\n\n"
-        "⚠️ Рассылка отправляется только пользователям, "
-        "которые открыли диалог с ботом (bot_activated).\n\n"
-        "Выберите площадку:",
-        reply_markup=kb_mailing_main(list(channels)),
-    )
-    await callback.answer()
-
-
-# ── Начало создания рассылки ─────────────────────────────────
 @router.callback_query(F.data.startswith("mailing_start:"))
 async def on_mailing_start(callback: CallbackQuery, state: FSMContext, platform_user: dict | None):
     if not platform_user:
@@ -160,29 +218,40 @@ async def on_mailing_start(callback: CallbackQuery, state: FSMContext, platform_
     if not ch:
         return
 
-    # Считаем bot_activated получателей
+    await state.update_data(chat_id=chat_id, owner_id=platform_user["user_id"])
+    await state.set_state(MailingFSM.waiting_for_text)
+
     count = await db.fetchval(
         "SELECT COUNT(*) FROM bot_users WHERE owner_id=$1 AND chat_id=$2 "
         "AND is_active=true AND bot_activated=true",
         platform_user["user_id"], chat_id,
-    )
-    await state.update_data(chat_id=chat_id, owner_id=platform_user["user_id"])
-    await state.set_state(MailingFSM.waiting_for_text)
+    ) or 0
+
     await callback.message.edit_text(
-        f"📨 <b>Рассылка — {ch['chat_title']}</b>\n\n"
-        f"👥 Получателей (bot_activated): <b>{count}</b>\n\n"
-        f"📝 Отправьте текст рассылки:\n"
-        f"(или прикрепите фото/видео с подписью)",
-        reply_markup=kb_mailing_compose(),
+        f"📨 Отправьте сообщение для рассылки.\n\n"
+        f"<b>Переменные:</b>\n"
+        f"├ Имя: <code>{{name}}</code>\n"
+        f"├ ФИО: <code>{{allname}}</code>\n"
+        f"├ Юзер: <code>{{username}}</code>\n"
+        f"├ Площадка: <code>{{chat}}</code>\n"
+        f"└ Текущая дата: <code>{{day}}</code>\n\n"
+        f"ⓘ Можно прикрепить медиа.\n\n"
+        f"👥 Получателей: <b>{count:,}</b>",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="◀️ Назад", callback_data=f"ch_mailing:{chat_id}")],
+        ]),
     )
     await callback.answer()
 
 
-# ── Получение текста рассылки ─────────────────────────────────
+# ══════════════════════════════════════════════════════════════
+# Получение сообщения → создание черновика → Экран 4
+# ══════════════════════════════════════════════════════════════
+
 @router.message(MailingFSM.waiting_for_text)
 async def on_mailing_text(message: Message, state: FSMContext):
     data = await state.get_data()
-    chat_id = data.get("chat_id")
+    chat_id  = data.get("chat_id")
     owner_id = data.get("owner_id")
 
     text = ""
@@ -204,38 +273,366 @@ async def on_mailing_text(message: Message, state: FSMContext):
         media_file_id = message.document.file_id
         media_type = "document"
 
-    # Сохраняем черновик
+    if not text and not media_file_id:
+        await message.answer("⚠️ Пожалуйста, отправьте текст или медиа.")
+        return
+
+    # Создаём черновик
     mailing_id = await db.fetchval(
-        """
-        INSERT INTO mailings (owner_id, chat_id, text, media_file_id, media_type)
-        VALUES ($1, $2, $3, $4, $5) RETURNING id
-        """,
+        """INSERT INTO mailings
+           (owner_id, chat_id, text, media_file_id, media_type,
+            notify_users, protect_content, pin_message, delete_after_send,
+            disable_preview, url_buttons_raw, button_color)
+           VALUES ($1,$2,$3,$4,$5, true,false,false,false, false,NULL,'blue')
+           RETURNING id""",
         owner_id, chat_id, text, media_file_id, media_type,
     )
-    await state.update_data(mailing_id=mailing_id)
     await state.clear()
 
-    preview = text[:200] + ("..." if len(text) > 200 else "")
-    await message.answer(
-        f"👁 <b>Предпросмотр:</b>\n\n{preview}\n\n"
-        f"{'📎 Медиа: ' + media_type if media_type else ''}",
-        reply_markup=kb_mailing_confirm(chat_id),
-    )
+    # Получаем только что созданный черновик
+    m = await db.fetchrow("SELECT * FROM mailings WHERE id=$1", mailing_id)
+
+    # Показываем Экран 4
+    settings_text = _draft_settings_text(dict(m))
+    preview_head  = (text[:1200] if text else "") + settings_text
+
+    if media_file_id:
+        send_fn = {
+            "photo": message.answer_photo,
+            "video": message.answer_video,
+            "document": message.answer_document,
+        }.get(media_type, message.answer_photo)
+        await send_fn(
+            media_file_id,
+            caption=(text[:1000] if text else "") + settings_text,
+            parse_mode="HTML",
+            reply_markup=_kb_draft(dict(m)),
+        )
+    else:
+        await message.answer(
+            preview_head,
+            parse_mode="HTML",
+            reply_markup=_kb_draft(dict(m)),
+        )
 
 
-# ── Запуск рассылки ───────────────────────────────────────────
-@router.callback_query(F.data.startswith("mailing_run:"))
-async def on_mailing_run(callback: CallbackQuery, bot: Bot, state: FSMContext, platform_user: dict | None):
+# ══════════════════════════════════════════════════════════════
+# Открыть существующий черновик
+# ══════════════════════════════════════════════════════════════
+
+@router.callback_query(F.data.startswith("ml_view_draft:"))
+async def on_ml_view_draft(callback: CallbackQuery, platform_user: dict | None):
     if not platform_user:
         return
-    chat_id = int(callback.data.split(":")[1])
+    parts = callback.data.split(":")
+    mailing_id = int(parts[1])
+    m = await db.fetchrow("SELECT * FROM mailings WHERE id=$1 AND owner_id=$2",
+                          mailing_id, platform_user["user_id"])
+    if not m:
+        await callback.answer("Черновик не найден", show_alert=True)
+        return
+    await _show_draft(callback, dict(m))
 
-    # Берём последний черновик
-    mailing = await db.fetchrow(
-        "SELECT id FROM mailings WHERE owner_id=$1 AND chat_id=$2 AND status='draft' "
-        "ORDER BY created_at DESC LIMIT 1",
-        platform_user["user_id"], chat_id,
+
+# ══════════════════════════════════════════════════════════════
+# Тогглеры настроек (Экран 4)
+# ══════════════════════════════════════════════════════════════
+
+_TOGGLE_MAP = {
+    "notify":  ("notify_users",       True),
+    "protect": ("protect_content",    False),
+    "pin":     ("pin_message",        False),
+    "delete":  ("delete_after_send",  False),
+    "preview": ("disable_preview",    False),
+}
+
+
+@router.callback_query(F.data.startswith("ml_toggle:"))
+async def on_ml_toggle(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    parts   = callback.data.split(":")
+    mid     = int(parts[1])
+    setting = parts[2]
+
+    if setting not in _TOGGLE_MAP and setting != "media":
+        return
+
+    owner_id = platform_user["user_id"]
+    m = await db.fetchrow("SELECT * FROM mailings WHERE id=$1 AND owner_id=$2", mid, owner_id)
+    if not m:
+        await callback.answer("Черновик не найден", show_alert=True)
+        return
+
+    if setting == "media":
+        # Нельзя удалить медиа через UI — сообщаем пользователю
+        await callback.answer("Чтобы сменить медиа — создайте новую рассылку.", show_alert=True)
+        return
+
+    col, default = _TOGGLE_MAP[setting]
+    new_val = not (m[col] if m[col] is not None else default)
+    await db.execute(
+        f"UPDATE mailings SET {col}=$1 WHERE id=$2 AND owner_id=$3",
+        new_val, mid, owner_id,
     )
+    m = await db.fetchrow("SELECT * FROM mailings WHERE id=$1", mid)
+    await callback.answer()
+    await _show_draft(callback, dict(m))
+
+
+# ══════════════════════════════════════════════════════════════
+# Экран 5: URL-кнопки
+# ══════════════════════════════════════════════════════════════
+
+_URL_BUTTONS_HELP = (
+    "🔗 <b>URL-кнопки</b>\n\n"
+    "<b>Одна кнопка в ряду:</b>\n"
+    "<blockquote>Кнопка 1 — ссылка\n"
+    "Кнопка 2 — ссылка</blockquote>\n\n"
+    "<b>Несколько кнопок в ряду:</b>\n"
+    "<blockquote>Кнопка 1 — ссылка | Кнопка 2 — ссылка\n"
+    "Кнопка 3 — ссылка | Кнопка 4 — ссылка</blockquote>\n\n"
+    "<b>*** Другие виды кнопок</b>\n\n"
+    "<b>WebApp кнопки:</b>\n"
+    "<blockquote>Кнопка 1 — ссылка (webapp)</blockquote>\n\n"
+    "<b>Цвет кнопок:</b> выберите ниже 👇\n\n"
+    "ⓘ Нажмите на пример, чтобы скопировать."
+)
+
+_EXAMPLES = [
+    ("Кнопка 1 — https://example.com",                         "one_btn"),
+    ("Кнопка 1 — https://t.me | Кнопка 2 — https://t.me",     "two_btn"),
+    ("Кнопка 1 — https://example.com (webapp)",                "webapp_btn"),
+]
+
+
+@router.callback_query(F.data.startswith("ml_url_buttons:"))
+async def on_ml_url_buttons(callback: CallbackQuery, state: FSMContext, platform_user: dict | None):
+    if not platform_user:
+        return
+    mid = int(callback.data.split(":")[1])
+    m = await db.fetchrow("SELECT * FROM mailings WHERE id=$1 AND owner_id=$2",
+                          mid, platform_user["user_id"])
+    if not m:
+        await callback.answer("Черновик не найден", show_alert=True)
+        return
+
+    color = m.get("button_color") or "blue"
+    color_buttons = [
+        InlineKeyboardButton(text="🟦" + (" ✅" if color == "blue"  else ""), callback_data=f"ml_color:{mid}:blue"),
+        InlineKeyboardButton(text="🟩" + (" ✅" if color == "green" else ""), callback_data=f"ml_color:{mid}:green"),
+        InlineKeyboardButton(text="🟥" + (" ✅" if color == "red"   else ""), callback_data=f"ml_color:{mid}:red"),
+    ]
+
+    existing = m.get("url_buttons_raw") or ""
+    now_text = f"\n\n✅ <b>Текущие кнопки:</b>\n<code>{existing}</code>" if existing else ""
+
+    buttons = [
+        [InlineKeyboardButton(text="📋 Одна: Кнопка — ссылка",              callback_data="ml_example:0")],
+        [InlineKeyboardButton(text="📋 Две в ряду: Кнопка | Кнопка",        callback_data="ml_example:1")],
+        [InlineKeyboardButton(text="📋 WebApp: Кнопка — ссылка (webapp)",   callback_data="ml_example:2")],
+        color_buttons,
+        [InlineKeyboardButton(text="✏️ Ввести кнопки", callback_data=f"ml_input_buttons:{mid}")],
+        [InlineKeyboardButton(text="🗑 Очистить кнопки", callback_data=f"ml_clear_buttons:{mid}")],
+        [InlineKeyboardButton(text="◀️ Назад", callback_data=f"ml_view_draft:{mid}:")],
+    ]
+
+    await callback.message.edit_text(
+        _URL_BUTTONS_HELP + now_text,
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("ml_example:"))
+async def on_ml_example(callback: CallbackQuery):
+    idx = int(callback.data.split(":")[1])
+    text, _ = _EXAMPLES[idx]
+    await callback.answer(text, show_alert=True)
+
+
+@router.callback_query(F.data.startswith("ml_color:"))
+async def on_ml_color(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    parts = callback.data.split(":")
+    mid, color = int(parts[1]), parts[2]
+    await db.execute(
+        "UPDATE mailings SET button_color=$1 WHERE id=$2 AND owner_id=$3",
+        color, mid, platform_user["user_id"],
+    )
+    await callback.answer(f"Цвет: {color}")
+    # Перерендер
+    callback.data = f"ml_url_buttons:{mid}"
+    await on_ml_url_buttons(callback, None, platform_user)  # state=None — не нужен здесь
+
+
+@router.callback_query(F.data.startswith("ml_input_buttons:"))
+async def on_ml_input_buttons(callback: CallbackQuery, state: FSMContext, platform_user: dict | None):
+    if not platform_user:
+        return
+    mid = int(callback.data.split(":")[1])
+    await state.set_state(MailingFSM.waiting_for_buttons)
+    await state.update_data(mailing_id=mid, owner_id=platform_user["user_id"])
+    await callback.message.edit_text(
+        "🔗 Отправьте кнопки, которые будут добавлены к сообщению.\n\n"
+        "<b>Формат одной кнопки:</b> <code>Текст — ссылка</code>\n"
+        "<b>Несколько в ряду:</b> <code>Текст — ссылка | Текст 2 — ссылка</code>\n"
+        "<b>WebApp:</b> <code>Текст — ссылка (webapp)</code>\n\n"
+        "Каждая строка — отдельный ряд кнопок.",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="◀️ Назад", callback_data=f"ml_url_buttons:{mid}")],
+        ]),
+    )
+    await callback.answer()
+
+
+@router.message(MailingFSM.waiting_for_buttons)
+async def on_mailing_buttons_input(message: Message, state: FSMContext):
+    data = await state.get_data()
+    mid = data.get("mailing_id")
+    owner_id = data.get("owner_id")
+    raw = sanitize(message.text or "", max_len=2000)
+    await db.execute(
+        "UPDATE mailings SET url_buttons_raw=$1 WHERE id=$2 AND owner_id=$3",
+        raw, mid, owner_id,
+    )
+    await state.clear()
+    await message.answer(
+        "✅ Кнопки сохранены.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="◀️ К настройкам", callback_data=f"ml_url_buttons:{mid}")],
+        ]),
+    )
+
+
+@router.callback_query(F.data.startswith("ml_clear_buttons:"))
+async def on_ml_clear_buttons(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    mid = int(callback.data.split(":")[1])
+    await db.execute(
+        "UPDATE mailings SET url_buttons_raw=NULL WHERE id=$1 AND owner_id=$2",
+        mid, platform_user["user_id"],
+    )
+    await callback.answer("🗑 Кнопки очищены")
+    callback.data = f"ml_url_buttons:{mid}"
+    await on_ml_url_buttons(callback, None, platform_user)
+
+
+# ══════════════════════════════════════════════════════════════
+# Планирование
+# ══════════════════════════════════════════════════════════════
+
+@router.callback_query(F.data.startswith("mailing_schedule:"))
+async def on_mailing_schedule(callback: CallbackQuery, state: FSMContext, platform_user: dict | None):
+    if not platform_user:
+        return
+    parts   = callback.data.split(":")
+    chat_id = parts[1]
+    mid     = parts[2] if len(parts) > 2 else None
+
+    await state.set_state(MailingFSM.waiting_for_schedule)
+    await state.update_data(chat_id=chat_id, mailing_id=mid)
+
+    back_cb = f"ml_view_draft:{mid}:" if mid else f"ch_mailing:{chat_id}"
+    await callback.message.edit_text(
+        "⏱ <b>Планирование рассылки</b>\n\n"
+        "Укажите дату и время в формате:\n"
+        "<code>28.02 18:00</code>  или  <code>28.02.2026 18:00</code>\n\n"
+        "⚠️ Время по UTC+0. Добавьте часы вашего часового пояса.",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="◀️ Отменить", callback_data=back_cb)],
+        ]),
+    )
+    await callback.answer()
+
+
+@router.message(MailingFSM.waiting_for_schedule)
+async def on_schedule_input(message: Message, state: FSMContext):
+    data = await state.get_data()
+    chat_id    = data.get("chat_id")
+    mailing_id = data.get("mailing_id")
+    raw = (message.text or "").strip()
+
+    dt = None
+    for fmt in ("%d.%m %H:%M", "%d.%m.%Y %H:%M"):
+        try:
+            dt = datetime.strptime(raw, fmt)
+            if fmt == "%d.%m %H:%M":
+                dt = dt.replace(year=datetime.now().year)
+            break
+        except ValueError:
+            continue
+
+    if not dt:
+        await message.answer(
+            "❌ Неверный формат. Используйте: <code>28.02 18:00</code>",
+            parse_mode="HTML",
+        )
+        return
+
+    await state.clear()
+
+    if mailing_id:
+        await db.execute(
+            "UPDATE mailings SET scheduled_at=$1, status='scheduled' WHERE id=$2",
+            dt, int(mailing_id),
+        )
+        await message.answer(
+            f"✅ Рассылка запланирована на <b>{dt.strftime('%d.%m.%Y %H:%M')}</b>",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="◀️ К рассылке", callback_data=f"ml_view_draft:{mailing_id}:")],
+            ]),
+        )
+    else:
+        await message.answer(f"✅ Запланировано: {dt.strftime('%d.%m.%Y %H:%M')}")
+
+
+# ══════════════════════════════════════════════════════════════
+# Запуск рассылки
+# ══════════════════════════════════════════════════════════════
+
+def kb_mailing_control(mailing_id: int, paused: bool, speed: str) -> InlineKeyboardMarkup:
+    pause_text = "▶ Возобновить" if paused else "⏸ Пауза"
+    speed_map  = {"low": "🟢 Низкая", "medium": "🟡 Средняя", "high": "🔴 Высокая"}
+    next_speed = {"low": "medium", "medium": "high", "high": "low"}
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=pause_text,  callback_data=f"ml_pause:{mailing_id}")],
+        [InlineKeyboardButton(text="⏹ Остановить", callback_data=f"ml_cancel:{mailing_id}")],
+        [InlineKeyboardButton(
+            text=f"⚡ Скорость: {speed_map.get(speed, '🟢 Низкая')}",
+            callback_data=f"ml_speed:{mailing_id}:{next_speed.get(speed, 'medium')}",
+        )],
+    ])
+
+
+@router.callback_query(F.data.startswith("mailing_run:"))
+async def on_mailing_run(callback: CallbackQuery, bot: Bot, platform_user: dict | None):
+    if not platform_user:
+        return
+    parts   = callback.data.split(":")
+    chat_id = int(parts[1])
+    mid     = int(parts[2]) if len(parts) > 2 else None
+
+    owner_id = platform_user["user_id"]
+
+    if mid:
+        mailing = await db.fetchrow(
+            "SELECT id FROM mailings WHERE id=$1 AND owner_id=$2 AND status='draft'",
+            mid, owner_id,
+        )
+    else:
+        mailing = await db.fetchrow(
+            "SELECT id FROM mailings WHERE owner_id=$1 AND chat_id=$2 AND status='draft' "
+            "ORDER BY created_at DESC LIMIT 1",
+            owner_id, chat_id,
+        )
+
     if not mailing:
         await callback.answer("Черновик не найден", show_alert=True)
         return
@@ -243,37 +640,21 @@ async def on_mailing_run(callback: CallbackQuery, bot: Bot, state: FSMContext, p
     mailing_id = mailing["id"]
     await db.execute("UPDATE mailings SET status='pending' WHERE id=$1", mailing_id)
 
-    control_msg = await callback.message.edit_text(
+    await callback.message.edit_text(
         f"📨 <b>Рассылка запущена</b>\n\n"
         f"⏳ Отправлено: 0\n"
         f"⚡ Скорость: 🟢 Низкая",
+        parse_mode="HTML",
         reply_markup=kb_mailing_control(mailing_id, False, "low"),
     )
-
-    # Запускаем в фоне
     asyncio.create_task(mailing_svc.run_mailing(mailing_id, bot))
     await callback.answer("▶ Рассылка запущена")
 
 
-# ── Планирование рассылки ─────────────────────────────────────
-@router.callback_query(F.data.startswith("mailing_schedule:"))
-async def on_mailing_schedule(callback: CallbackQuery, state: FSMContext):
-    chat_id = callback.data.split(":")[1]
-    await state.set_state(MailingFSM.waiting_for_schedule)
-    await state.update_data(chat_id=chat_id)
-    await callback.message.edit_text(
-        "⏱ <b>Планирование рассылки</b>\n\n"
-        "Укажите дату и время в формате:\n"
-        "<code>28.02 18:00</code>\n\n"
-        "⚠️ Максимум 3 дня от сейчас",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🚫 Отменить", callback_data=f"mailing_start:{chat_id}")]
-        ]),
-    )
-    await callback.answer()
+# ══════════════════════════════════════════════════════════════
+# Управление активной рассылкой
+# ══════════════════════════════════════════════════════════════
 
-
-# ── Управление рассылкой (пауза/скорость/отмена) ──────────────
 @router.callback_query(F.data.startswith("ml_pause:"))
 async def on_ml_pause(callback: CallbackQuery):
     mailing_id = int(callback.data.split(":")[1])
@@ -299,8 +680,8 @@ async def on_ml_cancel(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("ml_speed:"))
 async def on_ml_speed(callback: CallbackQuery):
-    parts = callback.data.split(":")
+    parts      = callback.data.split(":")
     mailing_id = int(parts[1])
-    speed = parts[2]
+    speed      = parts[2]
     mailing_svc.set_speed(mailing_id, speed)
-    await callback.answer(f"Скорость изменена: {speed}")
+    await callback.answer(f"Скорость: {speed}")

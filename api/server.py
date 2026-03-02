@@ -50,6 +50,17 @@ def create_app(bot: Bot, dp: Dispatcher) -> FastAPI:
             await conn.execute(
                 "ALTER TABLE child_bots ADD COLUMN IF NOT EXISTS verify_only BOOLEAN DEFAULT false"
             )
+            # Новые колонки рассылки
+            for migration in [
+                "ALTER TABLE mailings ADD COLUMN IF NOT EXISTS notify_users       BOOLEAN DEFAULT true",
+                "ALTER TABLE mailings ADD COLUMN IF NOT EXISTS protect_content     BOOLEAN DEFAULT false",
+                "ALTER TABLE mailings ADD COLUMN IF NOT EXISTS pin_message         BOOLEAN DEFAULT false",
+                "ALTER TABLE mailings ADD COLUMN IF NOT EXISTS delete_after_send   BOOLEAN DEFAULT false",
+                "ALTER TABLE mailings ADD COLUMN IF NOT EXISTS disable_preview     BOOLEAN DEFAULT false",
+                "ALTER TABLE mailings ADD COLUMN IF NOT EXISTS url_buttons_raw     TEXT",
+                "ALTER TABLE mailings ADD COLUMN IF NOT EXISTS button_color        TEXT DEFAULT 'blue'",
+            ]:
+                await conn.execute(migration)
         logger.info("DB schema applied")
 
 

@@ -1,48 +1,110 @@
 """
-services/mailing.py — Рассылка сообщений с rate limiting и паузой.
+services/mailing.py — Рассылка сообщений с rate limiting, паузой,
+поддержкой URL-кнопок (парсинг url_buttons_raw), protect_content,
+disable_preview, notify_users.
 """
 import asyncio
 import logging
+import re
 from aiogram import Bot
 from aiogram.exceptions import TelegramForbiddenError, TelegramRetryAfter
+from aiogram.types import (
+    InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
+)
 
 import db.pool as db
 
 logger = logging.getLogger(__name__)
 
-# Глобальный реестр активных рассылок: {mailing_id: {"paused": bool, "cancelled": bool}}
+# {mailing_id: {"paused": bool, "cancelled": bool, "speed": str}}
 _active_mailings: dict[int, dict] = {}
 
 SPEEDS = {
     "low":    0.08,   # ~12 msg/s
     "medium": 0.04,   # ~25 msg/s
-    "high":   0.02,   # ~50 msg/s (риск ограничений)
+    "high":   0.02,   # ~50 msg/s
 }
 
 
+# ── Парсинг url_buttons_raw ──────────────────────────────────
+
+def _parse_buttons(raw: str, color: str = "blue") -> InlineKeyboardMarkup | None:
+    """
+    Парсит сырой текст кнопок в InlineKeyboardMarkup.
+
+    Форматы:
+      Текст — ссылка                  → одна кнопка в ряду
+      Текст 1 — ссылка | Текст 2 — ссылка  → два в ряду
+      Текст — ссылка (webapp)         → WebApp-кнопка
+    """
+    if not raw or not raw.strip():
+        return None
+
+    rows = []
+    for line in raw.strip().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        row = []
+        for chunk in line.split("|"):
+            chunk = chunk.strip()
+            # Проверяем формат "Текст — ссылка" (поддерживаем — и -)
+            match = re.match(r"^(.+?)\s*[—\-]{1,2}\s*(https?://\S+?)(\s+\(webapp\))?$", chunk)
+            if match:
+                text = match.group(1).strip()
+                url  = match.group(2).strip()
+                is_webapp = bool(match.group(3))
+                if is_webapp:
+                    btn = InlineKeyboardButton(text=text, web_app=WebAppInfo(url=url))
+                else:
+                    btn = InlineKeyboardButton(text=text, url=url)
+                row.append(btn)
+        if row:
+            rows.append(row)
+
+    return InlineKeyboardMarkup(inline_keyboard=rows) if rows else None
+
+
+def _substitute_vars(text: str, user: dict) -> str:
+    """Подставляет переменные {name}, {allname}, {username}, {chat}, {day}."""
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    fname    = user.get("first_name") or ""
+    lname    = user.get("last_name") or ""
+    username = user.get("username") or ""
+    channel  = user.get("_chat_title") or ""
+    text = text.replace("{name}",    fname)
+    text = text.replace("{allname}", f"{fname} {lname}".strip())
+    text = text.replace("{username}", f"@{username}" if username else fname)
+    text = text.replace("{chat}",    channel)
+    text = text.replace("{day}",     now.strftime("%d.%m.%Y"))
+    return text
+
+
+# ── Основной цикл рассылки ───────────────────────────────────
+
 async def run_mailing(mailing_id: int, bot: Bot):
-    """
-    Запускает рассылку для mailing_id.
-    Отправляет только bot_activated=true пользователям.
-    Поддерживает паузу и отмену в реальном времени.
-    """
-    mailing = await db.fetchrow(
-        "SELECT * FROM mailings WHERE id=$1", mailing_id
-    )
+    """Запускает рассылку для mailing_id."""
+    mailing = await db.fetchrow("SELECT * FROM mailings WHERE id=$1", mailing_id)
     if not mailing or mailing["status"] != "pending":
         return
 
     owner_id = mailing["owner_id"]
     chat_id  = mailing["chat_id"]
 
-    # Получаем получателей — только bot_activated
+    # Получаем название канала для переменной {chat}
+    ch_row = await db.fetchrow(
+        "SELECT chat_title FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint",
+        owner_id, chat_id,
+    )
+    chat_title = ch_row["chat_title"] if ch_row else ""
+
     recipients = await db.fetch(
-        """
-        SELECT user_id FROM bot_users
-        WHERE owner_id=$1 AND chat_id=$2
-          AND is_active=true AND bot_activated=true
-        ORDER BY joined_at
-        """,
+        """SELECT user_id, username, first_name, last_name
+           FROM bot_users
+           WHERE owner_id=$1 AND chat_id=$2
+             AND is_active=true AND bot_activated=true
+           ORDER BY joined_at""",
         owner_id, chat_id,
     )
 
@@ -55,30 +117,32 @@ async def run_mailing(mailing_id: int, bot: Bot):
     _active_mailings[mailing_id] = {"paused": False, "cancelled": False, "speed": "low"}
     sent = errors = 0
 
+    # Предпарсим кнопки один раз
+    kb = _parse_buttons(
+        mailing.get("url_buttons_raw") or "",
+        mailing.get("button_color") or "blue",
+    )
+
     for rec in recipients:
         control = _active_mailings.get(mailing_id, {})
 
-        # Проверка отмены
         if control.get("cancelled"):
             break
 
-        # Пауза
         while control.get("paused"):
             await asyncio.sleep(1)
             control = _active_mailings.get(mailing_id, {})
             if control.get("cancelled"):
                 break
 
-        # Отправка
+        user_dict = dict(rec)
+        user_dict["_chat_title"] = chat_title
+
         try:
-            await _send_message(bot, rec["user_id"], mailing)
+            await _send_message(bot, rec["user_id"], mailing, kb, user_dict)
             sent += 1
-            await db.execute(
-                "UPDATE mailings SET sent_count=$1 WHERE id=$2",
-                sent, mailing_id,
-            )
+            await db.execute("UPDATE mailings SET sent_count=$1 WHERE id=$2", sent, mailing_id)
         except TelegramForbiddenError:
-            # Пользователь заблокировал бота
             errors += 1
             await db.execute(
                 "UPDATE bot_users SET bot_activated=false "
@@ -86,65 +150,83 @@ async def run_mailing(mailing_id: int, bot: Bot):
                 owner_id, chat_id, rec["user_id"],
             )
         except TelegramRetryAfter as e:
-            logger.warning(f"Mailing {mailing_id}: rate limit, sleeping {e.retry_after}s")
+            logger.warning(f"Mailing {mailing_id}: rate limit {e.retry_after}s")
             await asyncio.sleep(e.retry_after)
-            # Повторяем этого пользователя
             try:
-                await _send_message(bot, rec["user_id"], mailing)
+                await _send_message(bot, rec["user_id"], mailing, kb, user_dict)
                 sent += 1
             except Exception:
                 errors += 1
         except Exception as e:
             errors += 1
-            logger.debug(f"Mailing {mailing_id}: failed to send to {rec['user_id']}: {e}")
+            logger.debug(f"Mailing {mailing_id}: failed to {rec['user_id']}: {e}")
 
-        # Rate limiting по скорости
         speed = _active_mailings.get(mailing_id, {}).get("speed", "low")
         await asyncio.sleep(SPEEDS.get(speed, 0.08))
 
-    # Завершаем рассылку
     cancelled = _active_mailings.get(mailing_id, {}).get("cancelled", False)
     final_status = "cancelled" if cancelled else "done"
     await db.execute(
-        "UPDATE mailings SET status=$1, finished_at=now(), "
-        "sent_count=$2, error_count=$3 WHERE id=$4",
+        "UPDATE mailings SET status=$1, finished_at=now(), sent_count=$2, error_count=$3 WHERE id=$4",
         final_status, sent, errors, mailing_id,
     )
     _active_mailings.pop(mailing_id, None)
     logger.info(f"Mailing {mailing_id} done: {sent}/{total}, errors={errors}")
 
 
-async def _send_message(bot: Bot, user_id: int, mailing: dict):
-    """Отправляет одно сообщение рассылки с учётом медиа и кнопок."""
-    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-    import json
-
-    # Кнопки
-    kb = None
-    if mailing.get("inline_buttons"):
-        buttons_data = mailing["inline_buttons"]
-        if isinstance(buttons_data, str):
-            buttons_data = json.loads(buttons_data)
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=b["text"], url=b["url"])]
-            for b in buttons_data
-        ])
-
-    text = mailing.get("text") or ""
-    media_id = mailing.get("media_file_id")
+async def _send_message(
+    bot: Bot,
+    user_id: int,
+    mailing: dict,
+    kb: InlineKeyboardMarkup | None,
+    user_dict: dict,
+):
+    """Отправляет одно сообщение рассылки пользователю."""
+    raw_text   = mailing.get("text") or ""
+    media_id   = mailing.get("media_file_id")
     media_type = mailing.get("media_type")
 
+    # Подстановка переменных
+    text = _substitute_vars(raw_text, user_dict) if raw_text else ""
+
+    protect  = bool(mailing.get("protect_content", False))
+    notify   = bool(mailing.get("notify_users", True))
+    no_prev  = bool(mailing.get("disable_preview", False))
+
+    common = dict(
+        reply_markup=kb,
+        protect_content=protect,
+        disable_notification=not notify,
+    )
+
     if media_type == "photo":
-        await bot.send_photo(user_id, media_id, caption=text, reply_markup=kb)
+        await bot.send_photo(
+            user_id, media_id,
+            caption=text, parse_mode="HTML",
+            has_spoiler=False, **common,
+        )
     elif media_type == "video":
-        await bot.send_video(user_id, media_id, caption=text, reply_markup=kb)
+        await bot.send_video(
+            user_id, media_id,
+            caption=text, parse_mode="HTML", **common,
+        )
     elif media_type == "document":
-        await bot.send_document(user_id, media_id, caption=text, reply_markup=kb)
+        await bot.send_document(
+            user_id, media_id,
+            caption=text, parse_mode="HTML", **common,
+        )
     else:
-        await bot.send_message(user_id, text, reply_markup=kb)
+        from aiogram.types import LinkPreviewOptions
+        await bot.send_message(
+            user_id, text,
+            parse_mode="HTML",
+            link_preview_options=LinkPreviewOptions(is_disabled=no_prev),
+            **common,
+        )
 
 
-# ── Управление рассылкой в реальном времени ──────────────────
+# ── Runtime controls ─────────────────────────────────────────
+
 def pause_mailing(mailing_id: int):
     if mailing_id in _active_mailings:
         _active_mailings[mailing_id]["paused"] = True

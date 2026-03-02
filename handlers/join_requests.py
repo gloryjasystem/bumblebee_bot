@@ -97,9 +97,10 @@ async def on_join_request(event: ChatJoinRequest, bot: Bot):
             await _register_user(owner_id, event.chat.id, user)
             await _send_welcome(bot, event.chat.id, user, settings_row)
             await _log_action(owner_id, event.chat.id, "approve", user.id)
-    elif settings_row["captcha_enabled"]:
+    elif (settings_row.get("captcha_type") or "off") != "off":
         await _save_pending(owner_id, event.chat.id, user)
-        await _send_captcha(bot, event, settings_row)
+        from handlers.captcha import send_captcha
+        await send_captcha(bot, event, dict(settings_row))
     else:
         # Ручной режим — сохраняем в очередь для ревью владельцем
         await _save_pending(owner_id, event.chat.id, user)
@@ -254,28 +255,30 @@ async def _send_welcome(bot: Bot, chat_id: int, user, settings_row: dict):
         "SELECT bot_activated FROM bot_users WHERE owner_id=$1 AND chat_id=$2 AND user_id=$3",
         settings_row["owner_id"], chat_id, user.id,
     )
-    if activated:
-        try:
-            await bot.send_message(user.id, text)
-        except Exception:
-            pass
-
-
-async def _send_captcha(bot: Bot, event: ChatJoinRequest, settings_row: dict):
-    """Отправляет капчу (заглушка — полная реализация в handlers/captcha.py)."""
-    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-    user = event.from_user
-    text = (settings_row.get("captcha_text") or
-            f"Привет {user.first_name}! Докажи что ты не робот — нажми кнопку ✅")
-    kb = InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(
-            text="✅ Я не робот",
-            callback_data=f"captcha:{event.chat.id}:{user.id}",
-        )
-    ]])
+    if not activated:
+        return
     try:
-        await bot.send_message(user.id, text, reply_markup=kb)
+        # Имитация набора текста
+        if settings_row.get("typing_action"):
+            await bot.send_chat_action(user.id, "typing")
+            await asyncio.sleep(1.5)
+
+        msg = await bot.send_message(user.id, text)
+
+        # Авто-удаление приветствия
+        delete_min = int(settings_row.get("auto_delete_min") or 0)
+        if delete_min > 0:
+            asyncio.create_task(
+                _delete_later(bot, user.id, msg.message_id, delete_min)
+            )
     except Exception:
-        # Пользователь не открыл диалог с ботом — авто-одобряем
-        await event.approve()
-        await _register_user(settings_row["owner_id"], event.chat.id, user)
+        pass
+
+
+async def _delete_later(bot: Bot, chat_id: int, message_id: int, delay_min: int):
+    """Удаляет сообщение через delay_min минут."""
+    await asyncio.sleep(delay_min * 60)
+    try:
+        await bot.delete_message(chat_id, message_id)
+    except Exception:
+        pass

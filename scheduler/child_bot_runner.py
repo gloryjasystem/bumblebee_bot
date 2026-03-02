@@ -172,8 +172,8 @@ async def _handle_my_chat_member(
                     f"✅ {type_icon} <b>{chat.title}</b> подключён!\n\n"
                     f"Бот @{bot_username} добавлен как администратор и готов к работе.",
                     reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                        [InlineKeyboardButton(text="⚙️ Настройки", callback_data=f"channel_by_chat:{chat.id}")],
-                        [InlineKeyboardButton(text="📡 Мои площадки", callback_data="menu:channels")],
+                        [InlineKeyboardButton(text="📍 Площадки бота", callback_data=f"bot_chats_list:{child_bot_id}")],
+                        [InlineKeyboardButton(text="⚙️ Настройки бота", callback_data=f"bot_settings:{child_bot_id}")],
                     ]),
                     parse_mode="HTML",
                 )

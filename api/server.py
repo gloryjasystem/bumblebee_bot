@@ -46,7 +46,12 @@ def create_app(bot: Bot, dp: Dispatcher) -> FastAPI:
             sql = f.read()
         async with db.get_pool().acquire() as conn:
             await conn.execute(sql)
+            # Идемпотентные миграции для новых колонок
+            await conn.execute(
+                "ALTER TABLE child_bots ADD COLUMN IF NOT EXISTS verify_only BOOLEAN DEFAULT false"
+            )
         logger.info("DB schema applied")
+
 
         # Планировщик
         from scheduler.jobs import setup_scheduler

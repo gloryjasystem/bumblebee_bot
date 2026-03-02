@@ -34,28 +34,28 @@ async def on_channels_menu(callback: CallbackQuery, platform_user: dict | None):
         return
     owner_id = platform_user["user_id"]
 
-    channels = await db.fetch(
+    bots = await db.fetch(
         """
-        SELECT bc.id, bc.chat_title, bc.chat_type, bc.is_active,
-               cb.bot_username
-        FROM bot_chats bc
-        JOIN child_bots cb ON bc.child_bot_id = cb.id
-        WHERE bc.owner_id = $1
-        ORDER BY bc.added_at DESC
+        SELECT id, bot_username,
+               (SELECT COUNT(*) FROM bot_chats bc
+                WHERE bc.child_bot_id = cb.id AND bc.owner_id = cb.owner_id) AS chat_count
+        FROM child_bots cb
+        WHERE cb.owner_id = $1
+        ORDER BY cb.created_at DESC
         """,
         owner_id,
     )
 
     tariff = platform_user["tariff"]
     limit  = settings.channel_limits.get(tariff, 1)
-    count  = len(channels)
+    count  = len(bots)
 
     buttons = []
-    for ch in channels:
-        status = "🟢" if ch["is_active"] else "🔴"
+    for b in bots:
+        status = "🟢" if b["chat_count"] > 0 else "⚪"
         buttons.append([InlineKeyboardButton(
-            text=f"{status} @{ch['bot_username']}",
-            callback_data=f"channel:{ch['id']}",
+            text=f"{status} @{b['bot_username']}",
+            callback_data=f"bot_settings:{b['id']}",
         )])
 
     if count < limit:
@@ -65,7 +65,7 @@ async def on_channels_menu(callback: CallbackQuery, platform_user: dict | None):
         )])
     else:
         buttons.append([InlineKeyboardButton(
-            text=f"🔒 Лимит площадок ({count}/{limit}) — улучшите тариф",
+            text=f"🔒 Лимит ботов ({count}/{limit}) — улучшите тариф",
             callback_data="menu:tariffs",
         )])
 
@@ -77,6 +77,266 @@ async def on_channels_menu(callback: CallbackQuery, platform_user: dict | None):
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
     )
     await callback.answer()
+
+
+# ══════════════════════════════════════════════════════════════
+# 1б. Настройки бота (уровень 2)
+# ══════════════════════════════════════════════════════════════
+@router.callback_query(F.data.startswith("bot_settings:"))
+async def on_bot_settings(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    child_bot_id = int(callback.data.split(":")[1])
+    owner_id = platform_user["user_id"]
+
+    bot = await db.fetchrow(
+        "SELECT * FROM child_bots WHERE id=$1 AND owner_id=$2",
+        child_bot_id, owner_id,
+    )
+    if not bot:
+        await callback.answer("Бот не найден", show_alert=True)
+        return
+
+    from datetime import date, timedelta
+    today     = date.today()
+    yesterday = today - timedelta(days=1)
+
+    total_users = await db.fetchval(
+        """SELECT COUNT(*) FROM bot_users bu
+           JOIN bot_chats bc ON bu.chat_id=bc.chat_id AND bu.owner_id=bc.owner_id
+           WHERE bc.child_bot_id=$1 AND bc.owner_id=$2""",
+        child_bot_id, owner_id,
+    ) or 0
+    today_users = await db.fetchval(
+        """SELECT COUNT(*) FROM bot_users bu
+           JOIN bot_chats bc ON bu.chat_id=bc.chat_id AND bu.owner_id=bc.owner_id
+           WHERE bc.child_bot_id=$1 AND bc.owner_id=$2 AND bu.joined_at::date=$3""",
+        child_bot_id, owner_id, today,
+    ) or 0
+    yesterday_users = await db.fetchval(
+        """SELECT COUNT(*) FROM bot_users bu
+           JOIN bot_chats bc ON bu.chat_id=bc.chat_id AND bu.owner_id=bc.owner_id
+           WHERE bc.child_bot_id=$1 AND bc.owner_id=$2 AND bu.joined_at::date=$3""",
+        child_bot_id, owner_id, yesterday,
+    ) or 0
+    pending = await db.fetchval(
+        """SELECT COUNT(*) FROM bot_users bu
+           JOIN bot_chats bc ON bu.chat_id=bc.chat_id AND bu.owner_id=bc.owner_id
+           WHERE bc.child_bot_id=$1 AND bc.owner_id=$2 AND bu.is_active=false AND bu.left_at IS NULL""",
+        child_bot_id, owner_id,
+    ) or 0
+    active_users = await db.fetchval(
+        """SELECT COUNT(*) FROM bot_users bu
+           JOIN bot_chats bc ON bu.chat_id=bc.chat_id AND bu.owner_id=bc.owner_id
+           WHERE bc.child_bot_id=$1 AND bc.owner_id=$2 AND bu.is_active=true AND bu.bot_activated=true""",
+        child_bot_id, owner_id,
+    ) or 0
+    dead_users = max(total_users - active_users, 0)
+
+    username = bot["bot_username"]
+    text = (
+        f"🤖 Бот: @{username}\n\n"
+        f"<u>👥 Пользователей</u>\n"
+        f"├ Сегодня ≈ {today_users}\n"
+        f"├ Вчера ≈ {yesterday_users}\n"
+        f"├ Всего ≈ {total_users}\n"
+        f"└ Заявок в очереди ≈ {pending}\n\n"
+        f"<u>💬 Сообщений</u>\n"
+        f"├ Сегодня ≈ 0\n"
+        f"├ Вчера ≈ 0\n"
+        f"└ Всего ≈ 0\n\n"
+        f"🟢 Живые ≈ {active_users}    🔴 Мёртвые ≈ {dead_users}"
+    )
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Обработка заявок",  callback_data=f"bs_requests:{child_bot_id}")],
+            [
+                InlineKeyboardButton(text="💬 Сообщения",      callback_data=f"bs_messages:{child_bot_id}"),
+                InlineKeyboardButton(text="📨 Рассылка",       callback_data=f"bs_mailing:{child_bot_id}"),
+            ],
+            [
+                InlineKeyboardButton(text="🔗 Ссылки",         callback_data=f"bs_links:{child_bot_id}"),
+                InlineKeyboardButton(text="📍 Площадки",       callback_data=f"bot_chats_list:{child_bot_id}"),
+            ],
+            [
+                InlineKeyboardButton(text="🛡 Защита",         callback_data=f"bs_protection:{child_bot_id}"),
+                InlineKeyboardButton(text="⚙️ Управление",     callback_data=f"bs_settings:{child_bot_id}"),
+            ],
+            [InlineKeyboardButton(text="📣 Обратная связь",    callback_data=f"bs_feedback:{child_bot_id}")],
+            [InlineKeyboardButton(text="🗑 Удалить бот",       callback_data=f"bot_delete:{child_bot_id}")],
+            [InlineKeyboardButton(text="◀️ Назад",             callback_data="menu:channels")],
+        ]),
+    )
+    await callback.answer()
+
+
+# ══════════════════════════════════════════════════════════════
+# 1в. Площадки бота (уровень 3)
+# ══════════════════════════════════════════════════════════════
+@router.callback_query(F.data.startswith("bot_chats_list:"))
+async def on_bot_chats_list(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    child_bot_id = int(callback.data.split(":")[1])
+    owner_id = platform_user["user_id"]
+
+    bot = await db.fetchrow(
+        "SELECT bot_username, verify_only FROM child_bots WHERE id=$1 AND owner_id=$2",
+        child_bot_id, owner_id,
+    )
+    if not bot:
+        await callback.answer("Бот не найден", show_alert=True)
+        return
+
+    chats = await db.fetch(
+        """SELECT id, chat_title, chat_type, is_active
+           FROM bot_chats
+           WHERE child_bot_id=$1 AND owner_id=$2
+           ORDER BY added_at DESC""",
+        child_bot_id, owner_id,
+    )
+
+    buttons = []
+    for ch in chats:
+        icon = "🟢" if ch["is_active"] else "🔴"
+        type_icon = "📢" if ch["chat_type"] == "channel" else "👥"
+        title = ch["chat_title"] or "Без названия"
+        buttons.append([InlineKeyboardButton(
+            text=f"{icon} {type_icon} {title}",
+            callback_data=f"channel_in_bot:{ch['id']}:{child_bot_id}",
+        )])
+
+    verify_label = "✅ Проверка: вкл" if bot["verify_only"] else "❌ Проверка: выкл"
+    buttons.append([InlineKeyboardButton(
+        text="➕ Подключение",
+        callback_data=f"bot_connect:{child_bot_id}",
+    )])
+    buttons.append([InlineKeyboardButton(
+        text=verify_label,
+        callback_data=f"bot_verify_toggle:{child_bot_id}",
+    )])
+    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"bot_settings:{child_bot_id}")])
+
+    username = bot["bot_username"]
+    hint = (
+        "<blockquote>"
+        "ℹ️ Площадка — это общее название для подключённых каналов и чатов.\n\n"
+        "🔍 Если проверка включена, то только владелец бота сможет подключать площадки."
+        "</blockquote>"
+    )
+    count = len(chats)
+    await callback.message.edit_text(
+        f"📍 <b>Площадки @{username}</b>\n\n"
+        f"{hint}\n\n"
+        f"Подключено площадок: {count}\n\n"
+        "Выберите действие 👇" if count > 0 else
+        f"📍 <b>Площадки @{username}</b>\n\n"
+        f"{hint}\n\n"
+        "Бот ещё не добавлен ни в один канал или группу.\n"
+        "Нажмите <b>Подключение</b> чтобы добавить.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+    )
+    await callback.answer()
+
+
+# ══════════════════════════════════════════════════════════════
+# 1г. Подключение (уровень 4)
+# ══════════════════════════════════════════════════════════════
+@router.callback_query(F.data.startswith("bot_connect:"))
+async def on_bot_connect(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    child_bot_id = int(callback.data.split(":")[1])
+    owner_id = platform_user["user_id"]
+
+    bot = await db.fetchrow(
+        "SELECT bot_username FROM child_bots WHERE id=$1 AND owner_id=$2",
+        child_bot_id, owner_id,
+    )
+    if not bot:
+        await callback.answer("Бот не найден", show_alert=True)
+        return
+
+    username = bot["bot_username"]
+    deep_channel = f"https://t.me/{username}?startchannel=true&admin=post_messages+delete_messages+invite_users+restrict_members+pin_messages"
+    deep_group   = f"https://t.me/{username}?startgroup=true&admin=post_messages+delete_messages+invite_users+restrict_members+pin_messages"
+
+    await callback.message.edit_text(
+        f"➕ Добавьте <b>@{username}</b> в <b>канал или группу</b> "
+        f"в качестве администратора с правами на "
+        f"«Добавление участников» (ios) → «Пригласительные ссылки» (android).\n\n"
+        "<blockquote>Он будет обрабатывать заявки, приветствовать "
+        "пользователей и собирать их в базу для рассылок.</blockquote>\n\n"
+        "Выберите действие 👇",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="→ Добавить в канал", url=deep_channel)],
+            [InlineKeyboardButton(text="→ Добавить в группу", url=deep_group)],
+            [InlineKeyboardButton(text="◀️ Назад", callback_data=f"bot_chats_list:{child_bot_id}")],
+        ]),
+    )
+    await callback.answer()
+
+
+# ══════════════════════════════════════════════════════════════
+# 1д. Проверка toggle
+# ══════════════════════════════════════════════════════════════
+@router.callback_query(F.data.startswith("bot_verify_toggle:"))
+async def on_bot_verify_toggle(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    child_bot_id = int(callback.data.split(":")[1])
+    owner_id = platform_user["user_id"]
+
+    row = await db.fetchrow(
+        "SELECT verify_only FROM child_bots WHERE id=$1 AND owner_id=$2",
+        child_bot_id, owner_id,
+    )
+    if not row:
+        return
+    new_val = not row["verify_only"]
+    await db.execute(
+        "UPDATE child_bots SET verify_only=$1 WHERE id=$2 AND owner_id=$3",
+        new_val, child_bot_id, owner_id,
+    )
+    label = "включена ✅" if new_val else "выключена ❌"
+    await callback.answer(f"Проверка {label}")
+    # Обновляем экран
+    callback.data = f"bot_chats_list:{child_bot_id}"
+    await on_bot_chats_list(callback, platform_user)
+
+
+# ══════════════════════════════════════════════════════════════
+# 1е. Удаление бота
+# ══════════════════════════════════════════════════════════════
+@router.callback_query(F.data.startswith("bot_delete:"))
+async def on_bot_delete(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    child_bot_id = int(callback.data.split(":")[1])
+    await callback.message.edit_text(
+        "⚠️ <b>Удалить бота?</b>\n\n"
+        "Все площадки, пользователи и настройки этого бота будут удалены.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Да, удалить", callback_data=f"bot_delete_confirm:{child_bot_id}")],
+            [InlineKeyboardButton(text="🚫 Отмена",     callback_data=f"bot_settings:{child_bot_id}")],
+        ]),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("bot_delete_confirm:"))
+async def on_bot_delete_confirm(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    child_bot_id = int(callback.data.split(":")[1])
+    await db.execute(
+        "DELETE FROM child_bots WHERE id=$1 AND owner_id=$2",
+        child_bot_id, platform_user["user_id"],
+    )
+    await callback.answer("✅ Бот удалён")
+    await on_channels_menu(callback, platform_user)
 
 
 # ══════════════════════════════════════════════════════════════
@@ -367,6 +627,9 @@ async def _show_channel_detail(callback: CallbackQuery, platform_user: dict, ch_
         f"🟢 Живые ≈ {active_users}    🔴 Мёртвые ≈ {dead_users}"
     )
 
+    ch_id_b = ch["id"]
+    cbot_id = ch["child_bot_id"]
+
     await callback.message.edit_text(
         text,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
@@ -377,15 +640,15 @@ async def _show_channel_detail(callback: CallbackQuery, platform_user: dict, ch_
             ],
             [
                 InlineKeyboardButton(text="🔗 Ссылки",           callback_data=f"ch_links:{chat_id}"),
-                InlineKeyboardButton(text="📡 Площадки",         callback_data="menu:channels"),
+                InlineKeyboardButton(text="📍 Площадки",         callback_data=f"bot_chats_list:{cbot_id}"),
             ],
             [
                 InlineKeyboardButton(text="🛡 Защита",           callback_data=f"ch_protection:{chat_id}"),
-                InlineKeyboardButton(text="⚙️ Управление",       callback_data=f"ch_settings:{ch_id}"),
+                InlineKeyboardButton(text="⚙️ Управление",       callback_data=f"ch_settings:{ch_id_b}"),
             ],
             [InlineKeyboardButton(text="📣 Обратная связь",      callback_data=f"ch_feedback:{chat_id}")],
-            [InlineKeyboardButton(text=f"🗑 Удалить бот",        callback_data=f"ch_delete:{ch_id}")],
-            [InlineKeyboardButton(text="◀️ Назад",               callback_data="menu:channels")],
+            [InlineKeyboardButton(text=f"🗑 Удалить площадку",  callback_data=f"ch_delete:{ch_id_b}:{cbot_id}")],
+            [InlineKeyboardButton(text="◀️ Назад",               callback_data=f"bot_chats_list:{cbot_id}")],
         ]),
     )
     await callback.answer()
@@ -399,6 +662,16 @@ async def on_channel_detail(callback: CallbackQuery, platform_user: dict | None)
     if ch_id_str == "new":
         return
     await _show_channel_detail(callback, platform_user, int(ch_id_str))
+
+
+# channel_in_bot:{ch_id}:{child_bot_id} — детали площадки из уровня «Площадки бота»
+@router.callback_query(F.data.startswith("channel_in_bot:"))
+async def on_channel_in_bot(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    parts = callback.data.split(":")
+    ch_id = int(parts[1])
+    await _show_channel_detail(callback, platform_user, ch_id)
 
 
 @router.callback_query(F.data.startswith("channel_by_chat:"))
@@ -441,14 +714,16 @@ async def on_ch_toggle(callback: CallbackQuery, platform_user: dict | None):
 async def on_ch_delete(callback: CallbackQuery, platform_user: dict | None):
     if not platform_user:
         return
-    ch_id = int(callback.data.split(":")[1])
+    parts = callback.data.split(":")
+    ch_id = int(parts[1])
+    cbot_id = int(parts[2]) if len(parts) > 2 else None
+    back_cb = f"bot_chats_list:{cbot_id}" if cbot_id else "menu:channels"
 
-    # Подтверждение
     await callback.message.edit_text(
         "⚠️ <b>Удалить площадку?</b>\n\nВся история, настройки и ЧС для этой площадки будут удалены.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="✅ Да, удалить", callback_data=f"ch_delete_confirm:{ch_id}")],
-            [InlineKeyboardButton(text="🚫 Отмена",      callback_data=f"channel:{ch_id}")],
+            [InlineKeyboardButton(text="✅ Да, удалить", callback_data=f"ch_delete_confirm:{ch_id}:{cbot_id or ''}")],
+            [InlineKeyboardButton(text="🚫 Отмена",      callback_data=f"channel_in_bot:{ch_id}:{cbot_id or ''}")],
         ]),
     )
     await callback.answer()
@@ -458,10 +733,17 @@ async def on_ch_delete(callback: CallbackQuery, platform_user: dict | None):
 async def on_ch_delete_confirm(callback: CallbackQuery, platform_user: dict | None):
     if not platform_user:
         return
-    ch_id = int(callback.data.split(":")[1])
+    parts = callback.data.split(":")
+    ch_id = int(parts[1])
+    cbot_id = int(parts[2]) if len(parts) > 2 and parts[2] else None
+
     await db.execute(
         "DELETE FROM bot_chats WHERE id=$1 AND owner_id=$2",
         ch_id, platform_user["user_id"],
     )
     await callback.answer("✅ Площадка удалена")
-    await on_channels_menu(callback, platform_user)
+    if cbot_id:
+        callback.data = f"bot_chats_list:{cbot_id}"
+        await on_bot_chats_list(callback, platform_user)
+    else:
+        await on_channels_menu(callback, platform_user)

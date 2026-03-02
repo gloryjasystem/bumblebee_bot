@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS child_bots (
     bot_username    VARCHAR(64) NOT NULL,         -- @username без @
     bot_name        VARCHAR(128) NOT NULL,        -- display name
     token_encrypted TEXT NOT NULL,               -- Fernet-зашифрованный токен
+    verify_only     BOOLEAN DEFAULT false,        -- только владелец может добавлять площадки
     created_at      TIMESTAMPTZ DEFAULT now(),
     UNIQUE(owner_id, bot_id)
 );

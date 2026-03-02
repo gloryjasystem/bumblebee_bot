@@ -127,14 +127,15 @@ async def on_bot_type_welcome(callback: CallbackQuery, state: FSMContext, platfo
     await state.update_data(owner_id=platform_user["user_id"])
 
     await callback.message.edit_text(
-        "👋 Чтобы создать <b>«Бота приветствий»</b>, мне нужен токен:\n\n"
+        "⚡ Чтобы создать бота, который закроет все задачи по "
+        "управлению каналом и возьмёт рутину на себя, мне нужен токен:\n\n"
         "① Перейдите в @BotFather\n\n"
         "② Отправьте @BotFather команду: <code>/newbot</code>\n\n"
         "③ Придумайте название и юзернейм для вашего бота,\n"
         '   например: "Новости" → <code>@newsbot</code>\n\n'
         "④ @BotFather выдаст вам токен бота. Пример токена:\n"
         "   <code>5827254996:AAEBu9108achvHoWvPmvr6kueDgmFpJMjHo</code>\n\n"
-        "<b>Отправьте токен бота</b> 👇",
+        "Отправьте токен бота 👇",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🚫 Отменить", callback_data="menu:channels")],
         ]),

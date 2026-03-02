@@ -163,23 +163,13 @@ async def on_ch_mailing(callback: CallbackQuery, platform_user: dict | None):
 @router.callback_query(F.data.startswith("mailing_bot_start:"))
 async def on_mailing_bot_start(callback: CallbackQuery, state: FSMContext,
                                 platform_user: dict | None):
-    """Создать рассылку на уровне бота — выбираем первую активную площадку."""
+    """Создать рассылку по всем пользователям бота."""
     if not platform_user:
         return
     child_bot_id = int(callback.data.split(":")[1])
     owner_id = platform_user["user_id"]
 
-    # Берём первую активную площадку этого бота для рассылки
-    ch = await db.fetchrow(
-        "SELECT chat_id FROM bot_chats WHERE owner_id=$1 AND child_bot_id=$2 AND is_active=true LIMIT 1",
-        owner_id, child_bot_id,
-    )
-    if not ch:
-        await callback.answer("Нет активных площадок у этого бота.", show_alert=True)
-        return
-    chat_id = ch["chat_id"]
-
-    # Суммарное количество активных получателей по всем площадкам бота
+    # Количество уникальных получателей по всем площадкам бота
     count = await db.fetchval(
         "SELECT COUNT(DISTINCT bu.user_id) FROM bot_users bu "
         "JOIN bot_chats bc ON bu.chat_id=bc.chat_id AND bu.owner_id=bc.owner_id "
@@ -187,7 +177,7 @@ async def on_mailing_bot_start(callback: CallbackQuery, state: FSMContext,
         child_bot_id, owner_id,
     ) or 0
 
-    await state.update_data(chat_id=chat_id, owner_id=owner_id, child_bot_id=child_bot_id)
+    await state.update_data(child_bot_id=child_bot_id, chat_id=None, owner_id=owner_id)
     await state.set_state(MailingFSM.waiting_for_text)
 
     await callback.message.edit_text(
@@ -199,7 +189,7 @@ async def on_mailing_bot_start(callback: CallbackQuery, state: FSMContext,
         f"├ Площадка: <code>{{chat}}</code>\n"
         f"└ Текущая дата: <code>{{day}}</code>\n\n"
         f"ⓘ Можно прикрепить медиа.\n\n"
-        f"👥 Получателей по всем площадкам: <b>{count:,}</b>",
+        f"👥 Получателей (все площадки): <b>{count:,}</b>",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="◀️ Отмена",
                                    callback_data=f"bs_mailing:{child_bot_id}")],
@@ -352,8 +342,9 @@ async def on_mailing_start(callback: CallbackQuery, state: FSMContext, platform_
 @router.message(MailingFSM.waiting_for_text)
 async def on_mailing_text(message: Message, state: FSMContext):
     data = await state.get_data()
-    chat_id  = data.get("chat_id")
-    owner_id = data.get("owner_id")
+    chat_id      = data.get("chat_id")
+    owner_id     = data.get("owner_id")
+    child_bot_id = data.get("child_bot_id")  # set for bot-level mailing
 
     text = ""
     media_file_id = None
@@ -379,15 +370,28 @@ async def on_mailing_text(message: Message, state: FSMContext):
         return
 
     # Создаём черновик
-    mailing_id = await db.fetchval(
-        """INSERT INTO mailings
-           (owner_id, chat_id, text, media_file_id, media_type,
-            notify_users, protect_content, pin_message, delete_after_send,
-            disable_preview, url_buttons_raw, button_color)
-           VALUES ($1,$2,$3,$4,$5, true,false,false,false, false,NULL,'blue')
-           RETURNING id""",
-        owner_id, chat_id, text, media_file_id, media_type,
-    )
+    if child_bot_id and not chat_id:
+        # Bot-level: рассылка по всем пользователям бота (chat_id=NULL)
+        mailing_id = await db.fetchval(
+            """INSERT INTO mailings
+               (owner_id, child_bot_id, chat_id, text, media_file_id, media_type,
+                notify_users, protect_content, pin_message, delete_after_send,
+                disable_preview, url_buttons_raw, button_color)
+               VALUES ($1,$2,NULL,$3,$4,$5, true,false,false,false, false,NULL,'blue')
+               RETURNING id""",
+            owner_id, child_bot_id, text, media_file_id, media_type,
+        )
+    else:
+        # Channel-level: рассылка по пользователям одного канала
+        mailing_id = await db.fetchval(
+            """INSERT INTO mailings
+               (owner_id, chat_id, text, media_file_id, media_type,
+                notify_users, protect_content, pin_message, delete_after_send,
+                disable_preview, url_buttons_raw, button_color)
+               VALUES ($1,$2,$3,$4,$5, true,false,false,false, false,NULL,'blue')
+               RETURNING id""",
+            owner_id, chat_id, text, media_file_id, media_type,
+        )
     await state.clear()
 
     # Получаем только что созданный черновик

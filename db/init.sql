@@ -107,7 +107,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_bl_username  ON blacklist(owner_id, lower(
 CREATE TABLE IF NOT EXISTS mailings (
     id              SERIAL PRIMARY KEY,
     owner_id        BIGINT REFERENCES platform_users(user_id) ON DELETE CASCADE,
-    chat_id         BIGINT NOT NULL,
+    chat_id         BIGINT,                    -- NULL = bot-level (all chats)
+    child_bot_id    INTEGER REFERENCES child_bots(id) ON DELETE CASCADE,
     text            TEXT,
     media_file_id   TEXT,
     media_type      VARCHAR(16),               -- photo | video | document | NULL

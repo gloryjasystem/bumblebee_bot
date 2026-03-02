@@ -621,40 +621,28 @@ async def on_ch_ar_del(callback: CallbackQuery, platform_user: dict | None):
 
 @router.callback_query(F.data.startswith("ch_back_to_channel:"))
 async def on_ch_back_to_channel(callback: CallbackQuery, platform_user: dict | None):
-    """Назад из меню Сообщений → карточка канала."""
+    """Назад из меню Сообщений → главный экран бота (bot_settings)."""
     if not platform_user:
         return
     chat_id  = int(callback.data.split(":")[1])
     owner_id = platform_user["user_id"]
+
+    #找к какому боту принадлежит площадка
     row = await db.fetchrow(
-        "SELECT id, child_bot_id FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint",
+        "SELECT child_bot_id FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint",
         owner_id, chat_id,
     )
-    if not row:
-        await callback.answer("Площадка не найдена", show_alert=True)
-        return
+    child_bot_id = row["child_bot_id"] if row else None
 
-    ch = await db.fetchrow("SELECT * FROM bot_chats WHERE id=$1", row["id"])
-    if not ch:
-        await callback.answer("Площадка не найдена", show_alert=True)
-        return
+    if child_bot_id:
+        # Перенаправляем к главному экрану бота (статистика + кнопки)
+        callback.data = f"bot_settings:{child_bot_id}"
+    else:
+        # Если площадка без привязки к боту — в список каналов
+        callback.data = "menu:channels"
 
-    title     = ch["chat_title"] or f"Чат {ch['chat_id']}"
-    status    = "🟢 Активна" if ch["is_active"] else "🔴 Неактивна"
-    added     = ch["added_at"].strftime("%d.%m.%Y") if ch.get("added_at") else "—"
-    type_icon = "📢" if ch.get("chat_type") == "channel" else "👥"
-    cbot      = row["child_bot_id"] or ""
-    back_cb   = f"bot_chats_list:{cbot}" if cbot else "menu:channels"
-
-    await callback.message.edit_text(
-        f"📍 <b>Площадка:</b> {type_icon} {title}\n\n"
-        f"📅 <b>Дата добавления:</b> {added}\n\n"
-        "Выберите действие ⬇️",
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=status,       callback_data=f"ch_in_bot_toggle:{row['id']}:{cbot}")],
-            [InlineKeyboardButton(text="🗑 Удалить", callback_data=f"ch_delete:{row['id']}:{cbot}")],
-            [InlineKeyboardButton(text="◀️ Назад",   callback_data=back_cb)],
-        ]),
-    )
-    await callback.answer()
+    from handlers.channels import on_bot_settings, on_channels_menu
+    if child_bot_id:
+        await on_bot_settings(callback, platform_user)
+    else:
+        await on_channels_menu(callback, platform_user)

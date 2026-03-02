@@ -52,10 +52,9 @@ async def on_channels_menu(callback: CallbackQuery, platform_user: dict | None):
 
     buttons = []
     for ch in channels:
-        icon = "🟢" if ch["is_active"] else "🔴"
-        type_icon = "📢" if ch["chat_type"] == "channel" else "👥"
+        status = "🟢" if ch["is_active"] else "🔴"
         buttons.append([InlineKeyboardButton(
-            text=f"{icon} {type_icon} {ch['chat_title'] or 'Без названия'} · @{ch['bot_username']}",
+            text=f"{status} @{ch['bot_username']}",
             callback_data=f"channel:{ch['id']}",
         )])
 

@@ -197,18 +197,19 @@ async def on_token_received(message: Message, state: FSMContext, platform_user: 
 
     await msg.edit_text(
         f"✅ Бот: @{username} создан\n\n"
-        f"➕ Добавьте бота в <b>канал или группу</b> в качестве администратора "
+        f"➕ Чтобы начать настраивать созданного вами бота, добавьте сначала его "
+        f"в <b>канал или группу</b> в качестве администратора "
         f"с правами на «Добавление участников» (ios) → «Пригласительные ссылки» (android).\n\n"
-        f"👥 Он будет обрабатывать заявки, приветствовать пользователей "
-        f"и собирать их в базу для рассылок.\n\n"
-        f"<b>Выберите действие</b> 👇",
+        f"� Создай универсального помощника, который закроет все задачи по управлению, "
+        f"защите и монетизации твоего сообщества.\n\n"
+        f"Выберите действие 👇",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="→ Добавить в канал", url=deep_channel)],
             [InlineKeyboardButton(text="→ Добавить в группу", url=deep_group)],
-            [InlineKeyboardButton(text="✅ Проверить подключение", callback_data=f"verify_bot:{bot_info['id']}")],
             [InlineKeyboardButton(text="⊃ В меню", callback_data="menu:channels")],
         ]),
     )
+
 
 
 # ══════════════════════════════════════════════════════════════

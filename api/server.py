@@ -61,6 +61,36 @@ def create_app(bot: Bot, dp: Dispatcher) -> FastAPI:
                 "ALTER TABLE mailings ADD COLUMN IF NOT EXISTS button_color        TEXT DEFAULT 'blue'",
             ]:
                 await conn.execute(migration)
+            # Новые колонки bot_chats (раздел Сообщения)
+            for migration in [
+                "ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS captcha_type         TEXT    DEFAULT 'off'",
+                "ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS captcha_text         TEXT",
+                "ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS captcha_buttons_raw  TEXT",
+                "ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS captcha_lang         BOOLEAN DEFAULT false",
+                "ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS captcha_animation    BOOLEAN DEFAULT false",
+                "ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS captcha_button_style TEXT    DEFAULT '1x1'",
+                "ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS captcha_timer_min    INT     DEFAULT 1",
+                "ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS captcha_emoji_set    TEXT    DEFAULT '🍕🍔🌭🌮'",
+                "ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS captcha_greet        BOOLEAN DEFAULT false",
+                "ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS captcha_accept_now   BOOLEAN DEFAULT false",
+                "ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS captcha_accept_all   BOOLEAN DEFAULT false",
+                "ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS typing_action        BOOLEAN DEFAULT false",
+                "ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS reaction_emoji       TEXT    DEFAULT '👍'",
+                "ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS auto_delete_min      INT     DEFAULT 0",
+            ]:
+                await conn.execute(migration)
+            # Таблица автоответчика
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS autoreplies (
+                    id         SERIAL PRIMARY KEY,
+                    owner_id   BIGINT  NOT NULL,
+                    chat_id    BIGINT  NOT NULL,
+                    keyword    TEXT    NOT NULL,
+                    reply_text TEXT    NOT NULL,
+                    created_at TIMESTAMPTZ DEFAULT now(),
+                    UNIQUE (owner_id, chat_id, keyword)
+                )
+            """)
         logger.info("DB schema applied")
 
 

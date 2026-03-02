@@ -4,8 +4,6 @@ scheduler/jobs.py — APScheduler с PostgreSQL JobStore.
 import logging
 from aiogram import Bot
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
-from config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -14,23 +12,13 @@ _bot: Bot = None
 
 def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
     """
-    Создаёт и настраивает APScheduler с PostgreSQL JobStore.
-    Задачи выживают после перезапуска бота.
+    Создаёт и настраивает APScheduler с MemoryJobStore.
+    Memory store проще и не конфликтует при rolling deploy на Railway.
     """
     global _bot
     _bot = bot
 
-    # SQLAlchemy DSN для синхронного SQLAlchemy (APScheduler требует sync)
-    sync_url = settings.database_url
-    # asyncpg URL → psycopg2-совместимый
-    if sync_url.startswith("postgresql+asyncpg://"):
-        sync_url = sync_url.replace("postgresql+asyncpg://", "postgresql://")
-
-    jobstores = {
-        "default": SQLAlchemyJobStore(url=sync_url),
-    }
-
-    scheduler = AsyncIOScheduler(jobstores=jobstores)
+    scheduler = AsyncIOScheduler()
 
     # ── Ежечасовой downgrade тарифов ──────────────────────────
     scheduler.add_job(
@@ -39,6 +27,7 @@ def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
         hours=1,
         id="expire_tariffs",
         replace_existing=True,
+        misfire_grace_time=600,  # 10 минут допуска при пропуске
     )
 
     return scheduler

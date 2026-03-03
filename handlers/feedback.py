@@ -12,15 +12,125 @@ import db.pool as db
 logger = logging.getLogger(__name__)
 router = Router()
 
-# ── Языки ────────────────────────────────────────────────────
-LANGUAGES = [
-    ("RU 🇷🇺", "ru"), ("UK 🇺🇦", "uk"), ("BY 🇧🇾", "by"),
-    ("UZ 🇺🇿", "az", ), ("AZ 🇦🇿", "az"), ("KZ 🇰🇿", "kz"),
-    ("EN 🇬🇧", "en"), ("ES 🇪🇸", "es"), ("DE 🇩🇪", "de"),
-    ("ZH 🇨🇳", "zh"), ("HI 🇮🇳", "hi"), ("AR 🇸🇦", "ar"),
-]
 
-# сгруппируем по 3 в ряд
+# ── Языковая сетка ───────────────────────────────────────────
+def _mk_lang_rows(prefix_key: int, prefix: str, current_lang: str) -> list:
+    flat = [
+        ("RU 🇷🇺", "ru"), ("UK 🇺🇦", "uk"), ("BY 🇧🇾", "by"),
+        ("UZ 🇺🇿", "uz"), ("AZ 🇦🇿", "az"), ("KZ 🇰🇿", "kz"),
+        ("EN 🇬🇧", "en"), ("ES 🇪🇸", "es"), ("DE 🇩🇪", "de"),
+        ("ZH 🇨🇳", "zh"), ("HI 🇮🇳", "hi"), ("AR 🇸🇦", "ar"),
+    ]
+    rows = []
+    for i in range(0, len(flat), 3):
+        row = []
+        for label, code in flat[i:i+3]:
+            dot = "🔵" if code == current_lang else "⚪"
+            row.append(InlineKeyboardButton(
+                text=f"{dot} {label}",
+                callback_data=f"{prefix}:{prefix_key}:{code}",
+            ))
+        rows.append(row)
+    return rows
+
+
+def _feedback_text() -> str:
+    return (
+        "📣 <b>Обратная связь</b>\n\n"
+        "🛎 Сообщения от пользователей будут приходить в диалог с ботом.\n\n"
+        "🤖 Язык технических сообщений \"обратной связи\" зависит от выбранных настроек.\n\n"
+        "👥 Сообщения будут приходить только владельцу или всем админам, в зависимости от настроек.\n\n"
+        "<b>Выберите действие 👇</b>"
+    )
+
+
+# ══════════════════════════════════════════════════════════════
+# Бот-уровневый экран (вызывается из bs_feedback без picker-а)
+# ══════════════════════════════════════════════════════════════
+async def show_bot_feedback(callback: CallbackQuery, platform_user: dict, child_bot_id: int):
+    bot_row = await db.fetchrow(
+        "SELECT * FROM child_bots WHERE id=$1 AND owner_id=$2",
+        child_bot_id, platform_user["user_id"],
+    )
+    if not bot_row:
+        await callback.answer("Бот не найден", show_alert=True)
+        return
+
+    enabled = bot_row.get("feedback_enabled", False)
+    target  = bot_row.get("feedback_target", "owner")
+    lang    = bot_row.get("feedback_lang", "ru")
+
+    toggle_text  = "✗ Обратная связь: выкл" if not enabled else "✓ Обратная связь: вкл"
+    target_label = "создателю" if target == "owner" else "всем администраторам"
+
+    keyboard = [
+        [InlineKeyboardButton(text=toggle_text,                       callback_data=f"bsf_toggle:{child_bot_id}")],
+        [InlineKeyboardButton(text=f"→ Отправлять: {target_label}",  callback_data=f"bsf_target:{child_bot_id}")],
+        [InlineKeyboardButton(text="Выберите язык",                   callback_data="noop")],
+    ]
+    keyboard += _mk_lang_rows(child_bot_id, "bsf_lang", lang)
+    keyboard.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"bot_settings:{child_bot_id}")])
+
+    await callback.message.edit_text(
+        _feedback_text(),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("bsf_toggle:"))
+async def on_bsf_toggle(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    bot_id = int(callback.data.split(":")[1])
+    row = await db.fetchrow(
+        "SELECT feedback_enabled FROM child_bots WHERE id=$1 AND owner_id=$2",
+        bot_id, platform_user["user_id"],
+    )
+    new_val = not (row["feedback_enabled"] if row else False)
+    await db.execute(
+        "UPDATE child_bots SET feedback_enabled=$1 WHERE id=$2 AND owner_id=$3",
+        new_val, bot_id, platform_user["user_id"],
+    )
+    await callback.answer("✅ Включена" if new_val else "❌ Выключена")
+    await show_bot_feedback(callback, platform_user, bot_id)
+
+
+@router.callback_query(F.data.startswith("bsf_target:"))
+async def on_bsf_target(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    bot_id = int(callback.data.split(":")[1])
+    row = await db.fetchrow(
+        "SELECT feedback_target FROM child_bots WHERE id=$1 AND owner_id=$2",
+        bot_id, platform_user["user_id"],
+    )
+    current = row["feedback_target"] if row else "owner"
+    new_target = "all" if current == "owner" else "owner"
+    await db.execute(
+        "UPDATE child_bots SET feedback_target=$1 WHERE id=$2 AND owner_id=$3",
+        new_target, bot_id, platform_user["user_id"],
+    )
+    await callback.answer("→ Всем администраторам" if new_target == "all" else "→ Создателю")
+    await show_bot_feedback(callback, platform_user, bot_id)
+
+
+@router.callback_query(F.data.startswith("bsf_lang:"))
+async def on_bsf_lang(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    parts  = callback.data.split(":")
+    bot_id = int(parts[1])
+    lang   = parts[2]
+    await db.execute(
+        "UPDATE child_bots SET feedback_lang=$1 WHERE id=$2 AND owner_id=$3",
+        lang, bot_id, platform_user["user_id"],
+    )
+    await callback.answer(f"Язык: {lang.upper()}")
+    await show_bot_feedback(callback, platform_user, bot_id)
+
+
+# ── Языки (устаревший алиас для per-chat) ────────────────────
 def _lang_rows(chat_id: int, current_lang: str) -> list:
     rows = []
     flat = [

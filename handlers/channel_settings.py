@@ -2058,8 +2058,10 @@ async def on_bs_links(callback: CallbackQuery, platform_user: dict | None):
 async def on_bs_feedback(callback: CallbackQuery, platform_user: dict | None):
     if not platform_user:
         return
-    await _bs_channel_picker(callback, platform_user, int(callback.data.split(":")[1]),
-                             "ch_feedback", "📣 <b>Обратная связь</b>")
+    child_bot_id = int(callback.data.split(":")[1])
+    from handlers.feedback import show_bot_feedback
+    await show_bot_feedback(callback, platform_user, child_bot_id)
+
 
 
 # ══════════════════════════════════════════════════════════════

@@ -50,6 +50,13 @@ def create_app(bot: Bot, dp: Dispatcher) -> FastAPI:
             await conn.execute(
                 "ALTER TABLE child_bots ADD COLUMN IF NOT EXISTS verify_only BOOLEAN DEFAULT false"
             )
+            # Обратная связь на уровне бота
+            for migration in [
+                "ALTER TABLE child_bots ADD COLUMN IF NOT EXISTS feedback_enabled BOOLEAN DEFAULT false",
+                "ALTER TABLE child_bots ADD COLUMN IF NOT EXISTS feedback_target  TEXT    DEFAULT 'owner'",
+                "ALTER TABLE child_bots ADD COLUMN IF NOT EXISTS feedback_lang    TEXT    DEFAULT 'ru'",
+            ]:
+                await conn.execute(migration)
             # Новые колонки рассылки
             for migration in [
                 "ALTER TABLE mailings ADD COLUMN IF NOT EXISTS notify_users       BOOLEAN DEFAULT true",

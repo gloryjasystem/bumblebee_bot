@@ -174,59 +174,27 @@ async def on_tariff_buy(callback: CallbackQuery, platform_user: dict | None):
         await callback.answer("Неверные параметры", show_alert=True)
         return
 
-    # Проверяем что API ключ настроен
-    if not settings.nowpayments_api_key:
-        await callback.answer(
-            "⚠️ Платёжный шлюз ещё не настроен. Напишите @support.",
-            show_alert=True,
-        )
+    if not settings.server_url:
+        await callback.answer("Платёжный шлюз не настроен. Напишите @support.",
+                               show_alert=True)
         return
 
-    await callback.answer("⏳ Создаём счёт на оплату...")
+    # Открываем WebApp на нашем домене — внутри телеграма как миниприложение
+    webapp_url = f"{settings.server_url}/webapp/payment.html?tariff={tariff_key}&period={period}"
 
-    info = TARIFF_INFO[tariff_key]
-    p = settings.tariff_prices
-    amount = p.get(f"{tariff_key}_{period}", 0)
-    period_label = "месяц" if period == "month" else "год"
-
-    try:
-        from services.payment_service import create_invoice
-        result = await create_invoice(
-            user_id=platform_user["user_id"],
-            tariff=tariff_key,
-            period=period,
-            currency="usdttrc20",   # USDT TRC20 по умолчанию
-        )
-        payment_url = result["payment_url"]
-
-        await callback.message.edit_text(
-            f"💳 <b>Оплата тарифа {info['icon']} {info['name']}</b>\n\n"
-            f"💵 Сумма: <b>${amount} / {period_label}</b>\n\n"
-            f"<blockquote>Нажмите кнопку ниже для оплаты. Вы можете выбрать "
-            f"любую удобную криптовалюту: USDT, TON, BTC, ETH и другие.</blockquote>\n\n"
-            f"✅ После оплаты тариф <b>активируется автоматически</b>.\n"
-            f"⏱ Если тариф уже активен — дни <b>добавятся</b> к текущим.",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(
-                    text="💳 Перейти к оплате →",
-                    url=payment_url,
-                )],
-                [InlineKeyboardButton(
-                    text="◀️ Назад к тарифу",
-                    callback_data=f"tariff_detail:{tariff_key}",
-                )],
-            ]),
-        )
-
-    except Exception as e:
-        logger.error(f"create_invoice error for {platform_user['user_id']}: {e}")
-        await callback.message.edit_text(
-            "❌ <b>Не удалось создать счёт на оплату</b>\n\n"
-            "Пожалуйста, попробуйте позже или обратитесь в поддержку.",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="◀️ Назад", callback_data="menu:tariffs")],
-            ]),
-        )
+    await callback.message.edit_reply_markup(
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(
+                text="💳 Оплатить",
+                web_app=WebAppInfo(url=webapp_url),
+            )],
+            [InlineKeyboardButton(
+                text="◀️ Назад к тарифу",
+                callback_data=f"tariff_detail:{tariff_key}",
+            )],
+        ]),
+    )
+    await callback.answer()
 
 
 # ──────────────────────────────────────────────────────────────

@@ -61,9 +61,9 @@ class Settings(BaseSettings):
     # ── Лимиты площадок по тарифам ────────────────────
     channel_limits: dict = {
         "free":     1,
-        "start":    3,
-        "pro":      10,
-        "business": 999_999,
+        "start":    2,
+        "pro":      4,
+        "business": 10,
     }
 
     # ── Trial ──────────────────────────────────────────

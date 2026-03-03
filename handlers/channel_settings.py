@@ -1937,25 +1937,6 @@ async def on_bs_base_export(callback: CallbackQuery, bot: Bot, platform_user: di
         )
 
 
-# ── Команда ───────────────────────────────────────────────────
-@router.callback_query(F.data.startswith("bs_team:"))
-async def on_bs_team(callback: CallbackQuery, platform_user: dict | None):
-    if not platform_user:
-        return
-    child_bot_id = int(callback.data.split(":")[1])
-    await callback.message.edit_text(
-        "👥 <b>Команда</b>\n\n"
-        "<blockquote>Раздел для управления командой модераторов.\n\n"
-        "Здесь можно будет добавлять администраторов, ограничивать доступ "
-        "к разделам и следить за действиями команды.</blockquote>\n\n"
-        "🔧 Функция находится в разработке и появится в ближайшем обновлении.",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="◀️ Назад", callback_data=f"bs_settings:{child_bot_id}")],
-        ]),
-    )
-    await callback.answer()
-
-
 # ── Часовой пояс ─────────────────────────────────────────────
 _BS_TIMEZONES = [
     ("UTC+3 Москва",          "Europe/Moscow"),

@@ -13,10 +13,11 @@ logger = logging.getLogger(__name__)
 NOWPAYMENTS_API = "https://api.nowpayments.io/v1"
 
 
-async def create_invoice(user_id: int, tariff: str, period: str, currency: str) -> dict:
+async def create_invoice(user_id: int, tariff: str, period: str, currency: str = "usd") -> dict:
     """
-    Создаёт запись в payments и вызывает NOWPayments API.
+    Создаёт запись в payments и вызывает NOWPayments Invoice API.
     Возвращает {'payment_id': UUID, 'payment_url': str}.
+    Используем /v1/invoice — пользователь сам выбирает валюту на странице NP.
     """
     key = f"{tariff}_{period}"
     amount = settings.tariff_prices.get(key)
@@ -26,39 +27,42 @@ async def create_invoice(user_id: int, tariff: str, period: str, currency: str) 
     # Создаём pending-запись в БД
     payment_id = await db.fetchval(
         """
-        INSERT INTO payments (user_id, tariff, period, amount_usd, currency)
-        VALUES ($1, $2, $3, $4, $5) RETURNING id
+        INSERT INTO payments (user_id, tariff, period, amount_usd)
+        VALUES ($1, $2, $3, $4) RETURNING id
         """,
-        user_id, tariff, period, amount, currency,
+        user_id, tariff, period, amount,
     )
 
-    # Вызываем NOWPayments
+    # Вызываем NOWPayments Invoice API (не /payment — там нужна конкретная валюта)
     payload = {
         "price_amount":      amount,
         "price_currency":    "usd",
-        "pay_currency":      currency,
         "order_id":          str(payment_id),
         "order_description": f"Bumblebee Bot {tariff} {period}",
         "ipn_callback_url":  f"{settings.server_url}/nowpayments/webhook",
     }
     async with httpx.AsyncClient(timeout=15) as client:
         r = await client.post(
-            f"{NOWPAYMENTS_API}/payment",
+            f"{NOWPAYMENTS_API}/invoice",
             json=payload,
             headers={"x-api-key": settings.nowpayments_api_key},
         )
         r.raise_for_status()
         np_data = r.json()
 
-    # Сохраняем NOWPayments payment_id
+    # Сохраняем NOWPayments invoice id
     await db.execute(
         "UPDATE payments SET np_payment_id=$1 WHERE id=$2",
-        str(np_data["payment_id"]), payment_id,
+        str(np_data.get("id", "")), payment_id,
     )
+
+    invoice_url = np_data.get("invoice_url")
+    if not invoice_url:
+        raise ValueError(f"NOWPayments returned no invoice_url: {np_data}")
 
     return {
         "payment_id":  str(payment_id),
-        "payment_url": np_data.get("invoice_url") or np_data.get("payment_url"),
+        "payment_url": invoice_url,
     }
 
 

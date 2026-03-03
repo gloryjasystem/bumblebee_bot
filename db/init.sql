@@ -220,3 +220,18 @@ CREATE INDEX IF NOT EXISTS idx_join_req_pending
 -- blacklist_enabled: позволяет включить/выключить проверку ЧС для бота
 ALTER TABLE child_bots
     ADD COLUMN IF NOT EXISTS blacklist_enabled BOOLEAN DEFAULT TRUE;
+
+-- child_bot_id в team_members: позволяет назначать админа к конкретному боту
+ALTER TABLE team_members
+    ADD COLUMN IF NOT EXISTS child_bot_id INTEGER REFERENCES child_bots(id) ON DELETE CASCADE;
+
+-- Одноразовые токены приглашений в команду
+CREATE TABLE IF NOT EXISTS team_invites (
+    id              SERIAL PRIMARY KEY,
+    owner_id        BIGINT REFERENCES platform_users(user_id) ON DELETE CASCADE,
+    child_bot_id    INTEGER REFERENCES child_bots(id) ON DELETE CASCADE,
+    token           VARCHAR(64) UNIQUE NOT NULL,
+    role            VARCHAR(16) NOT NULL,   -- 'admin' | 'owner'
+    created_at      TIMESTAMPTZ DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_team_invites_token ON team_invites(token);

@@ -36,7 +36,91 @@ def kb_main_menu() -> InlineKeyboardMarkup:
 @router.message(CommandStart())
 async def cmd_start(message: Message, platform_user: dict | None):
     user = message.from_user
+    args = message.text.split(" ", 1)[1] if " " in message.text else ""
 
+    # ── Обработка team-invite deep link ──────────────────────
+    if args.startswith("team-"):
+        token = args[5:]   # убрать "team-"
+        invite = await db.fetchrow(
+            "SELECT * FROM team_invites WHERE token=$1", token,
+        )
+        if not invite:
+            await message.answer("❌ Ссылка недействительна или уже использована.")
+            return
+
+        owner_id     = invite["owner_id"]
+        child_bot_id = invite["child_bot_id"]
+        role         = invite["role"]
+
+        # Убеждаемся что приглашённый зарегистрирован
+        if not platform_user:
+            await db.execute(
+                """INSERT INTO platform_users (user_id, username, first_name)
+                   VALUES ($1, $2, $3) ON CONFLICT (user_id) DO NOTHING""",
+                user.id, user.username, user.first_name,
+            )
+
+        # Нельзя принять приглашение в собственный бот
+        bot_row = await db.fetchrow(
+            "SELECT owner_id, bot_username FROM child_bots WHERE id=$1", child_bot_id,
+        )
+        if not bot_row or bot_row["owner_id"] == user.id:
+            await message.answer("⚠️ Вы уже являетесь владельцем этого бота.")
+            return
+
+        bot_username = bot_row["bot_username"]
+
+        if role == "admin":
+            # Добавляем как администратора
+            await db.execute(
+                """INSERT INTO team_members
+                       (owner_id, child_bot_id, user_id, username, role, is_active)
+                   VALUES ($1, $2, $3, $4, 'admin', true)
+                   ON CONFLICT (owner_id, user_id) DO UPDATE
+                       SET is_active=true, child_bot_id=$2, role='admin'""",
+                owner_id, child_bot_id, user.id, user.username,
+            )
+            # Удаляем токен (одноразовый)
+            await db.execute("DELETE FROM team_invites WHERE token=$1", token)
+            await message.answer(
+                f"✅ <b>Вы добавлены как администратор</b>\n\n"
+                f"Бот @{bot_username} появился в вашем списке ботов.\n"
+                f"Вы можете управлять им через главное меню.",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="🤖 Мои боты", callback_data="menu:channels")],
+                ]),
+            )
+
+        elif role == "owner":
+            # Передача владения: меняем owner_id у child_bot
+            old_owner_id = bot_row["owner_id"]
+            await db.execute(
+                "UPDATE child_bots SET owner_id=$1 WHERE id=$2",
+                user.id, child_bot_id,
+            )
+            # Переносим смежные записи
+            await db.execute(
+                "UPDATE bot_chats SET owner_id=$1 WHERE child_bot_id=$2 AND owner_id=$3",
+                user.id, child_bot_id, old_owner_id,
+            )
+            await db.execute(
+                "UPDATE bot_users SET owner_id=$1 WHERE owner_id=$2",
+                user.id, old_owner_id,
+            )
+            # Удаляем оба токена приглашения для этого бота (сброс)
+            await db.execute(
+                "DELETE FROM team_invites WHERE child_bot_id=$1", child_bot_id,
+            )
+            await message.answer(
+                f"👑 <b>Вы стали владельцем бота @{bot_username}!</b>\n\n"
+                f"Полный контроль над ботом теперь у вас.",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="🤖 Мои боты", callback_data="menu:channels")],
+                ]),
+            )
+        return
+
+    # ── Стандартный /start ────────────────────────────────────
     if platform_user is None:
         # Новый пользователь — регистрируем и показываем выбор языка
         await db.execute(

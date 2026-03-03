@@ -34,38 +34,49 @@ async def on_channels_menu(callback: CallbackQuery, platform_user: dict | None):
         return
     owner_id = platform_user["user_id"]
 
+    # Мои боты (владелец)
     bots = await db.fetch(
         """
-        SELECT id, bot_username,
+        SELECT cb.id, cb.bot_username, 'owner' AS my_role,
                (SELECT COUNT(*) FROM bot_chats bc
                 WHERE bc.child_bot_id = cb.id AND bc.owner_id = cb.owner_id) AS chat_count
         FROM child_bots cb
         WHERE cb.owner_id = $1
-        ORDER BY cb.created_at DESC
+        UNION
+        -- Боты, к которым я добавлен как admin
+        SELECT cb.id, cb.bot_username, 'admin' AS my_role,
+               (SELECT COUNT(*) FROM bot_chats bc
+                WHERE bc.child_bot_id = cb.id AND bc.owner_id = cb.owner_id) AS chat_count
+        FROM child_bots cb
+        JOIN team_members tm ON tm.child_bot_id = cb.id AND tm.user_id = $1 AND tm.is_active = true
+        WHERE cb.owner_id != $1
+        ORDER BY id DESC
         """,
         owner_id,
     )
 
     tariff = platform_user["tariff"]
     limit  = settings.channel_limits.get(tariff, 1)
-    count  = len(bots)
+    # Считаем только собственные боты для лимита
+    own_count = sum(1 for b in bots if b["my_role"] == "owner")
 
     buttons = []
     for b in bots:
         status = "🟢" if b["chat_count"] > 0 else "⚪"
+        role_icon = "" if b["my_role"] == "owner" else " 🛡"
         buttons.append([InlineKeyboardButton(
-            text=f"{status} @{b['bot_username']}",
+            text=f"{status} @{b['bot_username']}{role_icon}",
             callback_data=f"bot_settings:{b['id']}",
         )])
 
-    if count < limit:
+    if own_count < limit:
         buttons.append([InlineKeyboardButton(
             text="➕ Подключить новый бот",
             callback_data="channel:new",
         )])
     else:
         buttons.append([InlineKeyboardButton(
-            text=f"🔒 Лимит ботов ({count}/{limit}) — улучшите тариф",
+            text=f"🔒 Лимит ботов ({own_count}/{limit}) — улучшите тариф",
             callback_data="menu:tariffs",
         )])
 
@@ -73,7 +84,7 @@ async def on_channels_menu(callback: CallbackQuery, platform_user: dict | None):
 
     await callback.message.edit_text(
         f"🤖 <b>Мои боты</b>\n\n"
-        f"Подключено: {count}/{limit} (тариф {tariff.capitalize()})",
+        f"Подключено: {own_count}/{limit} (тариф {tariff.capitalize()})",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
     )
     await callback.answer()
@@ -89,13 +100,24 @@ async def on_bot_settings(callback: CallbackQuery, platform_user: dict | None):
     child_bot_id = int(callback.data.split(":")[1])
     owner_id = platform_user["user_id"]
 
+    # Разрешаем доступ владельцу ИЛИ активному admin
     bot = await db.fetchrow(
-        "SELECT * FROM child_bots WHERE id=$1 AND owner_id=$2",
+        """
+        SELECT cb.* FROM child_bots cb
+        WHERE cb.id=$1 AND (
+            cb.owner_id=$2
+            OR EXISTS (
+                SELECT 1 FROM team_members tm
+                WHERE tm.child_bot_id=cb.id AND tm.user_id=$2 AND tm.is_active=true
+            )
+        )
+        """,
         child_bot_id, owner_id,
     )
     if not bot:
         await callback.answer("Бот не найден", show_alert=True)
         return
+    is_owner = bot["owner_id"] == owner_id
 
     from datetime import date, timedelta
     today     = date.today()
@@ -148,26 +170,28 @@ async def on_bot_settings(callback: CallbackQuery, platform_user: dict | None):
         f"🟢 Живые ≈ {active_users}    🔴 Мёртвые ≈ {dead_users}"
     )
 
+    keyboard = [
+        [InlineKeyboardButton(text="✅ Обработка заявок",  callback_data=f"bs_requests:{child_bot_id}")],
+        [
+            InlineKeyboardButton(text="💬 Сообщения",      callback_data=f"bs_messages:{child_bot_id}"),
+            InlineKeyboardButton(text="📨 Рассылка",       callback_data=f"bs_mailing:{child_bot_id}"),
+        ],
+        [
+            InlineKeyboardButton(text="🔗 Ссылки",         callback_data=f"bs_links:{child_bot_id}"),
+            InlineKeyboardButton(text="📍 Площадки",       callback_data=f"bot_chats_list:{child_bot_id}"),
+        ],
+        [
+            InlineKeyboardButton(text="🛡 Защита",         callback_data=f"bs_protection:{child_bot_id}"),
+            InlineKeyboardButton(text="⚙️ Управление",     callback_data=f"bs_settings:{child_bot_id}"),
+        ],
+        [InlineKeyboardButton(text="📣 Обратная связь",    callback_data=f"bs_feedback:{child_bot_id}")],
+    ]
+    if is_owner:
+        keyboard.append([InlineKeyboardButton(text="🗑 Удалить бот", callback_data=f"bot_delete:{child_bot_id}")])
+    keyboard.append([InlineKeyboardButton(text="◀️ Назад", callback_data="menu:channels")])
     await callback.message.edit_text(
         text,
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="✅ Обработка заявок",  callback_data=f"bs_requests:{child_bot_id}")],
-            [
-                InlineKeyboardButton(text="💬 Сообщения",      callback_data=f"bs_messages:{child_bot_id}"),
-                InlineKeyboardButton(text="📨 Рассылка",       callback_data=f"bs_mailing:{child_bot_id}"),
-            ],
-            [
-                InlineKeyboardButton(text="🔗 Ссылки",         callback_data=f"bs_links:{child_bot_id}"),
-                InlineKeyboardButton(text="📍 Площадки",       callback_data=f"bot_chats_list:{child_bot_id}"),
-            ],
-            [
-                InlineKeyboardButton(text="🛡 Защита",         callback_data=f"bs_protection:{child_bot_id}"),
-                InlineKeyboardButton(text="⚙️ Управление",     callback_data=f"bs_settings:{child_bot_id}"),
-            ],
-            [InlineKeyboardButton(text="📣 Обратная связь",    callback_data=f"bs_feedback:{child_bot_id}")],
-            [InlineKeyboardButton(text="🗑 Удалить бот",       callback_data=f"bot_delete:{child_bot_id}")],
-            [InlineKeyboardButton(text="◀️ Назад",             callback_data="menu:channels")],
-        ]),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard),
     )
     await callback.answer()
 

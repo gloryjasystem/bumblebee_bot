@@ -2079,3 +2079,171 @@ async def on_bs_feedback(callback: CallbackQuery, platform_user: dict | None):
         return
     await _bs_channel_picker(callback, platform_user, int(callback.data.split(":")[1]),
                              "ch_feedback", "📣 <b>Обратная связь</b>")
+
+
+# ══════════════════════════════════════════════════════════════
+# Команда — совместное управление ботом
+# ══════════════════════════════════════════════════════════════
+
+import secrets
+
+
+async def _get_or_create_team_invites(owner_id: int, child_bot_id: int) -> dict:
+    """Возвращает или создаёт invite-токены для admin и owner ролей."""
+    rows = await db.fetch(
+        "SELECT role, token FROM team_invites "
+        "WHERE owner_id=$1 AND child_bot_id=$2",
+        owner_id, child_bot_id,
+    )
+    tokens = {r["role"]: r["token"] for r in rows}
+    for role in ("admin", "owner"):
+        if role not in tokens:
+            tok = secrets.token_hex(16)
+            await db.execute(
+                "INSERT INTO team_invites (owner_id, child_bot_id, token, role) "
+                "VALUES ($1, $2, $3, $4) "
+                "ON CONFLICT (token) DO NOTHING",
+                owner_id, child_bot_id, tok, role,
+            )
+            tokens[role] = tok
+    return tokens
+
+
+async def _show_bs_team(callback: CallbackQuery, bot: Bot,
+                        platform_user: dict, child_bot_id: int):
+    owner_id = platform_user["user_id"]
+    me = await bot.get_me()
+    platform_username = me.username
+
+    tokens = await _get_or_create_team_invites(owner_id, child_bot_id)
+    admin_link = f"https://t.me/{platform_username}?start=team-{tokens['admin']}"
+    owner_link  = f"https://t.me/{platform_username}?start=team-{tokens['owner']}"
+
+    members = await db.fetch(
+        "SELECT user_id, username, role FROM team_members "
+        "WHERE owner_id=$1 AND child_bot_id=$2 AND is_active=true "
+        "ORDER BY added_at",
+        owner_id, child_bot_id,
+    )
+    member_lines = ""
+    if members:
+        lines = []
+        for m in members:
+            uname = f"@{m['username']}" if m["username"] else f"ID:{m['user_id']}"
+            role_label = "👑 Владелец" if m["role"] == "owner" else "🛡 Админ"
+            lines.append(f"  • {uname} — {role_label}")
+        member_lines = "\n\n👥 <b>Участники команды:</b>\n" + "\n".join(lines)
+
+    await callback.message.edit_text(
+        "<blockquote>"
+        "👥 Вы можете добавить админов для совместного управления ботом.\n\n"
+        "🔄 Ссылки необходимо обновлять после использования."
+        "</blockquote>\n\n"
+        "👤 Чтобы добавить администратора,\n"
+        f"   отправьте ему ссылку →\n<code>{admin_link}</code>\n\n"
+        "👑 Чтобы сменить владельца бота,\n"
+        f"   отправьте ему ссылку →\n<code>{owner_link}</code>"
+        f"{member_lines}\n\n"
+        "Выберите действие ⬇️",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="→ Добавить администратора",
+                                  url=admin_link)],
+            [InlineKeyboardButton(text="→ Сменить владельца",
+                                  url=owner_link)],
+            [InlineKeyboardButton(text="🔄 Обновить ссылки",
+                                  callback_data=f"bs_team_refresh:{child_bot_id}")],
+            *([
+                [InlineKeyboardButton(text="👤 Участники команды",
+                                      callback_data=f"bs_team_members:{child_bot_id}")]
+            ] if members else []),
+            [InlineKeyboardButton(text="◀️ Назад",
+                                  callback_data=f"bs_settings:{child_bot_id}")],
+        ]),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("bs_team:"))
+async def on_bs_team(callback: CallbackQuery, bot: Bot,
+                     platform_user: dict | None):
+    if not platform_user:
+        return
+    child_bot_id = int(callback.data.split(":")[1])
+    owner_id = platform_user["user_id"]
+    # Только владелец видит экран команды (проверяем owner_id в child_bots)
+    row = await db.fetchrow(
+        "SELECT id FROM child_bots WHERE id=$1 AND owner_id=$2",
+        child_bot_id, owner_id,
+    )
+    if not row:
+        await callback.answer("Только владелец бота может управлять командой", show_alert=True)
+        return
+    await _show_bs_team(callback, bot, platform_user, child_bot_id)
+
+
+@router.callback_query(F.data.startswith("bs_team_refresh:"))
+async def on_bs_team_refresh(callback: CallbackQuery, bot: Bot,
+                             platform_user: dict | None):
+    if not platform_user:
+        return
+    child_bot_id = int(callback.data.split(":")[1])
+    owner_id = platform_user["user_id"]
+    # Удаляем старые токены — они будут пересозданы
+    await db.execute(
+        "DELETE FROM team_invites WHERE owner_id=$1 AND child_bot_id=$2",
+        owner_id, child_bot_id,
+    )
+    await _show_bs_team(callback, bot, platform_user, child_bot_id)
+
+
+@router.callback_query(F.data.startswith("bs_team_members:"))
+async def on_bs_team_members(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    child_bot_id = int(callback.data.split(":")[1])
+    owner_id = platform_user["user_id"]
+
+    members = await db.fetch(
+        "SELECT id, user_id, username, role, added_at FROM team_members "
+        "WHERE owner_id=$1 AND child_bot_id=$2 AND is_active=true "
+        "ORDER BY added_at",
+        owner_id, child_bot_id,
+    )
+    if not members:
+        await callback.answer("Команда пуста", show_alert=True)
+        return
+
+    buttons = []
+    for m in members:
+        uname = f"@{m['username']}" if m["username"] else f"ID:{m['user_id']}"
+        role_label = "👑" if m["role"] == "owner" else "🛡"
+        buttons.append([InlineKeyboardButton(
+            text=f"{role_label} {uname} — ❌ Удалить",
+            callback_data=f"bs_team_remove:{child_bot_id}:{m['id']}",
+        )])
+    buttons.append([InlineKeyboardButton(
+        text="◀️ Назад", callback_data=f"bs_team:{child_bot_id}",
+    )])
+
+    await callback.message.edit_text(
+        "👥 <b>Участники команды</b>\n\nНажмите на участника чтобы удалить его:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("bs_team_remove:"))
+async def on_bs_team_remove(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    parts = callback.data.split(":")
+    child_bot_id, member_db_id = int(parts[1]), int(parts[2])
+    owner_id = platform_user["user_id"]
+    await db.execute(
+        "UPDATE team_members SET is_active=false WHERE id=$1 AND owner_id=$2",
+        member_db_id, owner_id,
+    )
+    await callback.answer("✅ Участник удалён из команды")
+    # Перерендер списка
+    callback.data = f"bs_team_members:{child_bot_id}"
+    await on_bs_team_members(callback, platform_user)

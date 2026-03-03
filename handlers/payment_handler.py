@@ -1,13 +1,15 @@
 """
-handlers/payment_handler.py — Экран тарифов (2-уровневый) и оплата через WebApp.
+handlers/payment_handler.py — Тарифы: выбор → детали → NOWPayments invoice.
 """
+import logging
 from aiogram import Router, F
 from aiogram.types import (
-    CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
+    CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, Message
 )
 from config import settings
 import db.pool as db
 
+logger = logging.getLogger(__name__)
 router = Router()
 
 
@@ -28,7 +30,7 @@ TARIFF_INFO = {
             "• 🔗 Пригласительные ссылки\n"
             "• 🛡 Защита (капча, авто-бан)\n\n"
             "Идеально для старта.\n\n"
-            "💳 Оплата: USDT / TON / ETH и другие"
+            "💳 Оплата: USDT / TON / BTC / ETH и другие"
         ),
     },
     "pro": {
@@ -47,7 +49,7 @@ TARIFF_INFO = {
             "• 👥 Команда (до 3 администраторов)\n"
             "• 📊 Расширенная аналитика\n\n"
             "Лучший выбор для активного роста.\n\n"
-            "💳 Оплата: USDT / TON / ETH и другие"
+            "💳 Оплата: USDT / TON / BTC / ETH и другие"
         ),
     },
     "business": {
@@ -67,7 +69,7 @@ TARIFF_INFO = {
             "• 📊 Полная аналитика\n"
             "• 🎯 Персональный менеджер\n\n"
             "Для профессионалов и агентств.\n\n"
-            "💳 Оплата: USDT / TON / ETH и другие"
+            "💳 Оплата: USDT / TON / BTC / ETH и другие"
         ),
     },
 }
@@ -78,12 +80,6 @@ TARIFF_LABELS = {
     "pro":      "⭐ Про",
     "business": "💼 Бизнес",
 }
-
-
-def _webapp_btn(text: str, tariff: str, period: str, amount: int) -> InlineKeyboardButton:
-    url = f"{settings.webapp_url}?tariff={tariff}&period={period}"
-    label = f"💳 ${amount} / {'мес' if period == 'month' else 'год −29%'}"
-    return InlineKeyboardButton(text=label, web_app=WebAppInfo(url=url))
 
 
 # ──────────────────────────────────────────────────────────────
@@ -107,11 +103,6 @@ async def on_tariffs(callback: CallbackQuery, platform_user: dict | None):
             text="🎁 Попробовать 10 дней Про бесплатно",
             callback_data="tariff_activate:trial",
         )])
-    elif tariff == "free":
-        buttons.append([InlineKeyboardButton(
-            text="🆓 Начать бесплатно",
-            callback_data="tariff_activate:free",
-        )])
 
     # Кнопки тарифов
     for key in ("start", "pro", "business"):
@@ -134,7 +125,7 @@ async def on_tariffs(callback: CallbackQuery, platform_user: dict | None):
 
 
 # ──────────────────────────────────────────────────────────────
-# Экран 2: детали тарифа + кнопки оплаты
+# Экран 2: детали тарифа + выбор периода
 # ──────────────────────────────────────────────────────────────
 @router.callback_query(F.data.startswith("tariff_detail:"))
 async def on_tariff_detail(callback: CallbackQuery, platform_user: dict | None):
@@ -153,12 +144,89 @@ async def on_tariff_detail(callback: CallbackQuery, platform_user: dict | None):
     await callback.message.edit_text(
         info["desc"],
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [_webapp_btn("Месяц", tariff_key, "month", month_price)],
-            [_webapp_btn("Год",   tariff_key, "year",  year_price)],
+            [InlineKeyboardButton(
+                text=f"💳 ${month_price} / месяц",
+                callback_data=f"tariff_buy:{tariff_key}:month",
+            )],
+            [InlineKeyboardButton(
+                text=f"💳 ${year_price} / год  (−29%)",
+                callback_data=f"tariff_buy:{tariff_key}:year",
+            )],
             [InlineKeyboardButton(text="◀️ Назад", callback_data="menu:tariffs")],
         ]),
     )
     await callback.answer()
+
+
+# ──────────────────────────────────────────────────────────────
+# Экран 3: создание NOWPayments инвойса
+# ──────────────────────────────────────────────────────────────
+@router.callback_query(F.data.startswith("tariff_buy:"))
+async def on_tariff_buy(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+
+    parts      = callback.data.split(":")
+    tariff_key = parts[1]
+    period     = parts[2]
+
+    if tariff_key not in TARIFF_INFO or period not in ("month", "year"):
+        await callback.answer("Неверные параметры", show_alert=True)
+        return
+
+    # Проверяем что API ключ настроен
+    if not settings.nowpayments_api_key:
+        await callback.answer(
+            "⚠️ Платёжный шлюз ещё не настроен. Напишите @support.",
+            show_alert=True,
+        )
+        return
+
+    await callback.answer("⏳ Создаём счёт на оплату...")
+
+    info = TARIFF_INFO[tariff_key]
+    p = settings.tariff_prices
+    amount = p.get(f"{tariff_key}_{period}", 0)
+    period_label = "месяц" if period == "month" else "год"
+
+    try:
+        from services.payment_service import create_invoice
+        result = await create_invoice(
+            user_id=platform_user["user_id"],
+            tariff=tariff_key,
+            period=period,
+            currency="usdttrc20",   # USDT TRC20 по умолчанию
+        )
+        payment_url = result["payment_url"]
+
+        await callback.message.edit_text(
+            f"💳 <b>Оплата тарифа {info['icon']} {info['name']}</b>\n\n"
+            f"💵 Сумма: <b>${amount} / {period_label}</b>\n\n"
+            f"<blockquote>Нажмите кнопку ниже для оплаты. Вы можете выбрать "
+            f"любую удобную криптовалюту: USDT, TON, BTC, ETH и другие.</blockquote>\n\n"
+            f"✅ После оплаты тариф <b>активируется автоматически</b>.\n"
+            f"⏱ Если тариф уже активен — дни <b>добавятся</b> к текущим.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(
+                    text="💳 Перейти к оплате →",
+                    url=payment_url,
+                )],
+                [InlineKeyboardButton(
+                    text="◀️ Назад к тарифу",
+                    callback_data=f"tariff_detail:{tariff_key}",
+                )],
+            ]),
+        )
+
+    except Exception as e:
+        logger.error(f"create_invoice error for {platform_user['user_id']}: {e}")
+        await callback.message.edit_text(
+            "❌ <b>Не удалось создать счёт на оплату</b>\n\n"
+            "Пожалуйста, попробуйте позже или обратитесь в поддержку.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="◀️ Назад", callback_data="menu:tariffs")],
+            ]),
+        )
 
 
 # ──────────────────────────────────────────────────────────────
@@ -192,9 +260,10 @@ async def on_tariff_activate(callback: CallbackQuery, platform_user: dict | None
         await callback.message.edit_text(
             "🎁 <b>Trial активирован!</b>\n\n"
             "Тариф ⭐ Про активен на 10 дней.\n"
-            "Используй все функции Pro и оцени бота!",
+            "Используй все функции Pro и оцени бота!\n\n"
+            "📅 Для продления после trial — зайди в 💎 Тарифы.",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
-                InlineKeyboardButton(text="▶ Начать работу", callback_data="menu:main")
+                InlineKeyboardButton(text="🚀 Начать работу", callback_data="menu:main")
             ]]),
         )
         return

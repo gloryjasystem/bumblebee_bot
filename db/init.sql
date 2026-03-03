@@ -235,3 +235,19 @@ CREATE TABLE IF NOT EXISTS team_invites (
     created_at      TIMESTAMPTZ DEFAULT now()
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_team_invites_token ON team_invites(token);
+
+-- Таблица платежей за тарифы (NOWPayments)
+CREATE TABLE IF NOT EXISTS payments (
+    id              SERIAL PRIMARY KEY,
+    user_id         BIGINT NOT NULL REFERENCES platform_users(user_id) ON DELETE CASCADE,
+    tariff          VARCHAR(16) NOT NULL,    -- start | pro | business
+    period          VARCHAR(8)  NOT NULL,    -- month | year
+    amount_usd      NUMERIC(10,2) NOT NULL,
+    currency        VARCHAR(16) DEFAULT 'usd',
+    status          VARCHAR(16) DEFAULT 'pending',  -- pending | paid | failed | expired
+    np_payment_id   TEXT,                   -- ID от NOWPayments
+    created_at      TIMESTAMPTZ DEFAULT now(),
+    paid_at         TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_payments_user ON payments(user_id);
+CREATE INDEX IF NOT EXISTS idx_payments_status ON payments(status);

@@ -25,6 +25,276 @@ class MailingFSM(StatesGroup):
     waiting_for_buttons  = State()
 
 
+class MassMailingFSM(StatesGroup):
+    selecting_bots   = State()   # выбор ботов
+    waiting_for_text = State()   # ввод текста рассылки
+
+
+# ══════════════════════════════════════════════════════════════
+# Массовая рассылка (menu:mailing)
+# ══════════════════════════════════════════════════════════════
+
+async def _show_mass_mailing(callback: CallbackQuery, state: FSMContext,
+                             platform_user: dict):
+    """Показывает экран выбора ботов для массовой рассылки."""
+    owner_id = platform_user["user_id"]
+    data = await state.get_data()
+    selected: list[int] = data.get("mass_selected", [])
+
+    # Все боты пользователя (включая admin-боты из команды)
+    bots = await db.fetch(
+        """
+        SELECT cb.id, cb.bot_username FROM child_bots cb
+        WHERE cb.owner_id = $1
+        UNION
+        SELECT cb.id, cb.bot_username FROM child_bots cb
+        JOIN team_members tm ON tm.child_bot_id = cb.id AND tm.user_id = $1 AND tm.is_active = true
+        WHERE cb.owner_id != $1
+        ORDER BY id
+        """,
+        owner_id,
+    )
+
+    # Считаем пользователей по выбранным ботам
+    total_users = 0
+    if selected:
+        total_users = await db.fetchval(
+            """SELECT COUNT(DISTINCT bu.user_id) FROM bot_users bu
+               JOIN bot_chats bc ON bu.chat_id=bc.chat_id AND bu.owner_id=bc.owner_id
+               WHERE bc.child_bot_id = ANY($1::int[])
+               AND bu.is_active=true AND bu.bot_activated=true""",
+            selected,
+        ) or 0
+
+    sel_count = len(selected)
+    buttons = []
+    for b in bots:
+        is_sel = b["id"] in selected
+        icon = "🔵" if is_sel else "⚪"
+        buttons.append([InlineKeyboardButton(
+            text=f"{icon} @{b['bot_username']}",
+            callback_data=f"ml_mass_toggle:{b['id']}",
+        )])
+
+    buttons.append([InlineKeyboardButton(
+        text="🚀 Начать рассылку",
+        callback_data="ml_mass_start",
+    )])
+    buttons.append([InlineKeyboardButton(
+        text="📅 Запланированные",
+        callback_data="ml_mass_scheduled",
+    )])
+    buttons.append([InlineKeyboardButton(
+        text="◀️ Назад",
+        callback_data="menu:main",
+    )])
+
+    await callback.message.edit_text(
+        "<blockquote>"
+        "📣 Здесь вы можете запустить или запланировать рассылку "
+        "одновременно на несколько ботов."
+        "</blockquote>\n\n"
+        f"🔒 Выбрано ботов: {sel_count}\n"
+        f"👥 Пользователей: {total_users:,}\n\n"
+        "Выберите действие ⬇️",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "menu:mailing")
+async def on_menu_mailing(callback: CallbackQuery, state: FSMContext,
+                          platform_user: dict | None):
+    if not platform_user:
+        await callback.answer("Выполните /start", show_alert=True)
+        return
+    tariff = platform_user["tariff"]
+    if tariff == "free":
+        await callback.answer("Рассылка доступна с тарифа Старт.", show_alert=True)
+        return
+    # Сохраняем пустой выбор при первом входе (не сбрасываем если уже были)
+    data = await state.get_data()
+    if "mass_selected" not in data:
+        await state.update_data(mass_selected=[])
+    await state.set_state(MassMailingFSM.selecting_bots)
+    await _show_mass_mailing(callback, state, platform_user)
+
+
+@router.callback_query(F.data.startswith("ml_mass_toggle:"))
+async def on_ml_mass_toggle(callback: CallbackQuery, state: FSMContext,
+                            platform_user: dict | None):
+    if not platform_user:
+        return
+    bot_id = int(callback.data.split(":")[1])
+    data = await state.get_data()
+    selected: list[int] = data.get("mass_selected", [])
+
+    if bot_id in selected:
+        selected.remove(bot_id)
+    else:
+        selected.append(bot_id)
+
+    await state.update_data(mass_selected=selected)
+    await _show_mass_mailing(callback, state, platform_user)
+
+
+@router.callback_query(F.data == "ml_mass_start")
+async def on_ml_mass_start(callback: CallbackQuery, state: FSMContext,
+                           platform_user: dict | None):
+    if not platform_user:
+        return
+    data = await state.get_data()
+    selected: list[int] = data.get("mass_selected", [])
+
+    if len(selected) < 2:
+        await callback.answer("⊕ Выберите минимум двух ботов", show_alert=True)
+        return
+
+    # Считаем суммарных получателей
+    total_users = await db.fetchval(
+        """SELECT COUNT(DISTINCT bu.user_id) FROM bot_users bu
+           JOIN bot_chats bc ON bu.chat_id=bc.chat_id AND bu.owner_id=bc.owner_id
+           WHERE bc.child_bot_id = ANY($1::int[])
+           AND bu.is_active=true AND bu.bot_activated=true""",
+        selected,
+    ) or 0
+
+    await state.set_state(MassMailingFSM.waiting_for_text)
+    await callback.message.edit_text(
+        "📨 <b>Массовая рассылка</b>\n\n"
+        "Отправьте сообщение для рассылки.\n\n"
+        "<b>Переменные:</b>\n"
+        "├ Имя: <code>{name}</code>\n"
+        "├ ФИО: <code>{allname}</code>\n"
+        "├ Юзер: <code>{username}</code>\n"
+        "└ Дата: <code>{day}</code>\n\n"
+        "ⓘ Можно прикрепить медиа.\n\n"
+        f"🔒 Выбрано ботов: {len(selected)}\n"
+        f"👥 Получателей: <b>{total_users:,}</b>",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="◀️ Назад", callback_data="menu:mailing")],
+        ]),
+    )
+    await callback.answer()
+
+
+@router.message(MassMailingFSM.waiting_for_text)
+async def on_mass_mailing_text(message: Message, state: FSMContext):
+    from services.security import sanitize
+    data = await state.get_data()
+    selected: list[int] = data.get("mass_selected", [])
+    owner_id = data.get("owner_id") or message.from_user.id
+
+    text = ""
+    media_file_id = None
+    media_type = None
+
+    if message.text:
+        text = sanitize(message.text, max_len=4096)
+    elif message.caption:
+        text = sanitize(message.caption, max_len=1024)
+
+    if message.photo:
+        media_file_id = message.photo[-1].file_id
+        media_type = "photo"
+    elif message.video:
+        media_file_id = message.video.file_id
+        media_type = "video"
+    elif message.document:
+        media_file_id = message.document.file_id
+        media_type = "document"
+
+    if not text and not media_file_id:
+        await message.answer("⚠️ Отправьте текст или медиа.")
+        return
+
+    await state.clear()
+
+    # Создаём черновики для каждого выбранного бота
+    mailing_ids = []
+    for bot_id in selected:
+        mid = await db.fetchval(
+            """INSERT INTO mailings
+               (owner_id, child_bot_id, chat_id, text, media_file_id, media_type,
+                notify_users, protect_content, pin_message, delete_after_send,
+                disable_preview, url_buttons_raw, button_color)
+               VALUES ($1,$2,NULL,$3,$4,$5, true,false,false,false, false,NULL,'blue')
+               RETURNING id""",
+            owner_id, bot_id, text, media_file_id, media_type,
+        )
+        mailing_ids.append(mid)
+
+    if not mailing_ids:
+        await message.answer("❌ Не удалось создать рассылку.")
+        return
+
+    # Показываем настройки первого черновика (остальные создаются идентично)
+    m = await db.fetchrow("SELECT * FROM mailings WHERE id=$1", mailing_ids[0])
+    settings_text = _draft_settings_text(dict(m))
+    bots_note = f"\n\n📣 Рассылка будет отправлена по <b>{len(selected)} ботам</b>"
+
+    if media_file_id:
+        send_fn = {
+            "photo": message.answer_photo,
+            "video": message.answer_video,
+            "document": message.answer_document,
+        }.get(media_type, message.answer_photo)
+        await send_fn(
+            media_file_id,
+            caption=(text[:900] if text else "") + settings_text + bots_note,
+            parse_mode="HTML",
+            reply_markup=_kb_draft(dict(m)),
+        )
+    else:
+        await message.answer(
+            (text[:1100] if text else "") + settings_text + bots_note,
+            parse_mode="HTML",
+            reply_markup=_kb_draft(dict(m)),
+        )
+
+
+@router.callback_query(F.data == "ml_mass_scheduled")
+async def on_ml_mass_scheduled(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    owner_id = platform_user["user_id"]
+    rows = await db.fetch(
+        """SELECT m.id, m.text, m.scheduled_at, cb.bot_username
+           FROM mailings m
+           JOIN child_bots cb ON cb.id = m.child_bot_id
+           WHERE m.owner_id=$1 AND m.child_bot_id IS NOT NULL
+             AND m.status IN ('pending','scheduled')
+           ORDER BY m.scheduled_at ASC LIMIT 15""",
+        owner_id,
+    )
+    if not rows:
+        await callback.message.edit_text(
+            "📅 <b>Запланированные рассылки</b>\n\nНет запланированных рассылок.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="◀️ Назад", callback_data="menu:mailing")],
+            ]),
+        )
+        await callback.answer()
+        return
+
+    buttons = []
+    for r in rows:
+        dt = r["scheduled_at"].strftime("%d.%m %H:%M") if r.get("scheduled_at") else "—"
+        bot_name = f"@{r['bot_username']}"
+        preview = (r["text"] or "")[:20]
+        buttons.append([InlineKeyboardButton(
+            text=f"📅 {dt} [{bot_name}] {preview}…",
+            callback_data=f"mailing_view:{r['id']}",
+        )])
+    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data="menu:mailing")])
+
+    await callback.message.edit_text(
+        "📅 <b>Запланированные рассылки</b>",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+    )
+    await callback.answer()
+
+
 # ══════════════════════════════════════════════════════════════
 # Вспомогательные функции
 # ══════════════════════════════════════════════════════════════

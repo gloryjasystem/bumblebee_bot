@@ -396,3 +396,108 @@ async def on_bl_ban_all(callback: CallbackQuery, platform_user: dict | None):
     )
     await callback.answer()
 
+
+
+# ══════════════════════════════════════════════════════════════
+# ЧС бот-уровень: обработка загружаемых файлов (add / del)
+# ══════════════════════════════════════════════════════════════
+
+@router.message(F.document)
+async def on_bs_bl_file(message: Message, bot: Bot, state: FSMContext,
+                        platform_user: dict | None):
+    """Обрабатывает TXT/CSV файлы в состояниях bs_bl_waiting_add_file / bs_bl_waiting_del_file."""
+    if not platform_user:
+        return
+
+    current_state = await state.get_state()
+    from handlers.channel_settings import SettingsFSM
+    if current_state not in (
+        SettingsFSM.bs_bl_waiting_add_file,
+        SettingsFSM.bs_bl_waiting_del_file,
+    ):
+        return  # не наше состояние → другой обработчик
+
+    doc = message.document
+    if not doc.file_name.lower().endswith((".txt", ".csv")):
+        await message.answer("❌ Поддерживаются только файлы TXT и CSV.")
+        return
+
+    data = await state.get_data()
+    child_bot_id = data.get("child_bot_id")
+    mode = data.get("bs_bl_mode", "add")  # "add" | "del"
+    owner_id = platform_user["user_id"]
+
+    file_obj = await bot.get_file(doc.file_id)
+    content_io = await bot.download_file(file_obj.file_path)
+    content_bytes = content_io.read()
+
+    ok, error = validate_bl_file(content_bytes, doc.file_name)
+    if not ok:
+        await message.answer(f"❌ {error}")
+        return
+
+    wait_msg = await message.answer("⏳ Обрабатываю файл...")
+
+    if mode == "add":
+        stats = await import_file(owner_id, content_bytes, doc.file_name)
+        await wait_msg.delete()
+        await state.clear()
+        await message.answer(
+            "✅ <b>Файл обработан</b>\n\n"
+            f"➕ Добавлено: {stats['added']:,}\n"
+            f"⚠️ Неверный формат: {stats['invalid']:,}\n"
+            f"📊 Итого в базе: {stats['total']:,}",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(
+                    text="◀️ Назад к ЧС",
+                    callback_data=f"bs_blacklist:{child_bot_id}",
+                )],
+            ]),
+        )
+    else:
+        # Режим удаления из ЧС
+        from services.security import parse_blacklist_line
+        text = content_bytes.decode("utf-8", errors="replace")
+        lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+        removed = invalid = 0
+        for line in lines:
+            parsed = parse_blacklist_line(line)
+            if not parsed:
+                invalid += 1
+                continue
+            uid = parsed.get("user_id")
+            uname = parsed.get("username")
+            if uid:
+                res = await db.execute(
+                    "DELETE FROM blacklist WHERE owner_id=$1 AND user_id=$2",
+                    owner_id, uid,
+                )
+            else:
+                res = await db.execute(
+                    "DELETE FROM blacklist WHERE owner_id=$1 AND lower(username)=lower($2)",
+                    owner_id, uname,
+                )
+            # asyncpg returns "DELETE N"
+            if res and res.endswith("1"):
+                removed += 1
+
+        total = await db.fetchval(
+            "SELECT COUNT(*) FROM blacklist WHERE owner_id=$1", owner_id,
+        ) or 0
+
+        await wait_msg.delete()
+        await state.clear()
+        await message.answer(
+            "✅ <b>Файл обработан</b>\n\n"
+            f"➖ Удалено из ЧС: {removed:,}\n"
+            f"⚠️ Неверный формат: {invalid:,}\n"
+            f"📊 Итого в базе: {total:,}",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(
+                    text="◀️ Назад к ЧС",
+                    callback_data=f"bs_blacklist:{child_bot_id}",
+                )],
+            ]),
+        )

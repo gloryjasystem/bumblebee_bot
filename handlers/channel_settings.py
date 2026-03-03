@@ -33,6 +33,9 @@ class SettingsFSM(StatesGroup):
     waiting_for_welcome_text  = State()
     # Прощание
     waiting_for_farewell_text = State()
+    # ЧС: загрузка файлов (бот-уровень)
+    bs_bl_waiting_add_file  = State()
+    bs_bl_waiting_del_file  = State()
 
 
 # ══════════════════════════════════════════════════════════════
@@ -1270,6 +1273,46 @@ async def on_bs_base(callback: CallbackQuery, platform_user: dict | None):
     child_bot_id = int(callback.data.split(":")[1])
     owner_id = platform_user["user_id"]
 
+    bot_row = await db.fetchrow(
+        "SELECT bot_username FROM child_bots WHERE id=$1 AND owner_id=$2",
+        child_bot_id, owner_id,
+    )
+    bot_username = bot_row["bot_username"] if bot_row else "—"
+
+    total = await db.fetchval(
+        """SELECT COUNT(*) FROM bot_users bu
+           JOIN bot_chats bc ON bu.chat_id=bc.chat_id AND bu.owner_id=bc.owner_id
+           WHERE bc.child_bot_id=$1 AND bc.owner_id=$2""",
+        child_bot_id, owner_id,
+    ) or 0
+
+    blocked = await db.fetchval(
+        "SELECT COUNT(*) FROM blacklist WHERE owner_id=$1",
+        owner_id,
+    ) or 0
+
+    await callback.message.edit_text(
+        "≡ <b>База</b>\n\n"
+        f"🤖 Бот: @{bot_username}\n"
+        f"👥 Пользователей в базе: {total:,}\n"
+        f"⛔️ Заблокированных: {blocked:,}",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✏️ Изменить базу",    callback_data=f"bs_base_edit:{child_bot_id}")],
+            [InlineKeyboardButton(text="📤 Экспорт базы",     callback_data=f"bs_base_export:{child_bot_id}:all")],
+            [InlineKeyboardButton(text="⛔️ ЧС пользователей", callback_data=f"bs_blacklist:{child_bot_id}")],
+            [InlineKeyboardButton(text="◀️ Назад",            callback_data=f"bs_settings:{child_bot_id}")],
+        ]),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("bs_base_edit:"))
+async def on_bs_base_edit(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    child_bot_id = int(callback.data.split(":")[1])
+    owner_id = platform_user["user_id"]
+
     total = await db.fetchval(
         """SELECT COUNT(*) FROM bot_users bu
            JOIN bot_chats bc ON bu.chat_id=bc.chat_id AND bu.owner_id=bc.owner_id
@@ -1315,7 +1358,471 @@ async def on_bs_base(callback: CallbackQuery, platform_user: dict | None):
                 text="⭐ Выгрузить Premium",
                 callback_data=f"bs_base_export:{child_bot_id}:premium",
             )],
-            [InlineKeyboardButton(text="◀️ Назад", callback_data=f"bs_settings:{child_bot_id}")],
+            [InlineKeyboardButton(text="◀️ Назад", callback_data=f"bs_base:{child_bot_id}")],
+        ]),
+    )
+    await callback.answer()
+
+
+
+# ── ЧС пользователей (бот-уровень) ───────────────────────────
+@router.callback_query(F.data.startswith("bs_blacklist:"))
+async def on_bs_blacklist(callback: CallbackQuery, platform_user: dict | None):
+    """Главное меню ЧС на уровне бота."""
+    if not platform_user:
+        return
+    child_bot_id = int(callback.data.split(":")[1])
+    owner_id = platform_user["user_id"]
+
+    count = await db.fetchval(
+        "SELECT COUNT(*) FROM blacklist WHERE owner_id=$1", owner_id,
+    ) or 0
+
+    await callback.message.edit_text(
+        "⛔️ <b>ЧС пользователей</b>\n\n"
+        f"🔢 Записей в базе ЧС: {count:,}",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📂 Загрузить базу ЧС",   callback_data=f"bs_bl_upload:{child_bot_id}")],
+            [InlineKeyboardButton(text="🔍 Найти нарушителей",    callback_data=f"bs_bl_sweep:{child_bot_id}")],
+            [InlineKeyboardButton(text="⚙️ Управлять базой ЧС",  callback_data=f"bs_bl_manage:{child_bot_id}")],
+            [InlineKeyboardButton(text="◀️ Назад",               callback_data=f"bs_base:{child_bot_id}")],
+        ]),
+    )
+    await callback.answer()
+
+
+# ── Загрузить базу ЧС ─────────────────────────────────────────
+@router.callback_query(F.data.startswith("bs_bl_upload:"))
+async def on_bs_bl_upload(callback: CallbackQuery, state: FSMContext,
+                          platform_user: dict | None):
+    if not platform_user:
+        return
+    child_bot_id = callback.data.split(":")[1]
+    await state.update_data(child_bot_id=child_bot_id, bs_bl_mode="add")
+    await state.set_state(SettingsFSM.bs_bl_waiting_add_file)
+    await callback.message.edit_text(
+        "📂 <b>Загрузить базу ЧС</b>\n\n"
+        "Отправьте файл <b>TXT</b> или <b>CSV</b> с @username или Telegram ID.\n\n"
+        "📋 Формат строки:\n"
+        "<code>@spammer1\n123456789\n@baduser</code>\n\n"
+        "Максимум: 20 MB, до 100 000 записей.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🚫 Отмена", callback_data=f"bs_blacklist:{child_bot_id}")],
+        ]),
+    )
+    await callback.answer()
+
+
+# ── Найти нарушителей ─────────────────────────────────────────
+@router.callback_query(F.data.startswith("bs_bl_sweep:"))
+async def on_bs_bl_sweep(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    child_bot_id = int(callback.data.split(":")[1])
+    owner_id = platform_user["user_id"]
+
+    chats = await db.fetch(
+        "SELECT chat_id, chat_title FROM bot_chats "
+        "WHERE child_bot_id=$1 AND owner_id=$2 AND is_active=true",
+        child_bot_id, owner_id,
+    )
+    if not chats:
+        await callback.answer("Нет активных площадок у бота", show_alert=True)
+        return
+
+    if len(chats) == 1:
+        await _show_bs_sweep_screen(
+            callback, platform_user, child_bot_id,
+            chats[0]["chat_id"], chats[0]["chat_title"],
+        )
+    else:
+        buttons = [
+            [InlineKeyboardButton(
+                text=f"📍 {ch['chat_title'] or ch['chat_id']}",
+                callback_data=f"bs_bl_sweep_chat:{child_bot_id}:{ch['chat_id']}",
+            )]
+            for ch in chats
+        ]
+        buttons.append([InlineKeyboardButton(
+            text="◀️ Назад", callback_data=f"bs_blacklist:{child_bot_id}",
+        )])
+        await callback.message.edit_text(
+            "🔍 <b>Найти нарушителей</b>\n\nВыберите площадку для проверки:",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+        )
+        await callback.answer()
+
+
+async def _show_bs_sweep_screen(
+    callback: CallbackQuery,
+    platform_user: dict,
+    child_bot_id: int,
+    chat_id: int,
+    chat_title: str,
+):
+    owner_id = platform_user["user_id"]
+    user_count = await db.fetchval(
+        "SELECT COUNT(*) FROM bot_users "
+        "WHERE owner_id=$1 AND chat_id=$2::bigint AND is_active=true",
+        owner_id, chat_id,
+    ) or 0
+    await callback.message.edit_text(
+        "🔍 <b>Найти нарушителей</b>\n\n"
+        f"Площадка: <b>{chat_title or chat_id}</b>\n"
+        f"Пользователей в базе бота: {user_count:,}\n\n"
+        "ℹ️ Будут проверены только те, кто вступил\n"
+        "   после подключения бота.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(
+                text="▶️ Запустить проверку",
+                callback_data=f"bs_bl_sweep_run:{child_bot_id}:{chat_id}",
+            )],
+            [InlineKeyboardButton(text="◀️ Назад", callback_data=f"bs_blacklist:{child_bot_id}")],
+        ]),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("bs_bl_sweep_chat:"))
+async def on_bs_bl_sweep_chat(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    parts = callback.data.split(":")
+    child_bot_id, chat_id = int(parts[1]), int(parts[2])
+    ch = await db.fetchrow(
+        "SELECT chat_title FROM bot_chats "
+        "WHERE child_bot_id=$1 AND chat_id=$2::bigint AND owner_id=$3",
+        child_bot_id, chat_id, platform_user["user_id"],
+    )
+    title = ch["chat_title"] if ch else str(chat_id)
+    await _show_bs_sweep_screen(callback, platform_user, child_bot_id, chat_id, title)
+
+
+# ── Запустить проверку ────────────────────────────────────────
+@router.callback_query(F.data.startswith("bs_bl_sweep_run:"))
+async def on_bs_bl_sweep_run(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    parts = callback.data.split(":")
+    child_bot_id, chat_id = int(parts[1]), int(parts[2])
+    owner_id = platform_user["user_id"]
+
+    await callback.answer("⏳ Проверяю...")
+
+    total = await db.fetchval(
+        "SELECT COUNT(*) FROM bot_users "
+        "WHERE owner_id=$1 AND chat_id=$2::bigint AND is_active=true",
+        owner_id, chat_id,
+    ) or 0
+
+    violators = await db.fetch(
+        """SELECT bu.user_id, bu.username FROM bot_users bu
+           INNER JOIN blacklist bl ON bl.owner_id=bu.owner_id
+             AND ((bl.user_id IS NOT NULL AND bl.user_id=bu.user_id)
+                  OR  (bl.username IS NOT NULL AND lower(bl.username)=lower(bu.username)))
+           WHERE bu.owner_id=$1 AND bu.chat_id=$2::bigint AND bu.is_active=true""",
+        owner_id, chat_id,
+    )
+    n = len(violators)
+
+    if n == 0:
+        await callback.message.edit_text(
+            "✅ <b>Проверка завершена</b>\n\n"
+            f"📊 Проверено: {total:,}\n"
+            "🎉 Нарушителей не найдено.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="◀️ Назад", callback_data=f"bs_bl_sweep:{child_bot_id}")],
+            ]),
+        )
+        return
+
+    preview_lines = []
+    for v in violators[:5]:
+        if v["username"]:
+            line = f"• @{v['username']}"
+            if v["user_id"]:
+                line += f" (ID: {v['user_id']})"
+        else:
+            line = f"• ID: {v['user_id']}"
+        preview_lines.append(line)
+    preview = "\n".join(preview_lines)
+    if n > 5:
+        preview += f"\n• ... и ещё {n - 5}"
+
+    await callback.message.edit_text(
+        "✅ <b>Проверка завершена</b>\n\n"
+        f"📊 Проверено: {total:,}\n"
+        f"🚫 Совпадений с ЧС: {n}\n\n"
+        f"{preview}",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(
+                text=f"🚫 Забанить всех ({n})",
+                callback_data=f"bs_bl_ban_all:{child_bot_id}:{chat_id}",
+            )],
+            [InlineKeyboardButton(
+                text="👁 Показать полный список",
+                callback_data=f"bs_bl_full_list:{child_bot_id}:{chat_id}",
+            )],
+            [InlineKeyboardButton(text="◀️ Назад", callback_data=f"bs_bl_sweep:{child_bot_id}")],
+        ]),
+    )
+
+
+# ── Забанить всех нарушителей (бот-уровень) ──────────────────
+@router.callback_query(F.data.startswith("bs_bl_ban_all:"))
+async def on_bs_bl_ban_all(callback: CallbackQuery, bot: Bot,
+                           platform_user: dict | None):
+    if not platform_user:
+        return
+    parts = callback.data.split(":")
+    child_bot_id, chat_id = int(parts[1]), int(parts[2])
+    owner_id = platform_user["user_id"]
+
+    from aiogram import Bot as AioBot
+    from services.security import decrypt_token
+
+    bot_row = await db.fetchrow(
+        "SELECT token_encrypted FROM child_bots WHERE id=$1 AND owner_id=$2",
+        child_bot_id, owner_id,
+    )
+    if not bot_row:
+        await callback.answer("Бот не найден", show_alert=True)
+        return
+
+    await callback.answer("⏳ Баню...")
+
+    child_bot_instance = AioBot(token=decrypt_token(bot_row["token_encrypted"]))
+    violators = await db.fetch(
+        """SELECT bu.user_id FROM bot_users bu
+           INNER JOIN blacklist bl ON bl.owner_id=bu.owner_id
+             AND ((bl.user_id IS NOT NULL AND bl.user_id=bu.user_id)
+                  OR  (bl.username IS NOT NULL AND lower(bl.username)=lower(bu.username)))
+           WHERE bu.owner_id=$1 AND bu.chat_id=$2::bigint AND bu.is_active=true""",
+        owner_id, chat_id,
+    )
+
+    banned = 0
+    for v in violators:
+        try:
+            await child_bot_instance.ban_chat_member(chat_id, v["user_id"])
+            banned += 1
+        except Exception:
+            pass
+
+    await child_bot_instance.session.close()
+
+    if violators:
+        user_ids = [v["user_id"] for v in violators]
+        await db.execute(
+            "UPDATE bot_users SET is_active=false, left_at=now() "
+            "WHERE owner_id=$1 AND chat_id=$2::bigint AND user_id=ANY($3::bigint[])",
+            owner_id, chat_id, user_ids,
+        )
+
+    await callback.message.edit_text(
+        "✅ <b>Готово!</b>\n\n"
+        f"🚫 Забанено: <b>{banned}</b> из {len(violators)}",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="◀️ Назад", callback_data=f"bs_blacklist:{child_bot_id}")],
+        ]),
+    )
+
+
+# ── Полный список нарушителей ─────────────────────────────────
+@router.callback_query(F.data.startswith("bs_bl_full_list:"))
+async def on_bs_bl_full_list(callback: CallbackQuery, bot: Bot,
+                             platform_user: dict | None):
+    if not platform_user:
+        return
+    parts = callback.data.split(":")
+    child_bot_id, chat_id = int(parts[1]), int(parts[2])
+    owner_id = platform_user["user_id"]
+
+    violators = await db.fetch(
+        """SELECT bu.user_id, bu.username FROM bot_users bu
+           INNER JOIN blacklist bl ON bl.owner_id=bu.owner_id
+             AND ((bl.user_id IS NOT NULL AND bl.user_id=bu.user_id)
+                  OR  (bl.username IS NOT NULL AND lower(bl.username)=lower(bu.username)))
+           WHERE bu.owner_id=$1 AND bu.chat_id=$2::bigint AND bu.is_active=true""",
+        owner_id, chat_id,
+    )
+    if not violators:
+        await callback.answer("Список пуст", show_alert=True)
+        return
+
+    lines = []
+    for i, v in enumerate(violators, 1):
+        if v["username"]:
+            entry = f"{i}. @{v['username']}"
+            if v["user_id"]:
+                entry += f" (ID: {v['user_id']})"
+        else:
+            entry = f"{i}. ID: {v['user_id']}"
+        lines.append(entry)
+
+    from aiogram.types import BufferedInputFile
+    content = "\n".join(lines).encode("utf-8")
+    file = BufferedInputFile(content, filename="violators_list.txt")
+    await bot.send_document(
+        chat_id=owner_id,
+        document=file,
+        caption=f"👁 Полный список нарушителей: {len(violators):,} чел.",
+    )
+    await callback.answer("✅ Список отправлен в чат")
+
+
+# ── Управление базой ЧС ───────────────────────────────────────
+async def _show_bs_bl_manage(callback: CallbackQuery, platform_user: dict,
+                             child_bot_id: int):
+    owner_id = platform_user["user_id"]
+    try:
+        bot_row = await db.fetchrow(
+            "SELECT blacklist_enabled FROM child_bots WHERE id=$1 AND owner_id=$2",
+            child_bot_id, owner_id,
+        )
+        enabled = bot_row["blacklist_enabled"] if bot_row else True
+    except Exception:
+        enabled = True
+
+    count = await db.fetchval(
+        "SELECT COUNT(*) FROM blacklist WHERE owner_id=$1", owner_id,
+    ) or 0
+
+    toggle_text = "✅ ЧС: Включён 🟢" if enabled else "☑️ ЧС: Выключен 🔴"
+    await callback.message.edit_text(
+        "⚙️ <b>Управление базой ЧС</b>\n\n"
+        f"📊 Записей в базе: {count:,}\n\n"
+        "Включите ЧС, чтобы бот автоматически проверял\n"
+        "вступающих пользователей по списку.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=toggle_text,
+                                  callback_data=f"bs_bl_toggle:{child_bot_id}")],
+            [InlineKeyboardButton(text="➕ Добавить пользователей (TXT/CSV)",
+                                  callback_data=f"bs_bl_add_file:{child_bot_id}")],
+            [InlineKeyboardButton(text="➖ Удалить пользователей (TXT/CSV)",
+                                  callback_data=f"bs_bl_del_file:{child_bot_id}")],
+            [InlineKeyboardButton(text="🗑 Очистить базу",
+                                  callback_data=f"bs_bl_clear:{child_bot_id}")],
+            [InlineKeyboardButton(text="◀️ Назад",
+                                  callback_data=f"bs_blacklist:{child_bot_id}")],
+        ]),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("bs_bl_manage:"))
+async def on_bs_bl_manage(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    await _show_bs_bl_manage(callback, platform_user, int(callback.data.split(":")[1]))
+
+
+# ── Тумблер ЧС ───────────────────────────────────────────────
+@router.callback_query(F.data.startswith("bs_bl_toggle:"))
+async def on_bs_bl_toggle(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    child_bot_id = int(callback.data.split(":")[1])
+    owner_id = platform_user["user_id"]
+    try:
+        row = await db.fetchrow(
+            "SELECT blacklist_enabled FROM child_bots WHERE id=$1 AND owner_id=$2",
+            child_bot_id, owner_id,
+        )
+        current = row["blacklist_enabled"] if row else True
+        new_val = not current
+        await db.execute(
+            "UPDATE child_bots SET blacklist_enabled=$1 WHERE id=$2 AND owner_id=$3",
+            new_val, child_bot_id, owner_id,
+        )
+        await callback.answer("✅ ВКЛ" if new_val else "🔴 ВЫКЛ")
+    except Exception:
+        await callback.answer("⚠️ Ошибка обновления", show_alert=True)
+        return
+    await _show_bs_bl_manage(callback, platform_user, child_bot_id)
+
+
+# ── Добавить пользователей файлом ─────────────────────────────
+@router.callback_query(F.data.startswith("bs_bl_add_file:"))
+async def on_bs_bl_add_file(callback: CallbackQuery, state: FSMContext,
+                            platform_user: dict | None):
+    if not platform_user:
+        return
+    child_bot_id = callback.data.split(":")[1]
+    await state.update_data(child_bot_id=child_bot_id, bs_bl_mode="add")
+    await state.set_state(SettingsFSM.bs_bl_waiting_add_file)
+    await callback.message.edit_text(
+        "➕ <b>Добавить в ЧС</b>\n\n"
+        "Отправьте файл <b>TXT</b> или <b>CSV</b>.\n"
+        "Каждая строка — один пользователь: @username или Telegram ID.\n\n"
+        "<code>@spammer1\n123456789\n@baduser</code>",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🚫 Отмена", callback_data=f"bs_bl_manage:{child_bot_id}")],
+        ]),
+    )
+    await callback.answer()
+
+
+# ── Удалить пользователей файлом ─────────────────────────────
+@router.callback_query(F.data.startswith("bs_bl_del_file:"))
+async def on_bs_bl_del_file(callback: CallbackQuery, state: FSMContext,
+                            platform_user: dict | None):
+    if not platform_user:
+        return
+    child_bot_id = callback.data.split(":")[1]
+    await state.update_data(child_bot_id=child_bot_id, bs_bl_mode="del")
+    await state.set_state(SettingsFSM.bs_bl_waiting_del_file)
+    await callback.message.edit_text(
+        "➖ <b>Удалить из ЧС</b>\n\n"
+        "Отправьте файл <b>TXT</b> или <b>CSV</b> с пользователями,\n"
+        "которых нужно <b>убрать</b> из чёрного списка.\n\n"
+        "<code>@gooduser\n987654321</code>",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🚫 Отмена", callback_data=f"bs_bl_manage:{child_bot_id}")],
+        ]),
+    )
+    await callback.answer()
+
+
+# ── Очистить базу ЧС ─────────────────────────────────────────
+@router.callback_query(F.data.startswith("bs_bl_clear:"))
+async def on_bs_bl_clear(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    child_bot_id = callback.data.split(":")[1]
+    count = await db.fetchval(
+        "SELECT COUNT(*) FROM blacklist WHERE owner_id=$1",
+        platform_user["user_id"],
+    ) or 0
+    await callback.message.edit_text(
+        f"⚠️ <b>Очистить базу ЧС?</b>\n\n"
+        f"Будет удалено <b>{count:,}</b> записей. Действие необратимо.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Да, очистить",
+                                  callback_data=f"bs_bl_clear_do:{child_bot_id}")],
+            [InlineKeyboardButton(text="🚫 Отмена",
+                                  callback_data=f"bs_bl_manage:{child_bot_id}")],
+        ]),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("bs_bl_clear_do:"))
+async def on_bs_bl_clear_do(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    child_bot_id = callback.data.split(":")[1]
+    owner_id = platform_user["user_id"]
+    deleted = await db.fetchval(
+        "WITH d AS (DELETE FROM blacklist WHERE owner_id=$1 RETURNING 1) "
+        "SELECT COUNT(*) FROM d",
+        owner_id,
+    ) or 0
+    await callback.message.edit_text(
+        f"✅ База ЧС очищена. Удалено <b>{deleted:,}</b> записей.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="◀️ Назад",
+                                  callback_data=f"bs_blacklist:{child_bot_id}")],
         ]),
     )
     await callback.answer()

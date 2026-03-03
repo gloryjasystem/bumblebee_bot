@@ -217,3 +217,6 @@ CREATE TABLE IF NOT EXISTS join_requests (
 CREATE INDEX IF NOT EXISTS idx_join_req_pending
     ON join_requests(owner_id, chat_id) WHERE status = 'pending';
 
+-- blacklist_enabled: позволяет включить/выключить проверку ЧС для бота
+ALTER TABLE child_bots
+    ADD COLUMN IF NOT EXISTS blacklist_enabled BOOLEAN DEFAULT TRUE;

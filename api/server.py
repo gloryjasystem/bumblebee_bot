@@ -80,6 +80,7 @@ def create_app(bot: Bot, dp: Dispatcher) -> FastAPI:
                 "ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS typing_action        BOOLEAN DEFAULT false",
                 "ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS reaction_emoji       TEXT    DEFAULT '👍'",
                 "ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS auto_delete_min      INT     DEFAULT 0",
+                "ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS feedback_lang        TEXT    DEFAULT 'ru'",
             ]:
                 await conn.execute(migration)
             # Таблица автоответчика

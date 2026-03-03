@@ -1,5 +1,5 @@
 """
-handlers/feedback.py — Обратная связь: форвардинг сообщений от участников владельцу.
+handlers/feedback.py — Обратная связь: выбор режима, получателя, языка.
 """
 import logging
 from aiogram import Router, F, Bot
@@ -12,7 +12,36 @@ import db.pool as db
 logger = logging.getLogger(__name__)
 router = Router()
 
+# ── Языки ────────────────────────────────────────────────────
+LANGUAGES = [
+    ("RU 🇷🇺", "ru"), ("UK 🇺🇦", "uk"), ("BY 🇧🇾", "by"),
+    ("UZ 🇺🇿", "az", ), ("AZ 🇦🇿", "az"), ("KZ 🇰🇿", "kz"),
+    ("EN 🇬🇧", "en"), ("ES 🇪🇸", "es"), ("DE 🇩🇪", "de"),
+    ("ZH 🇨🇳", "zh"), ("HI 🇮🇳", "hi"), ("AR 🇸🇦", "ar"),
+]
 
+# сгруппируем по 3 в ряд
+def _lang_rows(chat_id: int, current_lang: str) -> list:
+    rows = []
+    flat = [
+        ("RU 🇷🇺", "ru"), ("UK 🇺🇦", "uk"), ("BY 🇧🇾", "by"),
+        ("UZ 🇺🇿", "uz"), ("AZ 🇦🇿", "az"), ("KZ 🇰🇿", "kz"),
+        ("EN 🇬🇧", "en"), ("ES 🇪🇸", "es"), ("DE 🇩🇪", "de"),
+        ("ZH 🇨🇳", "zh"), ("HI 🇮🇳", "hi"), ("AR 🇸🇦", "ar"),
+    ]
+    for i in range(0, len(flat), 3):
+        row = []
+        for label, code in flat[i:i+3]:
+            dot = "🔵" if code == current_lang else "⚪"
+            row.append(InlineKeyboardButton(
+                text=f"{dot} {label}",
+                callback_data=f"fb_lang:{chat_id}:{code}",
+            ))
+        rows.append(row)
+    return rows
+
+
+# ── Главный экран Обратной связи ─────────────────────────────
 @router.callback_query(F.data.startswith("ch_feedback:"))
 async def on_feedback_settings(callback: CallbackQuery, platform_user: dict | None):
     if not platform_user:
@@ -27,28 +56,37 @@ async def _show_feedback(callback: CallbackQuery, platform_user: dict, chat_id: 
         platform_user["user_id"], chat_id,
     )
     if not ch:
+        await callback.answer("Площадка не найдена", show_alert=True)
         return
 
     enabled = ch.get("feedback_enabled", False)
     target  = ch.get("feedback_target", "owner")
-    toggle = "🔴 Отключить" if enabled else "🟢 Включить"
-    target_text = "Всем администраторам" if target == "all" else "Только владельцу"
+    lang    = ch.get("feedback_lang", "ru")
+
+    toggle_text  = "✗ Обратная связь: выкл" if not enabled else "✓ Обратная связь: вкл"
+    target_label = "создателю" if target == "owner" else "всем администраторам"
+
+    # Строим клавиатуру
+    keyboard = [
+        [InlineKeyboardButton(text=toggle_text,          callback_data=f"fb_toggle:{chat_id}")],
+        [InlineKeyboardButton(text=f"→ Отправлять: {target_label}", callback_data=f"fb_target:{chat_id}")],
+        [InlineKeyboardButton(text="Выберите язык", callback_data="noop")],
+    ]
+    keyboard += _lang_rows(chat_id, lang)
+    keyboard.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"channel_by_chat:{chat_id}")])
 
     await callback.message.edit_text(
-        f"📩 <b>Обратная связь</b>\n\n"
-        f"Статус: {'✅ Включена' if enabled else '❌ Выключена'}\n"
-        f"Получатель: {target_text}\n\n"
-        f"💡 Когда включена, сообщения участников\n"
-        f"пересылаются вам анонимно.",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=toggle,              callback_data=f"fb_toggle:{chat_id}")],
-            [InlineKeyboardButton(text="👤 Кому пересылать",  callback_data=f"fb_target:{chat_id}")],
-            [InlineKeyboardButton(text="◀️ Назад",              callback_data=f"channel_by_chat:{chat_id}")],
-        ]),
+        "📣 <b>Обратная связь</b>\n\n"
+        "🛎 Сообщения от пользователей будут приходить в диалог с ботом.\n\n"
+        "🤖 Язык технических сообщений \"обратной связи\" зависит от выбранных настроек.\n\n"
+        "👥 Сообщения будут приходить только владельцу или всем админам, в зависимости от настроек.\n\n"
+        "<b>Выберите действие 👇</b>",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard),
     )
     await callback.answer()
 
 
+# ── Тоггл вкл/выкл ───────────────────────────────────────────
 @router.callback_query(F.data.startswith("fb_toggle:"))
 async def on_feedback_toggle(callback: CallbackQuery, platform_user: dict | None):
     if not platform_user:
@@ -67,6 +105,7 @@ async def on_feedback_toggle(callback: CallbackQuery, platform_user: dict | None
     await _show_feedback(callback, platform_user, chat_id)
 
 
+# ── Переключение получателя ───────────────────────────────────
 @router.callback_query(F.data.startswith("fb_target:"))
 async def on_feedback_target(callback: CallbackQuery, platform_user: dict | None):
     if not platform_user:
@@ -82,12 +121,28 @@ async def on_feedback_target(callback: CallbackQuery, platform_user: dict | None
         "UPDATE bot_chats SET feedback_target=$1 WHERE owner_id=$2 AND chat_id=$3",
         new_target, platform_user["user_id"], chat_id,
     )
-    label = "Всем администраторам" if new_target == "all" else "Только владельцу"
-    await callback.answer(f"Получатель: {label}")
+    label = "Всем администраторам" if new_target == "all" else "Создателю"
+    await callback.answer(f"→ Отправлять: {label}")
     await _show_feedback(callback, platform_user, chat_id)
 
 
-# ── Обработка входящих сообщений от участников (форвардинг) ──
+# ── Выбор языка ───────────────────────────────────────────────
+@router.callback_query(F.data.startswith("fb_lang:"))
+async def on_feedback_lang(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    parts   = callback.data.split(":")
+    chat_id = int(parts[1])
+    lang    = parts[2]
+    await db.execute(
+        "UPDATE bot_chats SET feedback_lang=$1 WHERE owner_id=$2 AND chat_id=$3",
+        lang, platform_user["user_id"], chat_id,
+    )
+    await callback.answer(f"Язык: {lang.upper()}")
+    await _show_feedback(callback, platform_user, chat_id)
+
+
+# ── Форвардинг входящих сообщений ─────────────────────────────
 async def handle_feedback_message(message: Message, bot: Bot, owner_id: int, chat_id: int):
     """
     Вызывается из join_requests.py или autoresponder.
@@ -112,7 +167,6 @@ async def handle_feedback_message(message: Message, bot: Bot, owner_id: int, cha
 
     recipients = [owner_id]
     if target == "all":
-        # Получаем всех администраторов площадки
         admins = await db.fetch(
             "SELECT user_id FROM team_members WHERE owner_id=$1 AND role IN ('admin','moderator') AND is_active=true",
             owner_id,
@@ -121,9 +175,7 @@ async def handle_feedback_message(message: Message, bot: Bot, owner_id: int, cha
 
     for recipient_id in set(recipients):
         try:
-            # Отправляем заголовок
             await bot.send_message(recipient_id, caption)
-            # Копируем сообщение анонимно (без имени отправителя)
             await message.copy_to(recipient_id)
         except Exception as e:
             logger.debug(f"Feedback forward failed to {recipient_id}: {e}")

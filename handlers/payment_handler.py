@@ -4,7 +4,7 @@ handlers/payment_handler.py — Тарифы: выбор → детали → NO
 import logging
 from aiogram import Router, F
 from aiogram.types import (
-    CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, Message
+    CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, Message, WebAppInfo
 )
 from config import settings
 import db.pool as db

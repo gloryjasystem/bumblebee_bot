@@ -1298,7 +1298,7 @@ async def on_bs_base(callback: CallbackQuery, platform_user: dict | None):
         f"⛔️ Заблокированных: {blocked:,}",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="✏️ Изменить базу",    callback_data=f"bs_base_edit:{child_bot_id}")],
-            [InlineKeyboardButton(text="📤 Экспорт базы",     callback_data=f"bs_base_export:{child_bot_id}:all")],
+            [InlineKeyboardButton(text="📤 Экспорт базы",     callback_data=f"bs_base_export_menu:{child_bot_id}")],
             [InlineKeyboardButton(text="⛔️ ЧС пользователей", callback_data=f"bs_blacklist:{child_bot_id}")],
             [InlineKeyboardButton(text="◀️ Назад",            callback_data=f"bs_settings:{child_bot_id}")],
         ]),
@@ -1823,6 +1823,54 @@ async def on_bs_bl_clear_do(callback: CallbackQuery, platform_user: dict | None)
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="◀️ Назад",
                                   callback_data=f"bs_blacklist:{child_bot_id}")],
+        ]),
+    )
+    await callback.answer()
+
+
+# ── Экран выбора типа экспорта ───────────────────────────────
+@router.callback_query(F.data.startswith("bs_base_export_menu:"))
+async def on_bs_base_export_menu(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    child_bot_id = int(callback.data.split(":")[1])
+    owner_id = platform_user["user_id"]
+
+    total = await db.fetchval(
+        """SELECT COUNT(*) FROM bot_users bu
+           JOIN bot_chats bc ON bu.chat_id=bc.chat_id AND bu.owner_id=bc.owner_id
+           WHERE bc.child_bot_id=$1 AND bc.owner_id=$2""",
+        child_bot_id, owner_id,
+    ) or 0
+    active = await db.fetchval(
+        """SELECT COUNT(*) FROM bot_users bu
+           JOIN bot_chats bc ON bu.chat_id=bc.chat_id AND bu.owner_id=bc.owner_id
+           WHERE bc.child_bot_id=$1 AND bc.owner_id=$2 AND bu.is_active=true AND bu.bot_activated=true""",
+        child_bot_id, owner_id,
+    ) or 0
+    premium = await db.fetchval(
+        """SELECT COUNT(*) FROM bot_users bu
+           JOIN bot_chats bc ON bu.chat_id=bc.chat_id AND bu.owner_id=bc.owner_id
+           WHERE bc.child_bot_id=$1 AND bc.owner_id=$2 AND bu.is_premium=true""",
+        child_bot_id, owner_id,
+    ) or 0
+    inactive = total - active
+
+    await callback.message.edit_text(
+        "🗄 <b>Экспорт базы</b>\n\n"
+        "<blockquote>Здесь хранятся все пользователи, которые "
+        "взаимодействовали с каналами и группами вашего бота.\n\n"
+        "Вы можете выгрузить базу в формате CSV — это удобно для "
+        "аналитики, рассылок через сторонние сервисы или резервной копии.</blockquote>\n\n"
+        f"👥 Всего в базе: {total:,}\n"
+        f"🟢 Активных (в боте): {active:,}\n"
+        f"🔴 Неактивных: {inactive:,}\n"
+        f"⭐ Premium: {premium:,}",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📥 Выгрузить всю базу (CSV)",  callback_data=f"bs_base_export:{child_bot_id}:all")],
+            [InlineKeyboardButton(text="🟢 Выгрузить активных",         callback_data=f"bs_base_export:{child_bot_id}:active")],
+            [InlineKeyboardButton(text="⭐ Выгрузить Premium",           callback_data=f"bs_base_export:{child_bot_id}:premium")],
+            [InlineKeyboardButton(text="◀️ Назад",                       callback_data=f"bs_base:{child_bot_id}")],
         ]),
     )
     await callback.answer()

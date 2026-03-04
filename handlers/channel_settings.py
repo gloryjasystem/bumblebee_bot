@@ -1998,6 +1998,25 @@ async def on_bs_filter_photo(callback: CallbackQuery, platform_user: dict | None
     await _show_bs_protection(callback, platform_user, child_bot_id)
 
 
+def _build_bs_lang_kb(blocked_codes: set, child_bot_id: int) -> InlineKeyboardMarkup:
+    """Строим клавиатуру фильтра языков (без edit_text — только кнопки)."""
+    buttons = [
+        [InlineKeyboardButton(text="🏳️ Все языки", callback_data=f"bs_lang_all:{child_bot_id}")]
+    ]
+    langs = list(LANGUAGE_OPTIONS.items())
+    for i in range(0, len(langs), 3):
+        row = []
+        for code, label in langs[i:i+3]:
+            mark = "🔵" if code in blocked_codes else "⚪️"
+            row.append(InlineKeyboardButton(
+                text=f"{mark} {label}",
+                callback_data=f"bs_lang_toggle:{child_bot_id}:{code}"
+            ))
+        buttons.append(row)
+    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"bs_protection:{child_bot_id}")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
 @router.callback_query(F.data.startswith("bs_lang_filters:"))
 async def on_bs_lang_filters(callback: CallbackQuery, platform_user: dict | None):
     if not platform_user:
@@ -2013,29 +2032,12 @@ async def on_bs_lang_filters(callback: CallbackQuery, platform_user: dict | None
         "SELECT language_code FROM language_filters WHERE owner_id=$1 AND chat_id=$2::bigint",
         owner_id, chat_id)
     blocked_codes = {r["language_code"] for r in blocked}
-    # Кнопка "Все языки" вверху
-    buttons = [
-        [InlineKeyboardButton(text="🌐 Все языки", callback_data=f"bs_lang_all:{child_bot_id}")]
-    ]
-    # 3 колонки флагов
-    langs = list(LANGUAGE_OPTIONS.items())
-    for i in range(0, len(langs), 3):
-        row = []
-        for code, label in langs[i:i+3]:
-            mark = "🔵" if code in blocked_codes else "⚪️"
-            row.append(InlineKeyboardButton(
-                text=f"{mark} {label}",
-                callback_data=f"bs_lang_toggle:{child_bot_id}:{code}"
-            ))
-        buttons.append(row)
-    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"bs_protection:{child_bot_id}")])
     await callback.message.edit_text(
-        "🏁 <b>Фильтр по языкам</b>\n\n"
-        "🔵 — отклонять заявки с этим языком\n"
-        "⚪️ — принимать заявки с этим языком\n\n"
-        "Выберите действие ⬇️",
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+        "🏁Фильтр по языкам\n\n"
+        "🔵— Отклонять заявки\n"
+        "⚪️— Принимать заявки\n\n"
+        "Выберите действие⬇️",
+        reply_markup=_build_bs_lang_kb(blocked_codes, child_bot_id),
     )
     await callback.answer()
 
@@ -2065,10 +2067,16 @@ async def on_bs_lang_toggle(callback: CallbackQuery, platform_user: dict | None)
             await db.execute(
                 "INSERT INTO language_filters (owner_id, chat_id, language_code) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING",
                 owner_id, cid, code)
+    # После изменения — подгружаем актуальный список и обновляем ТОЛЬКО клавиатуру (мгновенно)
+    blocked = await db.fetch(
+        "SELECT language_code FROM language_filters WHERE owner_id=$1 AND chat_id=$2::bigint",
+        owner_id, first)
+    blocked_codes = {r["language_code"] for r in blocked}
     msg = f"⚪️ {LANGUAGE_OPTIONS.get(code,'?')} — принимать" if exists else f"🔵 {LANGUAGE_OPTIONS.get(code,'?')} — отклонять"
     await callback.answer(msg)
-    callback.data = f"bs_lang_filters:{child_bot_id}"
-    await on_bs_lang_filters(callback, platform_user)
+    await callback.message.edit_reply_markup(
+        reply_markup=_build_bs_lang_kb(blocked_codes, child_bot_id)
+    )
 
 
 @router.callback_query(F.data.startswith("bs_lang_all:"))
@@ -2085,8 +2093,10 @@ async def on_bs_lang_all(callback: CallbackQuery, platform_user: dict | None):
             "DELETE FROM language_filters WHERE owner_id=$1 AND chat_id=$2::bigint",
             owner_id, chat_row["chat_id"])
     await callback.answer("⚪️ Все языки — принимать")
-    callback.data = f"bs_lang_filters:{child_bot_id}"
-    await on_bs_lang_filters(callback, platform_user)
+    # Обновляем только клавиатуру — все кружки сразу становятся ⚪️
+    await callback.message.edit_reply_markup(
+        reply_markup=_build_bs_lang_kb(set(), child_bot_id)
+    )
 
 
 # ── Управление ботом ─────────────────────────────────────────

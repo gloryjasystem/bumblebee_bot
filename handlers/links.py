@@ -196,9 +196,11 @@ async def on_link_create(callback: CallbackQuery, state: FSMContext,
 async def on_link_type(callback: CallbackQuery, state: FSMContext):
     parts = callback.data.split(":")
     chat_id, child_bot_id, link_type = parts[1], parts[2], parts[3]
-    await state.update_data(link_type=link_type)
+    await state.update_data(link_type=link_type, chat_id=chat_id, child_bot_id=child_bot_id)
     await state.set_state(LinkFSM.waiting_for_name)
-    await callback.message.edit_text(
+
+    # Редактируем текущее сообщение и сохраняем его message_id как prompt
+    edited = await callback.message.edit_text(
         "🔗 <b>Создание ссылки</b>\n\nОтправьте название ссылки:\n"
         "(Например: «Реклама Google» или «Инфлюенсер Иван»)",
         parse_mode="HTML",
@@ -207,60 +209,117 @@ async def on_link_type(callback: CallbackQuery, state: FSMContext):
                                    callback_data=f"ch_links:{chat_id}:{child_bot_id}")]
         ]),
     )
+    # Сохраняем ID и chat_id сообщения-инструкции в FSM
+    await state.update_data(
+        prompt_msg_id=callback.message.message_id,
+        prompt_chat_id=callback.message.chat.id,
+    )
     await callback.answer()
 
 
 # ── FSM: имя ──────────────────────────────────────────────────
 
 @router.message(LinkFSM.waiting_for_name)
-async def on_link_name(message: Message, state: FSMContext):
+async def on_link_name(message: Message, state: FSMContext, bot: Bot):
     from services.security import sanitize
-    name = sanitize(message.text, max_len=128)
-    await state.update_data(name=name)
-    await state.set_state(LinkFSM.waiting_for_limit)
+    name = sanitize(message.text or "", max_len=128)
     data = await state.get_data()
     chat_id = data.get("chat_id", "0")
     child_bot_id = data.get("child_bot_id", "0")
-    await message.answer(
+    prompt_msg_id = data.get("prompt_msg_id")
+    prompt_chat_id = data.get("prompt_chat_id", message.chat.id)
+
+    await state.update_data(name=name)
+    await state.set_state(LinkFSM.waiting_for_limit)
+
+    # Удаляем сообщение пользователя
+    try:
+        await message.delete()
+    except Exception:
+        pass
+
+    # Редактируем инструкцию в том же сообщении
+    limit_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="→ Пропустить", callback_data="link_skip_limit")]
+    ])
+    limit_text = (
         "🔗 <b>Создание ссылки</b>\n\n"
+        f"✅ Название: <b>{name}</b>\n\n"
         "💡 Укажите лимит переходов (или пропустите):\n"
-        "Например: 100 — ссылка сработает только для 100 человек.",
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="→ Пропустить",
-                                   callback_data="link_skip_limit")]
-        ]),
+        "Например: 100 — ссылка сработает только для 100 человек."
     )
+    if prompt_msg_id:
+        try:
+            await bot.edit_message_text(
+                text=limit_text,
+                chat_id=prompt_chat_id,
+                message_id=prompt_msg_id,
+                parse_mode="HTML",
+                reply_markup=limit_kb,
+            )
+        except Exception:
+            sent = await message.answer(limit_text, parse_mode="HTML", reply_markup=limit_kb)
+            await state.update_data(prompt_msg_id=sent.message_id, prompt_chat_id=message.chat.id)
+    else:
+        sent = await message.answer(limit_text, parse_mode="HTML", reply_markup=limit_kb)
+        await state.update_data(prompt_msg_id=sent.message_id, prompt_chat_id=message.chat.id)
 
 
 # ── FSM: лимит ────────────────────────────────────────────────
 
 @router.callback_query(F.data == "link_skip_limit")
 @router.message(LinkFSM.waiting_for_limit)
-async def on_link_limit(event, state: FSMContext):
+async def on_link_limit(event, state: FSMContext, bot: Bot):
     limit = None
     if isinstance(event, Message):
         try:
             limit = int(event.text.strip())
         except ValueError:
             pass
+        # Удаляем сообщение пользователя
+        try:
+            await event.delete()
+        except Exception:
+            pass
+
     await state.update_data(member_limit=limit)
     await state.set_state(LinkFSM.waiting_for_budget)
 
-    respond = event.answer if isinstance(event, Message) else event.message.edit_text
-    await respond(
+    data = await state.get_data()
+    prompt_msg_id = data.get("prompt_msg_id")
+    prompt_chat_id = data.get("prompt_chat_id")
+
+    budget_text = (
         "🔗 <b>Создание ссылки</b>\n\n"
+        f"✅ Название: <b>{data.get('name', '—')}</b>\n"
+        f"✅ Лимит: <b>{limit if limit else 'без лимита'}</b>\n\n"
         "💡 Укажите бюджет этой ссылки (сколько потрачено на рекламу):\n"
         "Пример: 1000₽ или 50$\n\n"
-        "🎯 Бот посчитает стоимость подписчика автоматически.",
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="→ Пропустить",
-                                   callback_data="link_skip_budget")]
-        ]),
+        "🎯 Бот посчитает стоимость подписчика автоматически."
     )
+    budget_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="→ Пропустить", callback_data="link_skip_budget")]
+    ])
+
     if isinstance(event, CallbackQuery):
+        await event.message.edit_text(budget_text, parse_mode="HTML", reply_markup=budget_kb)
         await event.answer()
+    else:
+        if prompt_msg_id and prompt_chat_id:
+            try:
+                await bot.edit_message_text(
+                    text=budget_text,
+                    chat_id=prompt_chat_id,
+                    message_id=prompt_msg_id,
+                    parse_mode="HTML",
+                    reply_markup=budget_kb,
+                )
+            except Exception:
+                sent = await event.answer(budget_text, parse_mode="HTML", reply_markup=budget_kb)
+                await state.update_data(prompt_msg_id=sent.message_id, prompt_chat_id=event.chat.id)
+        else:
+            sent = await event.answer(budget_text, parse_mode="HTML", reply_markup=budget_kb)
+            await state.update_data(prompt_msg_id=sent.message_id, prompt_chat_id=event.chat.id)
 
 
 # ── FSM: бюджет → создание ────────────────────────────────────
@@ -279,6 +338,14 @@ async def on_link_budget(event, state: FSMContext, bot: Bot):
             budget = float(m.group(1))
             cur_map = {"₽": "RUB", "$": "USD", "€": "EUR"}
             budget_currency = cur_map.get(m.group(2), "USD")
+        # Удаляем сообщение пользователя
+        try:
+            await event.delete()
+        except Exception:
+            pass
+
+    prompt_msg_id = data.get("prompt_msg_id")
+    prompt_chat_id = data.get("prompt_chat_id")
 
     await state.clear()
 
@@ -289,8 +356,6 @@ async def on_link_budget(event, state: FSMContext, bot: Bot):
     owner_id = data.get("owner_id")
 
     # ── Получаем токен дочернего бота ──────────────────────────
-    # Именно дочерний бот является администратором канала/группы,
-    # поэтому только он может создавать ссылки-приглашения.
     bot_row = await db.fetchrow(
         """SELECT cb.token_encrypted
            FROM child_bots cb
@@ -306,9 +371,23 @@ async def on_link_budget(event, state: FSMContext, bot: Bot):
     if bot_row:
         child_bot_instance = AioBot(token=decrypt_token(bot_row["token_encrypted"]))
     else:
-        child_bot_instance = bot  # Fallback — маловероятен, но не ломает
+        child_bot_instance = bot
 
-    respond = event.answer if isinstance(event, Message) else event.message.edit_text
+    # Функция для финального ответа — всегда редактируем prompt
+    async def _edit_final(text: str, kb=None):
+        if isinstance(event, CallbackQuery):
+            await event.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+            await event.answer()
+        elif prompt_msg_id and prompt_chat_id:
+            try:
+                await bot.edit_message_text(
+                    text=text, chat_id=prompt_chat_id,
+                    message_id=prompt_msg_id, parse_mode="HTML", reply_markup=kb,
+                )
+            except Exception:
+                await event.answer(text, parse_mode="HTML", reply_markup=kb)
+        else:
+            await event.answer(text, parse_mode="HTML", reply_markup=kb)
 
     try:
         if link_type == "request":
@@ -325,7 +404,7 @@ async def on_link_budget(event, state: FSMContext, bot: Bot):
                 kwargs["member_limit"] = member_limit
             tg_link = await child_bot_instance.create_chat_invite_link(chat_id, **kwargs)
     except Exception as e:
-        await respond(f"❌ Не удалось создать ссылку: {e}")
+        await _edit_final(f"❌ Не удалось создать ссылку: {e}")
         return
     finally:
         if bot_row:
@@ -341,19 +420,16 @@ async def on_link_budget(event, state: FSMContext, bot: Bot):
         link_type, member_limit, budget, budget_currency,
     )
 
-    await respond(
+    await _edit_final(
         f"✅ <b>Ссылка создана!</b>\n\n"
         f"<code>{tg_link.invite_link}</code>",
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+        kb=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="📊 Детали ссылки",
                                    callback_data=f"link_detail:{link_id}:{chat_id}:{child_bot_id}")],
             [InlineKeyboardButton(text="◀️ К списку ссылок",
                                    callback_data=f"ch_links:{chat_id}:{child_bot_id}")],
         ]),
     )
-    if isinstance(event, CallbackQuery):
-        await event.answer()
 
 
 # ── Детали ссылки ─────────────────────────────────────────────

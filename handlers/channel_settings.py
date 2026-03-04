@@ -36,6 +36,9 @@ class SettingsFSM(StatesGroup):
     # ЧС: загрузка файлов (бот-уровень)
     bs_bl_waiting_add_file  = State()
     bs_bl_waiting_del_file  = State()
+    # База пользователей: ручное добавление/удаление
+    bs_base_waiting_add     = State()
+    bs_base_waiting_del     = State()
 
 
 # ══════════════════════════════════════════════════════════════
@@ -1306,10 +1309,13 @@ async def on_bs_base(callback: CallbackQuery, platform_user: dict | None):
     await callback.answer()
 
 
+# ── Меню редактирования базы ─────────────────────────────────
 @router.callback_query(F.data.startswith("bs_base_edit:"))
-async def on_bs_base_edit(callback: CallbackQuery, platform_user: dict | None):
+async def on_bs_base_edit(callback: CallbackQuery, state: FSMContext,
+                          platform_user: dict | None):
     if not platform_user:
         return
+    await state.clear()
     child_bot_id = int(callback.data.split(":")[1])
     owner_id = platform_user["user_id"]
 
@@ -1319,53 +1325,308 @@ async def on_bs_base_edit(callback: CallbackQuery, platform_user: dict | None):
            WHERE bc.child_bot_id=$1 AND bc.owner_id=$2""",
         child_bot_id, owner_id,
     ) or 0
-    active = await db.fetchval(
-        """SELECT COUNT(*) FROM bot_users bu
-           JOIN bot_chats bc ON bu.chat_id=bc.chat_id AND bu.owner_id=bc.owner_id
-           WHERE bc.child_bot_id=$1 AND bc.owner_id=$2 AND bu.is_active=true AND bu.bot_activated=true""",
-        child_bot_id, owner_id,
-    ) or 0
-    premium = await db.fetchval(
-        """SELECT COUNT(*) FROM bot_users bu
-           JOIN bot_chats bc ON bu.chat_id=bc.chat_id AND bu.owner_id=bc.owner_id
-           WHERE bc.child_bot_id=$1 AND bc.owner_id=$2 AND bu.is_premium=true""",
-        child_bot_id, owner_id,
-    ) or 0
-    inactive = max(total - active, 0)
 
     await callback.message.edit_text(
-        "🗄 <b>База пользователей</b>\n\n"
-        "<blockquote>"
-        "Здесь хранятся все пользователи, которые взаимодействовали "
-        "с каналами и группами вашего бота.\n\n"
-        "Вы можете выгрузить базу в формате CSV — это удобно для "
-        "аналитики, рассылок через сторонние сервисы или резервной копии."
-        "</blockquote>\n\n"
-        f"👥 <b>Всего в базе:</b> {total:,}\n"
-        f"🟢 <b>Активных (в боте):</b> {active:,}\n"
-        f"🔴 <b>Неактивных:</b> {inactive:,}\n"
-        f"⭐ <b>Premium:</b> {premium:,}",
+        "✏️ <b>Управление базой пользователей</b>\n\n"
+        f"<blockquote>В базе сейчас: <b>{total:,}</b> пользователей.\n\n"
+        "Вы можете вручную добавить пользователей по Telegram ID или @username, "
+        "или удалить их из базы. Поддерживается как ввод текстом, так и загрузка файла.</blockquote>\n\n"
+        "<b>Выберите действие:</b>",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(
-                text="📥 Выгрузить всю базу (CSV)",
-                callback_data=f"bs_base_export:{child_bot_id}:all",
-            )],
-            [InlineKeyboardButton(
-                text="🟢 Выгрузить активных",
-                callback_data=f"bs_base_export:{child_bot_id}:active",
-            )],
-            [InlineKeyboardButton(
-                text="⭐ Выгрузить Premium",
-                callback_data=f"bs_base_export:{child_bot_id}:premium",
-            )],
-            [InlineKeyboardButton(text="◀️ Назад", callback_data=f"bs_base:{child_bot_id}")],
+            [InlineKeyboardButton(text="➕ Добавить пользователей",   callback_data=f"bs_base_add:{child_bot_id}")],
+            [InlineKeyboardButton(text="🗑 Удалить пользователей",    callback_data=f"bs_base_del:{child_bot_id}")],
+            [InlineKeyboardButton(text="◀️ Назад",                    callback_data=f"bs_base:{child_bot_id}")],
         ]),
     )
     await callback.answer()
 
 
+# ── Добавить пользователей ────────────────────────────────────
+@router.callback_query(F.data.startswith("bs_base_add:"))
+async def on_bs_base_add(callback: CallbackQuery, state: FSMContext,
+                         platform_user: dict | None):
+    if not platform_user:
+        return
+    child_bot_id = int(callback.data.split(":")[1])
+    await state.update_data(child_bot_id=child_bot_id)
+    await state.set_state(SettingsFSM.bs_base_waiting_add)
+    await callback.message.edit_text(
+        "➕ <b>Добавление пользователей</b>\n\n"
+        "Отправьте <b>@username</b> или <b>Telegram ID</b> — можно несколько через пробел или с новой строки.\n"
+        "Или загрузите <b>TXT/CSV файл</b> (один пользователь на строку).\n\n"
+        "<b>Пример:</b>\n"
+        "<code>@ivan @maria\n123456789\n987654321</code>",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🚫 Отменить", callback_data=f"bs_base_edit:{child_bot_id}")],
+        ]),
+    )
+    await callback.answer()
 
-# ── ЧС пользователей (бот-уровень) ───────────────────────────
+
+# ── Удалить пользователей ────────────────────────────────────
+@router.callback_query(F.data.startswith("bs_base_del:"))
+async def on_bs_base_del(callback: CallbackQuery, state: FSMContext,
+                         platform_user: dict | None):
+    if not platform_user:
+        return
+    child_bot_id = int(callback.data.split(":")[1])
+    await state.update_data(child_bot_id=child_bot_id)
+    await state.set_state(SettingsFSM.bs_base_waiting_del)
+    await callback.message.edit_text(
+        "🗑 <b>Удаление пользователей</b>\n\n"
+        "Отправьте <b>@username</b> или <b>Telegram ID</b> тех, кого хотите удалить.\n"
+        "Можно несколько через пробел или с новой строки.\n"
+        "Или загрузите <b>TXT/CSV файл</b>.\n\n"
+        "<b>Пример:</b>\n"
+        "<code>@spammer1\n111222333</code>",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🚫 Отменить", callback_data=f"bs_base_edit:{child_bot_id}")],
+        ]),
+    )
+    await callback.answer()
+
+
+def _parse_user_lines(text: str) -> list[str]:
+    """Возвращает список @username или числовых ID из свободного текста."""
+    import re
+    tokens = re.split(r'[\s,;]+', text.strip())
+    result = []
+    for t in tokens:
+        t = t.strip()
+        if not t:
+            continue
+        if t.startswith('@') and len(t) > 1:
+            result.append(t.lower())
+        elif t.lstrip('-').isdigit():
+            result.append(t)
+    return result
+
+
+async def _process_base_add(owner_id: int, child_bot_id: int,
+                             tokens: list[str]) -> dict:
+    """Добавляет пользователей в bot_users возможных площадок бота."""
+    # Получаем первый активный chat_id площадки для bot_id
+    chat_row = await db.fetchrow(
+        "SELECT chat_id FROM bot_chats WHERE child_bot_id=$1 AND owner_id=$2 "
+        "AND is_active=true ORDER BY id LIMIT 1",
+        child_bot_id, owner_id,
+    )
+    if not chat_row:
+        return {"added": 0, "already": 0, "invalid": 0, "details": []}
+    chat_id = chat_row["chat_id"]
+
+    added = already = invalid = 0
+    details = []
+    for token in tokens:
+        if token.startswith('@'):
+            username = token.lstrip('@')
+            exists = await db.fetchval(
+                "SELECT 1 FROM bot_users WHERE owner_id=$1 AND chat_id=$2 "
+                "AND lower(username)=$3",
+                owner_id, chat_id, username.lower(),
+            )
+            if exists:
+                already += 1
+                details.append(f"• {token} — уже в базе")
+                continue
+            await db.execute(
+                "INSERT INTO bot_users (owner_id, chat_id, username, first_name, "
+                "joined_at, is_active, bot_activated) "
+                "VALUES ($1,$2,$3,'',NOW(),true,false) ON CONFLICT DO NOTHING",
+                owner_id, chat_id, username,
+            )
+            added += 1
+            details.append(f"• {token} ✅")
+        else:
+            try:
+                uid = int(token)
+            except ValueError:
+                invalid += 1
+                details.append(f"• {token} — неверный формат")
+                continue
+            exists = await db.fetchval(
+                "SELECT 1 FROM bot_users WHERE owner_id=$1 AND chat_id=$2 AND user_id=$3",
+                owner_id, chat_id, uid,
+            )
+            if exists:
+                already += 1
+                details.append(f"• `{uid}` — уже в базе")
+                continue
+            await db.execute(
+                "INSERT INTO bot_users (owner_id, chat_id, user_id, first_name, "
+                "joined_at, is_active, bot_activated) "
+                "VALUES ($1,$2,$3,'',NOW(),true,false) ON CONFLICT DO NOTHING",
+                owner_id, chat_id, uid,
+            )
+            added += 1
+            details.append(f"• `{uid}` ✅")
+    return {"added": added, "already": already, "invalid": invalid, "details": details}
+
+
+async def _process_base_del(owner_id: int, child_bot_id: int,
+                             tokens: list[str]) -> dict:
+    """Удаляет пользователей из bot_users по площадкам бота."""
+    removed = not_found = invalid = 0
+    details = []
+    for token in tokens:
+        if token.startswith('@'):
+            username = token.lstrip('@')
+            res = await db.execute(
+                "DELETE FROM bot_users bu USING bot_chats bc "
+                "WHERE bu.chat_id=bc.chat_id AND bu.owner_id=bc.owner_id "
+                "AND bc.child_bot_id=$1 AND bc.owner_id=$2 "
+                "AND lower(bu.username)=$3",
+                child_bot_id, owner_id, username.lower(),
+            )
+            count = int(res.split()[-1]) if res else 0
+            if count:
+                removed += 1
+                details.append(f"• {token} 🗑 удалён")
+            else:
+                not_found += 1
+                details.append(f"• {token} — не найден")
+        else:
+            try:
+                uid = int(token)
+            except ValueError:
+                invalid += 1
+                details.append(f"• {token} — неверный формат")
+                continue
+            res = await db.execute(
+                "DELETE FROM bot_users bu USING bot_chats bc "
+                "WHERE bu.chat_id=bc.chat_id AND bu.owner_id=bc.owner_id "
+                "AND bc.child_bot_id=$1 AND bc.owner_id=$2 AND bu.user_id=$3",
+                child_bot_id, owner_id, uid,
+            )
+            count = int(res.split()[-1]) if res else 0
+            if count:
+                removed += 1
+                details.append(f"• `{uid}` 🗑 удалён")
+            else:
+                not_found += 1
+                details.append(f"• `{uid}` — не найден")
+    return {"removed": removed, "not_found": not_found, "invalid": invalid, "details": details}
+
+
+# ── Обработка текстового ввода для добавления/удаления ────────
+@router.message(SettingsFSM.bs_base_waiting_add)
+async def on_bs_base_add_input(message: Message, state: FSMContext,
+                                platform_user: dict | None):
+    if not platform_user:
+        return
+    data = await state.get_data()
+    child_bot_id = data.get("child_bot_id")
+    owner_id = platform_user["user_id"]
+
+    # Файл
+    if message.document:
+        doc = message.document
+        if not doc.file_name.lower().endswith((".txt", ".csv")):
+            await message.answer("❌ Поддерживаются только TXT и CSV файлы.")
+            return
+        from aiogram import Bot as AioBot
+        # используем бот платформы (message.bot)
+        file_obj = await message.bot.get_file(doc.file_id)
+        content_io = await message.bot.download_file(file_obj.file_path)
+        text = content_io.read().decode("utf-8", errors="replace")
+    elif message.text:
+        text = message.text
+    else:
+        await message.answer("❌ Отправьте текст или файл.")
+        return
+
+    tokens = _parse_user_lines(text)
+    if not tokens:
+        await message.answer(
+            "⚠️ Не найдено ни одного @username или Telegram ID.\n"
+            "Убедитесь в правильности формата."
+        )
+        return
+
+    res = await _process_base_add(owner_id, child_bot_id, tokens)
+    total_now = await db.fetchval(
+        """SELECT COUNT(*) FROM bot_users bu
+           JOIN bot_chats bc ON bu.chat_id=bc.chat_id AND bu.owner_id=bc.owner_id
+           WHERE bc.child_bot_id=$1 AND bc.owner_id=$2""",
+        child_bot_id, owner_id,
+    ) or 0
+
+    detail_text = "\n".join(res["details"][:20])
+    if len(res["details"]) > 20:
+        detail_text += f"\n... и ещё {len(res['details']) - 20}"
+
+    await state.clear()
+    await message.answer(
+        f"✅ <b>Готово!</b>\n\n"
+        f"➕ Добавлено: <b>{res['added']}</b>\n"
+        f"⏩ Уже были в базе: <b>{res['already']}</b>\n"
+        f"❌ Неверный формат: <b>{res['invalid']}</b>\n\n"
+        f"{detail_text}\n\n"
+        f"👥 Итого в базе: <b>{total_now:,}</b>",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="◀️ Назад к управлению",
+                                  callback_data=f"bs_base_edit:{child_bot_id}")],
+        ]),
+    )
+
+
+@router.message(SettingsFSM.bs_base_waiting_del)
+async def on_bs_base_del_input(message: Message, state: FSMContext,
+                                platform_user: dict | None):
+    if not platform_user:
+        return
+    data = await state.get_data()
+    child_bot_id = data.get("child_bot_id")
+    owner_id = platform_user["user_id"]
+
+    if message.document:
+        doc = message.document
+        if not doc.file_name.lower().endswith((".txt", ".csv")):
+            await message.answer("❌ Поддерживаются только TXT и CSV файлы.")
+            return
+        file_obj = await message.bot.get_file(doc.file_id)
+        content_io = await message.bot.download_file(file_obj.file_path)
+        text = content_io.read().decode("utf-8", errors="replace")
+    elif message.text:
+        text = message.text
+    else:
+        await message.answer("❌ Отправьте текст или файл.")
+        return
+
+    tokens = _parse_user_lines(text)
+    if not tokens:
+        await message.answer(
+            "⚠️ Не найдено ни одного @username или Telegram ID."
+        )
+        return
+
+    res = await _process_base_del(owner_id, child_bot_id, tokens)
+    total_now = await db.fetchval(
+        """SELECT COUNT(*) FROM bot_users bu
+           JOIN bot_chats bc ON bu.chat_id=bc.chat_id AND bu.owner_id=bc.owner_id
+           WHERE bc.child_bot_id=$1 AND bc.owner_id=$2""",
+        child_bot_id, owner_id,
+    ) or 0
+
+    detail_text = "\n".join(res["details"][:20])
+    if len(res["details"]) > 20:
+        detail_text += f"\n... и ещё {len(res['details']) - 20}"
+
+    await state.clear()
+    await message.answer(
+        f"🗑 <b>Удаление завершено!</b>\n\n"
+        f"✅ Удалено: <b>{res['removed']}</b>\n"
+        f"🔍 Не найдено: <b>{res['not_found']}</b>\n"
+        f"❌ Неверный формат: <b>{res['invalid']}</b>\n\n"
+        f"{detail_text}\n\n"
+        f"👥 Осталось в базе: <b>{total_now:,}</b>",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="◀️ Назад к управлению",
+                                  callback_data=f"bs_base_edit:{child_bot_id}")],
+        ]),
+    )
+
+
 @router.callback_query(F.data.startswith("bs_blacklist:"))
 async def on_bs_blacklist(callback: CallbackQuery, platform_user: dict | None):
     """Главное меню ЧС на уровне бота."""

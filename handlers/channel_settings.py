@@ -1079,14 +1079,18 @@ async def on_reaction_toggle(callback: CallbackQuery, platform_user: dict | None
 # Языковые фильтры и фильтры имён
 # ══════════════════════════════════════════════════════════════
 LANGUAGE_OPTIONS = {
-    "ar": "🇸🇦 Арабский",
-    "zh": "🇨🇳 Китайский",
-    "fa": "🇮🇷 Фарси",
-    "tr": "🇹🇷 Турецкий",
-    "hi": "🇮🇳 Хинди",
-    "uk": "🇺🇦 Украинский",
-    "en": "🇺🇸 Английский",
-    "de": "🇩🇪 Немецкий",
+    "ru": "RU 🇷🇺",
+    "uk": "UK 🇺🇦",
+    "by": "BY 🇧🇾",
+    "uz": "UZ 🇺🇿",
+    "kz": "KZ 🇰🇿",
+    "az": "AZ 🇦🇿",
+    "en": "EN 🇬🇧",
+    "es": "ES 🇪🇸",
+    "de": "DE 🇩🇪",
+    "zh": "ZH 🇨🇳",
+    "hi": "HI 🇮🇳",
+    "ar": "AR 🇸🇦",
 }
 
 
@@ -1795,7 +1799,7 @@ async def _show_bs_protection(callback: CallbackQuery, platform_user: dict, chil
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🚫 Лимиты",                    callback_data=f"bs_limits:{child_bot_id}")],
-            [InlineKeyboardButton(text="⬛ Фильтр по языкам",           callback_data=f"bs_lang_filters:{child_bot_id}")],
+            [InlineKeyboardButton(text="🏁 Фильтр по языкам",           callback_data=f"bs_lang_filters:{child_bot_id}")],
             [InlineKeyboardButton(text=f"{rtl} RTL-символы в имени",   callback_data=f"bs_filter_rtl:{child_bot_id}")],
             [InlineKeyboardButton(text=f"{hiero} Иероглифы в имени",   callback_data=f"bs_filter_hier:{child_bot_id}")],
             [InlineKeyboardButton(text=f"{no_photo} Аккаунты без фото",callback_data=f"bs_filter_photo:{child_bot_id}")],
@@ -1910,15 +1914,27 @@ async def on_bs_lang_filters(callback: CallbackQuery, platform_user: dict | None
         "SELECT language_code FROM language_filters WHERE owner_id=$1 AND chat_id=$2::bigint",
         owner_id, chat_id)
     blocked_codes = {r["language_code"] for r in blocked}
-    buttons = []
-    for code, label in LANGUAGE_OPTIONS.items():
-        mark = "🚫" if code in blocked_codes else "🌍"
-        buttons.append([InlineKeyboardButton(text=f"{mark} {label}",
-                                             callback_data=f"bs_lang_toggle:{child_bot_id}:{code}")])
+    # Кнопка "Все языки" вверху
+    buttons = [
+        [InlineKeyboardButton(text="Все языки 🏳️", callback_data=f"bs_lang_all:{child_bot_id}")]
+    ]
+    # 3 колонки флагов
+    langs = list(LANGUAGE_OPTIONS.items())
+    for i in range(0, len(langs), 3):
+        row = []
+        for code, label in langs[i:i+3]:
+            mark = "🔵" if code not in blocked_codes else "⚪"
+            row.append(InlineKeyboardButton(
+                text=f"{mark} {label}",
+                callback_data=f"bs_lang_toggle:{child_bot_id}:{code}"
+            ))
+        buttons.append(row)
     buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"bs_protection:{child_bot_id}")])
     await callback.message.edit_text(
-        "🌍 <b>Языковые фильтры</b> (все площадки)\n\n🚫 — заблокирован | 🌍 — разрешён",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+        "🏁 <b>Фильтр по языкам</b>",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+    )
     await callback.answer()
 
 
@@ -1947,8 +1963,26 @@ async def on_bs_lang_toggle(callback: CallbackQuery, platform_user: dict | None)
             await db.execute(
                 "INSERT INTO language_filters (owner_id, chat_id, language_code) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING",
                 owner_id, cid, code)
-    msg = f"✅ {LANGUAGE_OPTIONS.get(code,'?')} разрешён" if exists else f"🚫 {LANGUAGE_OPTIONS.get(code,'?')} заблокирован"
+    msg = f"🔵 {LANGUAGE_OPTIONS.get(code,'?')} разрешён" if exists else f"⚪ {LANGUAGE_OPTIONS.get(code,'?')} заблокирован"
     await callback.answer(msg)
+    callback.data = f"bs_lang_filters:{child_bot_id}"
+    await on_bs_lang_filters(callback, platform_user)
+
+
+@router.callback_query(F.data.startswith("bs_lang_all:"))
+async def on_bs_lang_all(callback: CallbackQuery, platform_user: dict | None):
+    """Снять все языковые блокировки — разрешить все языки."""
+    if not platform_user:
+        return
+    child_bot_id = int(callback.data.split(":")[1])
+    owner_id = platform_user["user_id"]
+    chats = await db.fetch(
+        "SELECT chat_id FROM bot_chats WHERE child_bot_id=$1 AND owner_id=$2", child_bot_id, owner_id)
+    for chat_row in chats:
+        await db.execute(
+            "DELETE FROM language_filters WHERE owner_id=$1 AND chat_id=$2::bigint",
+            owner_id, chat_row["chat_id"])
+    await callback.answer("🔵 Все языки разрешены")
     callback.data = f"bs_lang_filters:{child_bot_id}"
     await on_bs_lang_filters(callback, platform_user)
 

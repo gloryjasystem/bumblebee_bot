@@ -97,11 +97,19 @@ def kb_link_types(chat_id: int, child_bot_id: int) -> InlineKeyboardMarkup:
     ])
 
 
-def kb_link_detail(link_id: int, chat_id: int, child_bot_id: int) -> InlineKeyboardMarkup:
-    """Экран детали ссылки. Back → Экран 1."""
+def kb_link_detail(link_id: int, chat_id: int, child_bot_id: int,
+                   auto_accept: str = "base") -> InlineKeyboardMarkup:
+    """Кнопки экрана деталей ссылки."""
+    auto_label = {
+        "base": "♓️ Автопринятие: базовое",
+        "off":  "❌ Автопринятие: выключено",
+        "instant": "⚡ Автопринятие: мгновенно",
+    }.get(auto_accept, "♓️ Автопринятие: базовое")
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="↗️ Поделиться",
                               callback_data=f"link_share:{link_id}")],
+        [InlineKeyboardButton(text=auto_label,
+                              callback_data=f"link_auto_accept:{link_id}:{chat_id}:{child_bot_id}")],
         [InlineKeyboardButton(text="🗑 Удалить",
                               callback_data=f"link_delete:{link_id}:{chat_id}:{child_bot_id}")],
         [InlineKeyboardButton(text="◀️ Назад",
@@ -451,41 +459,110 @@ async def on_link_detail(callback: CallbackQuery, platform_user: dict | None):
         await callback.answer("Ссылка не найдена", show_alert=True)
         return
 
-    # Если chat_id не передан — берём из link
     if not chat_id:
         chat_id = link["chat_id"]
 
+    joined  = link.get("joined") or 0
+    unsub   = link.get("unsubscribed") or 0
+    remained = joined - unsub
+
+    males   = link.get("males") or 0
+    females = link.get("females") or 0
+    total_gender = males + females
+    m_pct = f"{males / total_gender * 100:.2f}" if total_gender > 0 else "0.00"
+    f_pct = f"{females / total_gender * 100:.2f}" if total_gender > 0 else "0.00"
+
+    # Страны
+    countries_raw = link.get("countries") or {}
+    if countries_raw:
+        # Топ-3 страны
+        sorted_c = sorted(countries_raw.items(), key=lambda x: x[1], reverse=True)[:3]
+        countries_text = "  " + ", ".join(f"{c}: {n}" for c, n in sorted_c)
+    else:
+        countries_text = "  —"
+
+    rtl       = link.get("rtl_count") or 0
+    hieroglyph = link.get("hieroglyph_count") or 0
+    premium   = link.get("premium_count") or 0
+    rtl_pct      = f"{rtl / joined * 100:.2f}" if joined > 0 else "0.00"
+    hier_pct     = f"{hieroglyph / joined * 100:.2f}" if joined > 0 else "0.00"
+    prem_pct     = f"{premium / joined * 100:.2f}" if joined > 0 else "0.00"
+
     # Стоимость подписчика
     cost_text = ""
-    joined = link.get("joined") or 0
-    unsub  = link.get("unsubscribed") or 0
-    if link["budget"] and joined > 0:
-        per_join = link["budget"] / joined
-        remained = joined - unsub
-        per_stayed = link["budget"] / remained if remained > 0 else 0
-        cur = link["budget_currency"] or ""
+    if link["budget"]:
+        budget = float(link["budget"])
+        cur = link["budget_currency"] or "₽"
+        cur_sym = {"₽": "₽", "RUB": "₽", "USD": "$", "EUR": "€"}.get(cur, cur)
+        per_all   = budget / joined if joined > 0 else budget
+        per_stay  = budget / remained if remained > 0 else budget
         cost_text = (
-            f"\n💰 <b>Стоимость подписчика:</b>\n"
-            f"● Бюджет: {link['budget']:.2f}{cur}\n"
-            f"● За вступившего: {per_join:.2f}{cur}\n"
-            f"● За оставшегося: {per_stayed:.2f}{cur}"
+            f"\nСтоимость подписчика:\n"
+            f"🔴 Общая: {per_all:.2f}{cur_sym}\n"
+            f"🟢 Итоговая: {per_stay:.2f}{cur_sym}\n"
         )
 
-    type_map = {"request": "С заявкой", "regular": "Обычная", "onetime": "Одноразовая"}
+    type_map = {"request": "заявки", "regular": "обычная", "onetime": "одноразовая"}
+    auto_accept = link.get("auto_accept") or "base"
+
+    text = (
+        f"📊 Статистика по {link['name']}\n\n"
+        f"🔗 Ссылка: <code>{link['link']}</code>\n"
+        f"🔒 Вид: {type_map.get(link['link_type'], link['link_type'])}\n\n"
+        f"👤 <u>Подписчики</u>\n"
+        f"👤 Подписалось: {joined}\n"
+        f"👤 Отписалось: {unsub}\n"
+        f"👤 Осталось: {remained}\n\n"
+        f"🎯 <u>Пол аудитории</u>\n"
+        f"♂️М: {m_pct}% | ♀️Ж: {f_pct}%\n\n"
+        f"🌍 <u>Страны</u>\n"
+        f"{countries_text}\n\n"
+        f"📋 <u>Аккаунты</u>\n"
+        f"🌙 RTL-символы в имени: {rtl} | {rtl_pct}%\n"
+        f"🈳 Иероглифы в имени: {hieroglyph} | {hier_pct}%\n"
+        f"⭐ Telegram Premium: {premium} | {prem_pct}%\n"
+        f"{cost_text}"
+        f"📅 Дата создания: {link['created_at'].strftime('%d.%m.%Y')}"
+    )
+
     await callback.message.edit_text(
-        f"📊 <b>Ссылка — «{link['name']}»</b>\n\n"
-        f"🔗 <code>{link['link']}</code>\n"
-        f"🔒 Тип: {type_map.get(link['link_type'], link['link_type'])}\n\n"
-        f"👥 <b>Подписчики</b>\n"
-        f"├ Подписалось: {joined}\n"
-        f"├ Отписалось: {unsub}\n"
-        f"└ Осталось: {joined - unsub}\n"
-        f"{cost_text}\n"
-        f"📅 Создана: {link['created_at'].strftime('%d.%m.%Y')}",
+        text,
         parse_mode="HTML",
-        reply_markup=kb_link_detail(link_id, chat_id, child_bot_id),
+        reply_markup=kb_link_detail(link_id, chat_id, child_bot_id, auto_accept),
     )
     await callback.answer()
+
+
+# ── Автопринятие: переключение ────────────────────────────────
+
+@router.callback_query(F.data.startswith("link_auto_accept:"))
+async def on_link_auto_accept(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    parts = callback.data.split(":")
+    link_id = int(parts[1])
+    chat_id = int(parts[2]) if len(parts) > 2 else 0
+    child_bot_id = int(parts[3]) if len(parts) > 3 else 0
+
+    link = await db.fetchrow(
+        "SELECT auto_accept FROM invite_links WHERE id=$1 AND owner_id=$2",
+        link_id, platform_user["user_id"],
+    )
+    if not link:
+        await callback.answer("Ссылка не найдена", show_alert=True)
+        return
+
+    # Циклично переключаем: base → off → instant → base
+    cycle = {"base": "off", "off": "instant", "instant": "base"}
+    new_val = cycle.get(link["auto_accept"] or "base", "base")
+    await db.execute(
+        "UPDATE invite_links SET auto_accept=$1 WHERE id=$2",
+        new_val, link_id,
+    )
+    await callback.answer()
+    # Обновляем экран деталей
+    callback.data = f"link_detail:{link_id}:{chat_id}:{child_bot_id}"
+    await on_link_detail(callback, platform_user)
 
 
 # ── Удаление ссылки ───────────────────────────────────────────

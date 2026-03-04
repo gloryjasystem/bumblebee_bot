@@ -1656,54 +1656,52 @@ async def on_bs_blacklist(callback: CallbackQuery, platform_user: dict | None):
 @router.callback_query(F.data.startswith("bs_bl_export:"))
 async def on_bs_bl_export(callback: CallbackQuery, platform_user: dict | None):
     if not platform_user:
+        await callback.answer()
         return
     child_bot_id = int(callback.data.split(":")[1])
     owner_id = platform_user["user_id"]
 
-    total = await db.fetchval(
-        "SELECT COUNT(*) FROM blacklist WHERE owner_id=$1", owner_id,
-    ) or 0
+    try:
+        total = await db.fetchval(
+            "SELECT COUNT(*) FROM blacklist WHERE owner_id=$1", owner_id,
+        ) or 0
 
-    last_added = await db.fetchval(
-        "SELECT MAX(created_at) FROM blacklist WHERE owner_id=$1", owner_id,
-    )
-    week_ago_count = await db.fetchval(
-        "SELECT COUNT(*) FROM blacklist WHERE owner_id=$1 "
-        "AND created_at >= NOW() - INTERVAL '7 days'", owner_id,
-    ) or 0
-
-    last_str = last_added.strftime("%d.%m.%Y") if last_added else "—"
-
-    if total == 0:
+        if total == 0:
+            await callback.message.edit_text(
+                "📤 <b>Экспорт базы ЧС</b>\n\n"
+                "⚠️ База ЧС пуста. Нечего экспортировать.",
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="◀️ Назад", callback_data=f"bs_blacklist:{child_bot_id}")],
+                ]),
+            )
+        else:
+            await callback.message.edit_text(
+                "📤 <b>Экспорт базы ЧС</b>\n\n"
+                "<blockquote>Выгрузите базу для резервной копии или переноса "
+                "в другой бот/сервис.\n\n"
+                "CSV — полная база со всеми данными (user_id, username, причина, дата).\n"
+                "TXT — только ID и @username, по одному на строку — готово для импорта "
+                "в любой другой бот.</blockquote>\n\n"
+                f"📊 Всего записей в базе ЧС: <b>{total:,}</b>",
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="📥 Скачать CSV (полная база)",       callback_data=f"bs_bl_export_csv:{child_bot_id}")],
+                    [InlineKeyboardButton(text="📋 Скачать TXT (для импорта в бот)", callback_data=f"bs_bl_export_txt:{child_bot_id}")],
+                    [InlineKeyboardButton(text="◀️ Назад",                           callback_data=f"bs_blacklist:{child_bot_id}")],
+                ]),
+            )
+    except Exception as e:
+        logger.error(f"bs_bl_export error: {e}")
         await callback.message.edit_text(
-            "📤 <b>Экспорт базы ЧС</b>\n\n"
-            "⚠️ База ЧС пуста. Нечего экспортировать.",
+            "❌ <b>Ошибка при загрузке данных.</b>\n\nПопробуйте позже.",
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="◀️ Назад", callback_data=f"bs_blacklist:{child_bot_id}")],
             ]),
         )
+    finally:
         await callback.answer()
-        return
-
-    await callback.message.edit_text(
-        "📤 <b>Экспорт базы ЧС</b>\n\n"
-        "<blockquote>Выгрузите базу для резервной копии или переноса "
-        "в другой бот/сервис.\n\n"
-        "CSV — полная база со всеми данными (user_id, username, причина, дата).\n"
-        "TXT — только ID и @username, по одному на строку — готово для импорта "
-        "в любой другой бот через «Загрузить базу ЧС».</blockquote>\n\n"
-        f"📊 Всего записей: <b>{total:,}</b>\n"
-        f"📅 Добавлено за 7 дней: <b>{week_ago_count:,}</b>\n"
-        f"🕐 Последнее добавление: <b>{last_str}</b>",
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="📥 Скачать CSV (полная база)",        callback_data=f"bs_bl_export_csv:{child_bot_id}")],
-            [InlineKeyboardButton(text="📋 Скачать TXT (для импорта в бот)",  callback_data=f"bs_bl_export_txt:{child_bot_id}")],
-            [InlineKeyboardButton(text="◀️ Назад",                            callback_data=f"bs_blacklist:{child_bot_id}")],
-        ]),
-    )
-    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("bs_bl_export_csv:"))

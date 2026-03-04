@@ -35,36 +35,44 @@ class LinkFSM(StatesGroup):
 def kb_links_list(links: list, chat_id: int, child_bot_id: int,
                   page: int = 0) -> InlineKeyboardMarkup:
     """
-    Экран 1: постраничный список ссылок.
+    Экран 1: показываем одну ссылку с горизонтальной навигацией ◄ | название | ►
     Back → выбор площадки (bs_links:{child_bot_id}).
     """
-    PAGE = 5
     total = len(links)
-    start = page * PAGE
-    chunk = links[start:start + PAGE]
-
     buttons = []
 
-    # Пагинация (показываем только если ссылок > PAGE)
-    if total > PAGE:
-        nav = []
-        if page > 0:
-            nav.append(InlineKeyboardButton(text="◀",
-                        callback_data=f"links_page:{chat_id}:{child_bot_id}:{page-1}"))
-        nav.append(InlineKeyboardButton(
-            text=f"{page+1}/{(total-1)//PAGE+1}", callback_data="noop"))
-        if start + PAGE < total:
-            nav.append(InlineKeyboardButton(text="▶",
-                        callback_data=f"links_page:{chat_id}:{child_bot_id}:{page+1}"))
-        buttons.append(nav)
+    if total > 0:
+        # Ограничиваем page
+        page = max(0, min(page, total - 1))
+        link = links[page]
+        link_name = link['name'][:30]
 
-    for link in chunk:
-        type_icon = {"request": "✅", "regular": "🔗", "onetime": "🔢"}.get(
-            link["link_type"], "🔗")
-        buttons.append([InlineKeyboardButton(
-            text=f"{type_icon} {link['name'][:30]}",
-            callback_data=f"link_detail:{link['id']}:{chat_id}:{child_bot_id}",
-        )])
+        nav = []
+        # Кнопка ◄ (неактивна если первая)
+        if page > 0:
+            nav.append(InlineKeyboardButton(
+                text="◄",
+                callback_data=f"links_page:{chat_id}:{child_bot_id}:{page-1}"
+            ))
+        else:
+            nav.append(InlineKeyboardButton(text="◄", callback_data="noop"))
+
+        # Центральная кнопка — название ссылки, нажатие → детали
+        nav.append(InlineKeyboardButton(
+            text=link_name,
+            callback_data=f"link_detail:{link['id']}:{chat_id}:{child_bot_id}"
+        ))
+
+        # Кнопка ► (неактивна если последняя)
+        if page < total - 1:
+            nav.append(InlineKeyboardButton(
+                text="►",
+                callback_data=f"links_page:{chat_id}:{child_bot_id}:{page+1}"
+            ))
+        else:
+            nav.append(InlineKeyboardButton(text="►", callback_data="noop"))
+
+        buttons.append(nav)
 
     buttons.append([InlineKeyboardButton(
         text="➕ Создать ссылку",
@@ -106,24 +114,19 @@ def kb_link_detail(link_id: int, chat_id: int, child_bot_id: int) -> InlineKeybo
 async def _show_links_screen(callback: CallbackQuery, platform_user: dict,
                               chat_id: int, child_bot_id: int, page: int = 0):
     """Рендерит Экран 1 — список ссылок площадки."""
-    ch = await db.fetchrow(
-        "SELECT chat_title FROM bot_chats WHERE owner_id=$1 AND chat_id=$2",
-        platform_user["user_id"], chat_id,
-    )
     links = await db.fetch(
         "SELECT * FROM invite_links WHERE owner_id=$1 AND chat_id=$2::bigint AND is_active=true "
         "ORDER BY created_at DESC",
         platform_user["user_id"], chat_id,
     )
-    title = ch["chat_title"] if ch else str(chat_id)
-    count = len(links)
-    if count == 0:
+
+    if len(links) == 0:
         body = "Ссылок пока нет. Создайте первую!"
     else:
-        body = f"Активных ссылок: <b>{count}</b>"
+        body = "Выберите ссылку или создайте новую:"
 
     await callback.message.edit_text(
-        f"🔗 <b>Ссылки — {title}</b>\n\n{body}",
+        f"🔗 <b>Ссылки</b>\n\n{body}",
         parse_mode="HTML",
         reply_markup=kb_links_list(list(links), chat_id, child_bot_id, page),
     )

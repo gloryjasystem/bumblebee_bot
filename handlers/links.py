@@ -68,16 +68,16 @@ def kb_links_list(links: list, chat_id: int, child_bot_id: int,
     buttons.append(nav)
 
     # Ссылки текущей страницы — каждая отдельной кнопкой
-    AUTO_LABEL = {"base": "базовое", "on": "включено", "off": "выключено"}
+    AUTO_LABEL = {"on": " (включено)", "off": " (выключено)"}
     for link in chunk:
         lk_d = dict(link)
         type_icon = {"request": "✅", "regular": "🔗", "onetime": "🔢"}.get(
             lk_d.get("link_type", ""), "🔗")
         auto = lk_d.get("auto_accept") or "base"
-        auto_label = AUTO_LABEL.get(auto, auto)
-        name = (lk_d.get("name") or "")[:25]
+        auto_suffix = AUTO_LABEL.get(auto, "")  # пусто если base
+        name = (lk_d.get("name") or "")[:27]
         buttons.append([InlineKeyboardButton(
-            text=f"{type_icon} {name} ({auto_label})",
+            text=f"{type_icon} {name}{auto_suffix}",
             callback_data=f"link_detail:{lk_d['id']}:{chat_id}:{child_bot_id}",
         )])
 
@@ -573,16 +573,17 @@ async def on_link_auto_accept(callback: CallbackQuery, platform_user: dict | Non
         return
 
     # Циклично переключаем: base → on → off → base
-    cycle = {"base": "on", "on": "off", "off": "base"}
+    cycle   = {"base": "on", "on": "off", "off": "base"}
     new_val = cycle.get(link["auto_accept"] or "base", "base")
     await db.execute(
         "UPDATE invite_links SET auto_accept=$1 WHERE id=$2",
         new_val, link_id,
     )
+    # Мгновенно обновляем только клавиатуру — текст остаётся неизменным
+    await callback.message.edit_reply_markup(
+        reply_markup=kb_link_detail(link_id, chat_id, child_bot_id, new_val)
+    )
     await callback.answer()
-    # Обновляем экран деталей
-    callback.data = f"link_detail:{link_id}:{chat_id}:{child_bot_id}"
-    await on_link_detail(callback, platform_user)
 
 
 # ── Удаление ссылки ───────────────────────────────────────────

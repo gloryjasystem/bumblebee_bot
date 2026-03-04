@@ -35,47 +35,48 @@ class LinkFSM(StatesGroup):
 def kb_links_list(links: list, chat_id: int, child_bot_id: int,
                   page: int = 0) -> InlineKeyboardMarkup:
     """
-    Экран 1: показываем одну ссылку с горизонтальной навигацией ◄ | название | ►
+    Экран 1: постраничный список ссылок.
+    Навигация: [◄ prev] [крайняя → последняя] [► next]
+    Ссылки текущей страницы — отдельными кнопками ниже.
     Back → выбор площадки (bs_links:{child_bot_id}).
     """
+    PAGE = 5
     total = len(links)
+    last_page = max(0, (total - 1) // PAGE) if total > 0 else 0
+    page = max(0, min(page, last_page))
+    start = page * PAGE
+    chunk = links[start:start + PAGE]
+
     buttons = []
 
-    if total > 0:
-        # Ограничиваем page
-        page = max(0, min(page, total - 1))
-        link = links[page]
-        link_name = link['name'][:30]
-
+    # Навигационная строка — только если страниц > 1
+    if total > PAGE:
         nav = []
-        # Кнопка ◄ (неактивна если первая)
-        if page > 0:
-            nav.append(InlineKeyboardButton(
-                text="◄",
-                callback_data=f"links_page:{chat_id}:{child_bot_id}:{page-1}"
-            ))
-        else:
-            nav.append(InlineKeyboardButton(text="◄", callback_data="noop"))
-
-        # Центральная кнопка — название ссылки, нажатие → детали
         nav.append(InlineKeyboardButton(
-            text=link_name,
-            callback_data=f"link_detail:{link['id']}:{chat_id}:{child_bot_id}"
+            text="◄",
+            callback_data=f"links_page:{chat_id}:{child_bot_id}:{page-1}" if page > 0 else "noop"
         ))
-
-        # Кнопка ► (неактивна если последняя)
-        if page < total - 1:
-            nav.append(InlineKeyboardButton(
-                text="►",
-                callback_data=f"links_page:{chat_id}:{child_bot_id}:{page+1}"
-            ))
-        else:
-            nav.append(InlineKeyboardButton(text="►", callback_data="noop"))
-
+        nav.append(InlineKeyboardButton(
+            text="крайняя",
+            callback_data=f"links_page:{chat_id}:{child_bot_id}:{last_page}"
+        ))
+        nav.append(InlineKeyboardButton(
+            text="►",
+            callback_data=f"links_page:{chat_id}:{child_bot_id}:{page+1}" if page < last_page else "noop"
+        ))
         buttons.append(nav)
 
+    # Ссылки текущей страницы — каждая отдельной кнопкой
+    for link in chunk:
+        type_icon = {"request": "✅", "regular": "🔗", "onetime": "🔢"}.get(
+            link["link_type"], "🔗")
+        buttons.append([InlineKeyboardButton(
+            text=f"{type_icon} {link['name'][:30]}",
+            callback_data=f"link_detail:{link['id']}:{chat_id}:{child_bot_id}",
+        )])
+
     buttons.append([InlineKeyboardButton(
-        text="➕ Создать ссылку",
+        text="+ Создать ссылку",
         callback_data=f"link_create:{chat_id}:{child_bot_id}",
     )])
     buttons.append([InlineKeyboardButton(

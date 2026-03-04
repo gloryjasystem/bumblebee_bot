@@ -1183,9 +1183,9 @@ def kb_limits(ch: dict) -> InlineKeyboardMarkup:
     limit      = int(ch.get("join_limit_count") or 50)
 
     probe_label = "🔍 Проверка: вкл"  if enabled else "🔍 Проверка: выкл"
-    pun_label   = {"kick": "🏆 Наказание: Кик", "ban": "🏆 Наказание: Бан"}.get(punishment, "🏆 Наказание: Кик")
+    pun_label   = {"kick": "⚖️ Наказание: Кик", "ban": "⚖️ Наказание: Бан"}.get(punishment, "⚖️ Наказание: Кик")
     time_label  = f"⏱ Время: за {period} мин." if period != 1 else "⏱ Время: за 1 минуту"
-    limit_label = f"🔴 Лимит на вступление: ≥ {limit}"
+    limit_label = f"🚫 Лимит на вступление: ≥ {limit}"
 
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=probe_label,  callback_data=f"lim_probe:{chat_id}")],
@@ -1787,14 +1787,14 @@ async def _show_bs_protection(callback: CallbackQuery, platform_user: dict, chil
     if not ch:
         await callback.answer("Нет активных площадок", show_alert=True)
         return
-    rtl      = "🔵" if ch.get("filter_rtl")        else "⚫"
-    hiero    = "🔵" if ch.get("filter_hieroglyph")  else "⚫"
-    no_photo = "🔵" if ch.get("filter_no_photo")    else "⚫"
+    rtl      = "🔵" if ch.get("filter_rtl")        else "⚪"
+    hiero    = "🔵" if ch.get("filter_hieroglyph")  else "⚪"
+    no_photo = "🔵" if ch.get("filter_no_photo")    else "⚪"
     await callback.message.edit_text(
         "🛡 <b>Защита</b> (все площадки)\n\nФильтры применяются ко всем каналам бота.",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔴 Лимиты",                    callback_data=f"bs_limits:{child_bot_id}")],
+            [InlineKeyboardButton(text="🚫 Лимиты",                    callback_data=f"bs_limits:{child_bot_id}")],
             [InlineKeyboardButton(text="⬛ Фильтр по языкам",           callback_data=f"bs_lang_filters:{child_bot_id}")],
             [InlineKeyboardButton(text=f"{rtl} RTL-символы в имени",   callback_data=f"bs_filter_rtl:{child_bot_id}")],
             [InlineKeyboardButton(text=f"{hiero} Иероглифы в имени",   callback_data=f"bs_filter_hier:{child_bot_id}")],

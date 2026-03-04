@@ -25,13 +25,12 @@ class BlacklistFSM(StatesGroup):
 
 def kb_blacklist_main(chat_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="➕ Загрузить базу (TXT/CSV)", callback_data=f"bl_upload:{chat_id}")],
-        [InlineKeyboardButton(text="✏️ Добавить вручную",          callback_data=f"bl_manual:{chat_id}")],
-        [InlineKeyboardButton(text="🔍 Найти нарушителей",          callback_data=f"bl_sweep:{chat_id}")],
-        [InlineKeyboardButton(text="🔎 Найти в базе",               callback_data=f"bl_search:{chat_id}")],
-        [InlineKeyboardButton(text="📤 Экспорт базы",               callback_data=f"bl_export:{chat_id}")],
-        [InlineKeyboardButton(text="🗑 Очистить базу",              callback_data=f"bl_clear_confirm:{chat_id}")],
-        [InlineKeyboardButton(text="◀️ Назад",                      callback_data=f"channel_by_chat:{chat_id}")],
+        [InlineKeyboardButton(text="⚙️ Управлять базой ЧС",          callback_data=f"bl_manual:{chat_id}")],
+        [InlineKeyboardButton(text="🔍 Найти нарушителей",            callback_data=f"bl_sweep:{chat_id}")],
+        [InlineKeyboardButton(text="🔎 Найти в базе",                 callback_data=f"bl_search:{chat_id}")],
+        [InlineKeyboardButton(text="🗑 Очистить базу",                callback_data=f"bl_clear_confirm:{chat_id}")],
+        [InlineKeyboardButton(text="📤 Экспортировать базу ЧС",       callback_data=f"bl_export:{chat_id}")],
+        [InlineKeyboardButton(text="◀️ Назад",                        callback_data=f"channel_by_chat:{chat_id}")],
     ])
 
 

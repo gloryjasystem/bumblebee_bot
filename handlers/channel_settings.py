@@ -1091,16 +1091,18 @@ LANGUAGE_OPTIONS = {
 
 
 def kb_protection(ch: dict, blocked_langs: list) -> InlineKeyboardMarkup:
-    chat_id = ch["chat_id"]
-    rtl      = "✅" if ch.get("filter_rtl") else "☐"
-    hiero    = "✅" if ch.get("filter_hieroglyph") else "☐"
-    no_photo = "✅" if ch.get("filter_no_photo") else "☐"
+    chat_id  = ch["chat_id"]
+    rtl      = "🔵" if ch.get("filter_rtl")        else "⚫"
+    hiero    = "🔵" if ch.get("filter_hieroglyph")  else "⚫"
+    no_photo = "🔵" if ch.get("filter_no_photo")    else "⚫"
+    limit_on = "🔴" if ch.get("join_limit_enabled") else "🔴"
     buttons = [
-        [InlineKeyboardButton(text=f"{rtl} Фильтр RTL-имён",         callback_data=f"filter_rtl:{chat_id}")],
-        [InlineKeyboardButton(text=f"{hiero} Фильтр иероглифов",      callback_data=f"filter_hier:{chat_id}")],
-        [InlineKeyboardButton(text=f"{no_photo} Фильтр без фото",     callback_data=f"filter_photo:{chat_id}")],
-        [InlineKeyboardButton(text="🌍 Языковые фильтры",              callback_data=f"lang_filters:{chat_id}")],
-        [InlineKeyboardButton(text="◀️ Назад",                         callback_data=f"channel_by_chat:{chat_id}")],
+        [InlineKeyboardButton(text=f"{limit_on} Лимиты",                  callback_data=f"filter_limits:{chat_id}")],
+        [InlineKeyboardButton(text="⬛ Фильтр по языкам",                  callback_data=f"lang_filters:{chat_id}")],
+        [InlineKeyboardButton(text=f"{rtl} RTL-символы в имени",           callback_data=f"filter_rtl:{chat_id}")],
+        [InlineKeyboardButton(text=f"{hiero} Иероглифы в имени",           callback_data=f"filter_hier:{chat_id}")],
+        [InlineKeyboardButton(text=f"{no_photo} Аккаунты без фото",        callback_data=f"filter_photo:{chat_id}")],
+        [InlineKeyboardButton(text="◀️ Назад",                             callback_data=f"channel_by_chat:{chat_id}")],
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -1162,7 +1164,157 @@ async def on_filter_photo(callback: CallbackQuery, platform_user: dict | None):
         "UPDATE bot_chats SET filter_no_photo=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
         new_val, platform_user["user_id"], chat_id,
     )
-    await callback.answer("Без фото: " + ("✅ Вкл" if new_val else "☐ Выкл"))
+    await callback.answer("Без фото: " + ("🔵 Вкл" if new_val else "⚫ Выкл"))
+    # Обновляем экран
+    ch2 = await db.fetchrow("SELECT * FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint",
+                            platform_user["user_id"], chat_id)
+    if ch2:
+        await callback.message.edit_reply_markup(reply_markup=kb_protection(dict(ch2), []))
+
+
+# ── Лимиты ────────────────────────────────────────────────────
+
+def kb_limits(ch: dict) -> InlineKeyboardMarkup:
+    """Клавиатура экрана Лимитов (скрин 2)."""
+    chat_id    = ch["chat_id"]
+    enabled    = ch.get("join_limit_enabled") or False
+    punishment = ch.get("join_limit_punishment") or "kick"
+    period     = int(ch.get("join_limit_period_min") or 1)
+    limit      = int(ch.get("join_limit_count") or 50)
+
+    probe_label = "🔍 Проверка: вкл"  if enabled else "🔍 Проверка: выкл"
+    pun_label   = {"kick": "🏆 Наказание: Кик", "ban": "🏆 Наказание: Бан"}.get(punishment, "🏆 Наказание: Кик")
+    time_label  = f"⏱ Время: за {period} мин." if period != 1 else "⏱ Время: за 1 минуту"
+    limit_label = f"🔴 Лимит на вступление: ≥ {limit}"
+
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=probe_label,  callback_data=f"lim_probe:{chat_id}")],
+        [InlineKeyboardButton(text=pun_label,    callback_data=f"lim_pun:{chat_id}")],
+        [InlineKeyboardButton(text=time_label,   callback_data=f"lim_time:{chat_id}")],
+        [InlineKeyboardButton(text=limit_label,  callback_data=f"lim_count:{chat_id}")],
+        [InlineKeyboardButton(text="◀️ Назад",   callback_data=f"filter_limits_back:{chat_id}")],
+    ])
+
+
+async def _show_limits(callback: CallbackQuery, chat_id: int, owner_id: int):
+    ch = await db.fetchrow(
+        "SELECT * FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint",
+        owner_id, chat_id,
+    )
+    if not ch:
+        await callback.answer("Площадка не найдена", show_alert=True)
+        return
+    lk = dict(ch)
+    await callback.message.edit_text(
+        "🔄 <b>Лимит</b>\n\n"
+        "<i>Установите лимит на количество вступлений в течении определённого времени.</i>\n\n"
+        "ⓘ При <u>превышении лимита</u>, бот пришлёт уведомление.",
+        parse_mode="HTML",
+        reply_markup=kb_limits(lk),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("filter_limits:"))
+async def on_filter_limits(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    chat_id = int(callback.data.split(":")[1])
+    await _show_limits(callback, chat_id, platform_user["user_id"])
+
+
+@router.callback_query(F.data.startswith("filter_limits_back:"))
+async def on_filter_limits_back(callback: CallbackQuery, platform_user: dict | None):
+    """Назад → экран Защиты."""
+    if not platform_user:
+        return
+    chat_id = int(callback.data.split(":")[1])
+    ch = await db.fetchrow(
+        "SELECT * FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint",
+        platform_user["user_id"], chat_id,
+    )
+    if not ch:
+        return
+    await callback.message.edit_reply_markup(reply_markup=kb_protection(dict(ch), []))
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("lim_probe:"))
+async def on_lim_probe(callback: CallbackQuery, platform_user: dict | None):
+    """Переключить проверку лимита вкл/выкл."""
+    if not platform_user:
+        return
+    chat_id = int(callback.data.split(":")[1])
+    ch = await db.fetchrow(
+        "SELECT join_limit_enabled FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint",
+        platform_user["user_id"], chat_id,
+    )
+    new_val = not (ch["join_limit_enabled"] if ch else False)
+    await db.execute(
+        "UPDATE bot_chats SET join_limit_enabled=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
+        new_val, platform_user["user_id"], chat_id,
+    )
+    await _show_limits(callback, chat_id, platform_user["user_id"])
+
+
+@router.callback_query(F.data.startswith("lim_pun:"))
+async def on_lim_pun(callback: CallbackQuery, platform_user: dict | None):
+    """Переключить наказание: кик → бан → кик."""
+    if not platform_user:
+        return
+    chat_id = int(callback.data.split(":")[1])
+    ch = await db.fetchrow(
+        "SELECT join_limit_punishment FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint",
+        platform_user["user_id"], chat_id,
+    )
+    cycle   = {"kick": "ban", "ban": "kick"}
+    cur     = (ch["join_limit_punishment"] if ch else None) or "kick"
+    new_val = cycle.get(cur, "kick")
+    await db.execute(
+        "UPDATE bot_chats SET join_limit_punishment=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
+        new_val, platform_user["user_id"], chat_id,
+    )
+    await _show_limits(callback, chat_id, platform_user["user_id"])
+
+
+@router.callback_query(F.data.startswith("lim_time:"))
+async def on_lim_time(callback: CallbackQuery, platform_user: dict | None):
+    """Переключить период: 1 → 5 → 10 → 30 → 1 мин."""
+    if not platform_user:
+        return
+    chat_id = int(callback.data.split(":")[1])
+    ch = await db.fetchrow(
+        "SELECT join_limit_period_min FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint",
+        platform_user["user_id"], chat_id,
+    )
+    cycle   = {1: 5, 5: 10, 10: 30, 30: 1}
+    cur     = int(ch["join_limit_period_min"] if ch and ch.get("join_limit_period_min") else 1)
+    new_val = cycle.get(cur, 1)
+    await db.execute(
+        "UPDATE bot_chats SET join_limit_period_min=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
+        new_val, platform_user["user_id"], chat_id,
+    )
+    await _show_limits(callback, chat_id, platform_user["user_id"])
+
+
+@router.callback_query(F.data.startswith("lim_count:"))
+async def on_lim_count(callback: CallbackQuery, platform_user: dict | None):
+    """Переключить лимит: 10 → 20 → 50 → 100 → 200 → 10."""
+    if not platform_user:
+        return
+    chat_id = int(callback.data.split(":")[1])
+    ch = await db.fetchrow(
+        "SELECT join_limit_count FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint",
+        platform_user["user_id"], chat_id,
+    )
+    cycle   = {10: 20, 20: 50, 50: 100, 100: 200, 200: 10}
+    cur     = int(ch["join_limit_count"] if ch and ch.get("join_limit_count") else 50)
+    new_val = cycle.get(cur, 50)
+    await db.execute(
+        "UPDATE bot_chats SET join_limit_count=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
+        new_val, platform_user["user_id"], chat_id,
+    )
+    await _show_limits(callback, chat_id, platform_user["user_id"])
 
 
 # ── Языковые фильтры ─────────────────────────────────────────

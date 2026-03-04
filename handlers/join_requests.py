@@ -85,7 +85,18 @@ async def on_join_request(event: ChatJoinRequest, bot: Bot):
         await _log_action(owner_id, event.chat.id, "reject_hieroglyph", user.id)
         return
 
-    # 5. Автопринятие / капча / отложенное / ручное
+    # 5. Аккаунты без фото
+    if settings_row.get("filter_no_photo"):
+        try:
+            photos = await bot.get_user_profile_photos(user.id, limit=1)
+            if photos.total_count == 0:
+                await event.decline()
+                await _log_action(owner_id, event.chat.id, "reject_no_photo", user.id)
+                return
+        except Exception as e:
+            logger.warning(f"[FILTER] get_user_profile_photos failed for {user.id}: {e}")
+
+    # 6. Автопринятие / капча / отложенное / ручное
     if settings_row["autoaccept"]:
         delay = settings_row["autoaccept_delay"] or 0
         if delay > 0:

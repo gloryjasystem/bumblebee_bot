@@ -352,6 +352,29 @@ async def on_bot_delete(callback: CallbackQuery, platform_user: dict | None):
 
 @router.callback_query(F.data.startswith("bot_delete_confirm:"))
 async def on_bot_delete_confirm(callback: CallbackQuery, platform_user: dict | None):
+    """Второй экран подтверждения — финальное предупреждение."""
+    if not platform_user:
+        return
+    child_bot_id = int(callback.data.split(":")[1])
+    await callback.message.edit_text(
+        "🚨 <b>Вы точно уверены?</b>\n\n"
+        "После удаления <b>восстановить ничего будет невозможно</b>. Будут навсегда удалены:\n\n"
+        "❌ Все настроенные параметры бота\n"
+        "❌ База ваших пользователей и статистика\n"
+        "❌ Ссылки, рассылки и обратная связь\n"
+        "❌ Все подключённые площадки",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="❗️ Да, удалить навсегда", callback_data=f"bot_delete_final:{child_bot_id}")],
+            [InlineKeyboardButton(text="🚧 Нет, оставить бот",          callback_data=f"bot_settings:{child_bot_id}")],
+        ]),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("bot_delete_final:"))
+async def on_bot_delete_final(callback: CallbackQuery, platform_user: dict | None):
+    """Финальное удаление — после двойного подтверждения."""
     if not platform_user:
         return
     child_bot_id = int(callback.data.split(":")[1])

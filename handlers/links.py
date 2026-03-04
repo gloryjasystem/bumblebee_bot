@@ -13,6 +13,7 @@ handlers/links.py — Управление ссылками-приглашени
 import logging
 import re
 import html
+import json
 from aiogram import Router, F, Bot
 from aiogram.types import CallbackQuery, Message, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
@@ -477,6 +478,11 @@ async def on_link_detail(callback: CallbackQuery, platform_user: dict | None):
         f_pct = f"{females / total_gender * 100:.2f}" if total_gender > 0 else "0.00"
 
         countries_raw = lk.get("countries") or {}
+        if isinstance(countries_raw, str):
+            try:
+                countries_raw = json.loads(countries_raw)
+            except Exception:
+                countries_raw = {}
         if countries_raw:
             sorted_c = sorted(countries_raw.items(), key=lambda x: x[1], reverse=True)
             countries_text = "  " + ", ".join(f"{c}: {n}" for c, n in sorted_c[:3])

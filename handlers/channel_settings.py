@@ -1645,11 +1645,139 @@ async def on_bs_blacklist(callback: CallbackQuery, platform_user: dict | None):
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="⚙️ Управлять базой ЧС",  callback_data=f"bs_bl_manage:{child_bot_id}")],
             [InlineKeyboardButton(text="🔍 Найти нарушителей",    callback_data=f"bs_bl_sweep:{child_bot_id}")],
-            [InlineKeyboardButton(text="📂 Загрузить базу ЧС",   callback_data=f"bs_bl_upload:{child_bot_id}")],
+            [InlineKeyboardButton(text="📤 Экспортировать базу ЧС", callback_data=f"bs_bl_export:{child_bot_id}")],
             [InlineKeyboardButton(text="◀️ Назад",               callback_data=f"bs_base:{child_bot_id}")],
         ]),
     )
     await callback.answer()
+
+
+# ── Экспорт базы ЧС ───────────────────────────────────────────
+@router.callback_query(F.data.startswith("bs_bl_export:"))
+async def on_bs_bl_export(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    child_bot_id = int(callback.data.split(":")[1])
+    owner_id = platform_user["user_id"]
+
+    total = await db.fetchval(
+        "SELECT COUNT(*) FROM blacklist WHERE owner_id=$1", owner_id,
+    ) or 0
+
+    last_added = await db.fetchval(
+        "SELECT MAX(created_at) FROM blacklist WHERE owner_id=$1", owner_id,
+    )
+    week_ago_count = await db.fetchval(
+        "SELECT COUNT(*) FROM blacklist WHERE owner_id=$1 "
+        "AND created_at >= NOW() - INTERVAL '7 days'", owner_id,
+    ) or 0
+
+    last_str = last_added.strftime("%d.%m.%Y") if last_added else "—"
+
+    if total == 0:
+        await callback.message.edit_text(
+            "📤 <b>Экспорт базы ЧС</b>\n\n"
+            "⚠️ База ЧС пуста. Нечего экспортировать.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="◀️ Назад", callback_data=f"bs_blacklist:{child_bot_id}")],
+            ]),
+        )
+        await callback.answer()
+        return
+
+    await callback.message.edit_text(
+        "📤 <b>Экспорт базы ЧС</b>\n\n"
+        "<blockquote>Выгрузите базу для резервной копии или переноса "
+        "в другой бот/сервис.\n\n"
+        "CSV — полная база со всеми данными (user_id, username, причина, дата).\n"
+        "TXT — только ID и @username, по одному на строку — готово для импорта "
+        "в любой другой бот через «Загрузить базу ЧС».</blockquote>\n\n"
+        f"📊 Всего записей: <b>{total:,}</b>\n"
+        f"📅 Добавлено за 7 дней: <b>{week_ago_count:,}</b>\n"
+        f"🕐 Последнее добавление: <b>{last_str}</b>",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📥 Скачать CSV (полная база)",        callback_data=f"bs_bl_export_csv:{child_bot_id}")],
+            [InlineKeyboardButton(text="📋 Скачать TXT (для импорта в бот)",  callback_data=f"bs_bl_export_txt:{child_bot_id}")],
+            [InlineKeyboardButton(text="◀️ Назад",                            callback_data=f"bs_blacklist:{child_bot_id}")],
+        ]),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("bs_bl_export_csv:"))
+async def on_bs_bl_export_csv(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    import io, csv
+    from datetime import datetime
+    from aiogram.types import BufferedInputFile
+
+    owner_id = platform_user["user_id"]
+    child_bot_id = int(callback.data.split(":")[1])
+    await callback.answer("⏳ Формирую файл...", show_alert=False)
+
+    rows = await db.fetch(
+        "SELECT user_id, username, reason, created_at "
+        "FROM blacklist WHERE owner_id=$1 ORDER BY created_at DESC",
+        owner_id,
+    )
+
+    buf = io.StringIO()
+    w = csv.writer(buf, delimiter=";")
+    w.writerow(["user_id", "username", "reason", "added_at"])
+    for r in rows:
+        w.writerow([
+            r["user_id"] or "",
+            f"@{r['username']}" if r["username"] else "",
+            r["reason"] or "",
+            r["created_at"].strftime("%d.%m.%Y %H:%M") if r["created_at"] else "",
+        ])
+
+    date_str = datetime.now().strftime("%Y%m%d")
+    data = buf.getvalue().encode("utf-8-sig")
+    await callback.message.answer_document(
+        BufferedInputFile(data, filename=f"blacklist_{date_str}.csv"),
+        caption=(
+            f"📥 <b>Экспорт базы ЧС (CSV)</b>\n\n"
+            f"📊 Записей: <b>{len(rows):,}</b>\n"
+            "Формат: CSV, разделитель ; | Кодировка UTF-8 с BOM (совместимо с Excel)"
+        ),
+    )
+
+
+@router.callback_query(F.data.startswith("bs_bl_export_txt:"))
+async def on_bs_bl_export_txt(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    from datetime import datetime
+    from aiogram.types import BufferedInputFile
+
+    owner_id = platform_user["user_id"]
+    child_bot_id = int(callback.data.split(":")[1])
+    await callback.answer("⏳ Формирую файл...", show_alert=False)
+
+    rows = await db.fetch(
+        "SELECT user_id, username FROM blacklist WHERE owner_id=$1 ORDER BY created_at DESC",
+        owner_id,
+    )
+
+    lines = []
+    for r in rows:
+        if r["user_id"]:
+            lines.append(str(r["user_id"]))
+        elif r["username"]:
+            lines.append(f"@{r['username']}")
+
+    date_str = datetime.now().strftime("%Y%m%d")
+    data = "\n".join(lines).encode("utf-8")
+    await callback.message.answer_document(
+        BufferedInputFile(data, filename=f"blacklist_ids_{date_str}.txt"),
+        caption=(
+            f"📋 <b>Экспорт базы ЧС (TXT)</b>\n\n"
+            f"📊 Записей: <b>{len(lines):,}</b>\n"
+            "Формат: один ID или @username на строку — готово для импорта в другой бот"
+        ),
+    )
 
 
 # ── Загрузить базу ЧС ─────────────────────────────────────────

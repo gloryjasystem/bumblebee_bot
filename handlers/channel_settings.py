@@ -723,7 +723,10 @@ async def on_ch_msg_media(callback: CallbackQuery, state: FSMContext, platform_u
         )
         await callback.answer("🎬 Медиа удалено")
         ch = await _get_chat_by_id(platform_user["user_id"], int(chat_id_str))
-        await _show_msg_editor(callback, chat_id_str, msg_type, dict(ch), scope="ch")
+        # Только обновляем клавиатуру меню на месте, не отправляя новые сообщения
+        await callback.message.edit_reply_markup(
+            reply_markup=_build_editor_kb(chat_id_str, msg_type, dict(ch), scope="ch")
+        )
     else:
         # Запрашиваем медиа-файл
         await state.set_state(SettingsFSM.waiting_for_msg_media)
@@ -753,7 +756,10 @@ async def on_ch_msg_preview(callback: CallbackQuery, platform_user: dict | None)
     )
     await callback.answer(f"👁 Превью: {'да' if new_val else 'нет'}")
     ch = await _get_chat_by_id(platform_user["user_id"], int(chat_id_str))
-    await _show_msg_editor(callback, chat_id_str, msg_type, dict(ch), scope="ch")
+    # Только обновляем кнопки меню на месте—без новых сообщений
+    await callback.message.edit_reply_markup(
+        reply_markup=_build_editor_kb(chat_id_str, msg_type, dict(ch), scope="ch")
+    )
 
 
 @router.callback_query(F.data.startswith("ch_msg_timer:"))
@@ -775,7 +781,10 @@ async def on_ch_msg_timer(callback: CallbackQuery, platform_user: dict | None):
     )
     await callback.answer(f"⏱ Таймер: {_timer_label(new_val)}")
     ch = await _get_chat_by_id(platform_user["user_id"], int(chat_id_str))
-    await _show_msg_editor(callback, chat_id_str, msg_type, dict(ch), scope="ch")
+    # Только обновляем кнопки меню на месте—без новых сообщений
+    await callback.message.edit_reply_markup(
+        reply_markup=_build_editor_kb(chat_id_str, msg_type, dict(ch), scope="ch")
+    )
 
 
 @router.callback_query(F.data.startswith("ch_msg_del:"))
@@ -863,9 +872,9 @@ async def on_msg_buttons_input(message: Message, state: FSMContext):
         ch = await _get_chat_by_bot(owner_id, child_bot_id)
 
     await state.clear()
-    await message.answer(f"✅ Добавлено {len(buttons)} кнопок.")
+    # Отправляем только одно меню-сообщение с обновлёнными кнопками (без дублирования эхо)
     await message.answer(
-        f"<b>{_MSG_FIELDS[msg_type]['label']}</b>",
+        f"✅ Добавлено {len(buttons)} кнопок. <b>{_MSG_FIELDS[msg_type]['label']}</b>",
         reply_markup=_build_editor_kb(chat_id_str, msg_type, dict(ch) if ch else {}, scope),
         parse_mode="HTML",
     )
@@ -917,9 +926,9 @@ async def on_msg_media_input(message: Message, state: FSMContext):
         ch = await _get_chat_by_bot(owner_id, child_bot_id)
 
     await state.clear()
-    await message.answer("🎬 Медиа сохранено.")
+    # Отправляем только одно меню (без дублей эхо)
     await message.answer(
-        f"<b>{_MSG_FIELDS[msg_type]['label']}</b>",
+        f"🎬 Медиа сохранено. <b>{_MSG_FIELDS[msg_type]['label']}</b>",
         reply_markup=_build_editor_kb(chat_id_str, msg_type, dict(ch) if ch else {}, scope),
         parse_mode="HTML",
     )

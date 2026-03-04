@@ -29,10 +29,12 @@ class SettingsFSM(StatesGroup):
     # Капча
     waiting_for_captcha_text  = State()
     waiting_for_captcha_timer = State()
-    # Приветствие
+    # Приветствие / Прощание (базовый ввод текста и медиа)
     waiting_for_welcome_text  = State()
-    # Прощание
     waiting_for_farewell_text = State()
+    # Редактор сообщений: кнопки и медиа
+    waiting_for_msg_buttons   = State()
+    waiting_for_msg_media     = State()
     # ЧС: загрузка файлов (бот-уровень)
     bs_bl_waiting_add_file  = State()
     bs_bl_waiting_del_file  = State()
@@ -381,115 +383,565 @@ async def on_captcha_text_input(message: Message, state: FSMContext):
 
 
 
-# ── Приветствие ───────────────────────────────────────────────
+
+# ═══════════════════════════════════════════════════════════════
+# ПРОДВИНУТЫЙ РЕДАКТОР: Приветствие и Прощание
+# ═══════════════════════════════════════════════════════════════
+
+_MSG_FIELDS = {
+    "welcome": {
+        "label": "👋 Приветствие",
+        "text_col": "welcome_text",
+        "media_col": "welcome_media",
+        "media_type_col": "welcome_media_type",
+        "buttons_col": "welcome_buttons",
+        "preview_col": "welcome_preview",
+        "timer_col": "welcome_timer",
+    },
+    "farewell": {
+        "label": "🤚 Прощание",
+        "text_col": "farewell_text",
+        "media_col": "farewell_media",
+        "media_type_col": "farewell_media_type",
+        "buttons_col": "farewell_buttons",
+        "preview_col": "farewell_preview",
+        "timer_col": "farewell_timer",
+    },
+}
+
+_MSG_TIMER_CYCLE = [0, 5, 15, 30, 60, 120, 300]  # секунды
+
+import json as _json
+
+
+def _timer_label(v: int) -> str:
+    if not v:
+        return "0 сек"
+    if v < 60:
+        return f"{v} сек"
+    return f"{v // 60} мин"
+
+
+async def _get_chat_by_id(owner_id: int, chat_id: int):
+    return await db.fetchrow(
+        "SELECT * FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint",
+        owner_id, chat_id,
+    )
+
+
+async def _get_chat_by_bot(owner_id: int, child_bot_id: int):
+    return await db.fetchrow(
+        "SELECT * FROM bot_chats WHERE owner_id=$1 AND child_bot_id=$2 LIMIT 1",
+        owner_id, child_bot_id,
+    )
+
+
+def _build_editor_kb(chat_id_str: str, msg_type: str, ch: dict, scope: str = "ch") -> InlineKeyboardMarkup:
+    """Строим клавиатуру редактора (6 кнопок + Назад)."""
+    f = _MSG_FIELDS[msg_type]
+    buttons_raw = ch.get(f["buttons_col"])
+    media_fid = ch.get(f["media_col"])
+    preview_on = bool(ch.get(f["preview_col"], False))
+    timer_val = int(ch.get(f["timer_col"]) or 0)
+
+    media_label = "🎬 Медиа: ⬆️" if media_fid else "🎬 Медиа: нет"
+    preview_label = f"👁 Превью: {'да' if preview_on else 'нет'}"
+    timer_label_txt = f"⏱ Таймер: {_timer_label(timer_val)}"
+
+    pfx = f"{scope}_msg"  # ch_msg or bs_msg
+    back_cb = f"ch_messages:{chat_id_str}" if scope == "ch" else f"bs_messages:{chat_id_str}"
+
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✏️ Редактировать",  callback_data=f"{pfx}_edit:{chat_id_str}:{msg_type}")],
+        [InlineKeyboardButton(text="🎛 Кнопки",          callback_data=f"{pfx}_btns:{chat_id_str}:{msg_type}")],
+        [InlineKeyboardButton(text=media_label,           callback_data=f"{pfx}_media:{chat_id_str}:{msg_type}")],
+        [InlineKeyboardButton(text=preview_label,         callback_data=f"{pfx}_preview:{chat_id_str}:{msg_type}")],
+        [InlineKeyboardButton(text=timer_label_txt,       callback_data=f"{pfx}_timer:{chat_id_str}:{msg_type}")],
+        [InlineKeyboardButton(text="🗑 Удалить",          callback_data=f"{pfx}_del:{chat_id_str}:{msg_type}")],
+        [InlineKeyboardButton(text="◀️ Назад",            callback_data=back_cb)],
+    ])
+
+
+async def _show_msg_editor(callback: CallbackQuery, chat_id_str: str, msg_type: str,
+                            ch: dict, scope: str = "ch"):
+    """Экран редактора: сначала эхо текущего сообщения, затем меню."""
+    f = _MSG_FIELDS[msg_type]
+    label = f["label"]
+    text = ch.get(f["text_col"]) or ""
+    media_fid = ch.get(f["media_col"])
+    media_type = ch.get(f["media_type_col"])
+    buttons_raw = ch.get(f["buttons_col"])
+
+    # Строим reply_markup из сохранённых кнопок
+    inline_rows = []
+    if buttons_raw:
+        btns = buttons_raw if isinstance(buttons_raw, list) else _json.loads(buttons_raw)
+        for btn in btns:
+            inline_rows.append([InlineKeyboardButton(text=btn["text"], url=btn.get("url", ""))])
+
+    editor_kb = _build_editor_kb(chat_id_str, msg_type, ch, scope)
+
+    if not text and not media_fid:
+        # Сообщение ещё не задано — показываем приглашение ввести
+        await _show_msg_prompt(callback, chat_id_str, msg_type, scope)
+        return
+
+    # Отправляем эхо сообщения пользователю, затем меню
+    user_msg_kb = InlineKeyboardMarkup(inline_keyboard=inline_rows) if inline_rows else None
+
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
+
+    # Отправить эхо сообщения
+    if media_fid:
+        if media_type == "photo":
+            await callback.message.answer_photo(media_fid, caption=text or None,
+                                                reply_markup=user_msg_kb, parse_mode="HTML")
+        elif media_type == "video":
+            await callback.message.answer_video(media_fid, caption=text or None,
+                                                reply_markup=user_msg_kb, parse_mode="HTML")
+        elif media_type == "animation":
+            await callback.message.answer_animation(media_fid, caption=text or None,
+                                                    reply_markup=user_msg_kb, parse_mode="HTML")
+        else:
+            await callback.message.answer_document(media_fid, caption=text or None,
+                                                   reply_markup=user_msg_kb, parse_mode="HTML")
+    else:
+        await callback.message.answer(text, reply_markup=user_msg_kb,
+                                      parse_mode="HTML",
+                                      disable_web_page_preview=not bool(ch.get(f["preview_col"])))
+
+    # Отправить меню редактора под собщением
+    await callback.message.answer(
+        f"<b>{label}</b>",
+        reply_markup=editor_kb,
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+async def _show_msg_prompt(callback: CallbackQuery, chat_id_str: str, msg_type: str, scope: str = "ch"):
+    """Экран-приглашение ввести текст (скрин 2)."""
+    label = _MSG_FIELDS[msg_type]["label"]
+    emoji = "👋" if msg_type == "welcome" else "🤚"
+    subject = "новые подписчики при подаче заявки" if msg_type == "welcome" else "отписавшиеся участники"
+    back_cb = f"ch_messages:{chat_id_str}" if scope == "ch" else f"bs_messages:{chat_id_str}"
+
+    await callback.message.edit_text(
+        f"<b>{emoji} Пришлите сообщение, которое будут получать {subject}.</b>\n\n"
+        "<b>Переменные:</b>\n"
+        "├ Имя: <code>{name}</code>\n"
+        "├ ФИО: <code>{allname}</code>\n"
+        "├ Юзер: <code>{username}</code>\n"
+        "├ Площадка: <code>{chat}</code>\n"
+        "└ Текущая дата: <code>{day}</code>\n\n"
+        "ⓘ Можно прикрепить медиа.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="◀️ Отмена", callback_data=back_cb)],
+        ]),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+# ─────────────────────── Кнопка "Приветствие" ──────────────────────────
+
+
 @router.callback_query(F.data.startswith("welcome_set:"))
 async def on_welcome_set(callback: CallbackQuery, state: FSMContext, platform_user: dict | None):
     if not platform_user:
         return
-    chat_id = callback.data.split(":")[1]
-    await state.set_state(SettingsFSM.waiting_for_welcome_text)
-    await state.update_data(chat_id=int(chat_id), owner_id=platform_user["user_id"])
-
-    ch = await db.fetchrow(
-        "SELECT welcome_text FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint",
-        platform_user["user_id"], int(chat_id),
-    )
-    current = f"\n\nТекущий текст:\n<i>{ch['welcome_text'][:200]}</i>" if ch and ch.get("welcome_text") else ""
-
-    await callback.message.edit_text(
-        f"👋 <b>Приветствие</b>{current}\n\n"
-        "Отправьте новый текст приветствия.\n"
-        "Переменные: <code>{name}</code>, <code>{channel}</code>",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🗑 Удалить",  callback_data=f"welcome_del:{chat_id}")],
-            [InlineKeyboardButton(text="🚫 Отмена",   callback_data=f"ch_messages:{chat_id}")],
-        ]),
-    )
-    await callback.answer()
-
-
-@router.message(SettingsFSM.waiting_for_welcome_text)
-async def on_welcome_input(message: Message, state: FSMContext):
-    data = await state.get_data()
-    text = sanitize(message.text or message.caption or "", max_len=1024)
-    if data.get("mode") == "bot" and data.get("child_bot_id"):
-        await db.execute(
-            "UPDATE bot_chats SET welcome_text=$1 WHERE child_bot_id=$2 AND owner_id=$3",
-            text, data["child_bot_id"], data["owner_id"],
-        )
+    chat_id_str = callback.data.split(":")[1]
+    ch = await _get_chat_by_id(platform_user["user_id"], int(chat_id_str))
+    if ch and (ch.get("welcome_text") or ch.get("welcome_media")):
+        await _show_msg_editor(callback, chat_id_str, "welcome", dict(ch), scope="ch")
     else:
-        await db.execute(
-            "UPDATE bot_chats SET welcome_text=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
-            text, data["owner_id"], data["chat_id"],
-        )
-    await state.clear()
-    await message.answer("✅ Приветствие сохранено")
+        await state.set_state(SettingsFSM.waiting_for_welcome_text)
+        await state.update_data(chat_id=int(chat_id_str), owner_id=platform_user["user_id"],
+                                 msg_type="welcome", scope="ch")
+        await _show_msg_prompt(callback, chat_id_str, "welcome", scope="ch")
 
 
-@router.callback_query(F.data.startswith("welcome_del:"))
-async def on_welcome_del(callback: CallbackQuery, platform_user: dict | None):
-    if not platform_user:
-        return
-    chat_id = int(callback.data.split(":")[1])
-    await db.execute(
-        "UPDATE bot_chats SET welcome_text=NULL WHERE owner_id=$1 AND chat_id=$2::bigint",
-        platform_user["user_id"], chat_id,
-    )
-    await callback.answer("✅ Приветствие удалено")
-    callback.data = f"ch_messages:{chat_id}"
-    await on_messages_menu(callback, platform_user)
-
-
-# ── Прощание ─────────────────────────────────────────────────
 @router.callback_query(F.data.startswith("farewell_set:"))
 async def on_farewell_set(callback: CallbackQuery, state: FSMContext, platform_user: dict | None):
     if not platform_user:
         return
-    chat_id = callback.data.split(":")[1]
-    await state.set_state(SettingsFSM.waiting_for_farewell_text)
-    await state.update_data(chat_id=int(chat_id), owner_id=platform_user["user_id"])
-    await callback.message.edit_text(
-        "👋 <b>Прощание</b>\n\n"
-        "Сообщение при отписке (отправляется в личку).\n"
-        "Переменные: <code>{name}</code>, <code>{channel}</code>",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🗑 Удалить",  callback_data=f"farewell_del:{chat_id}")],
-            [InlineKeyboardButton(text="🚫 Отмена",   callback_data=f"ch_messages:{chat_id}")],
-        ]),
+    chat_id_str = callback.data.split(":")[1]
+    ch = await _get_chat_by_id(platform_user["user_id"], int(chat_id_str))
+    if ch and (ch.get("farewell_text") or ch.get("farewell_media")):
+        await _show_msg_editor(callback, chat_id_str, "farewell", dict(ch), scope="ch")
+    else:
+        await state.set_state(SettingsFSM.waiting_for_farewell_text)
+        await state.update_data(chat_id=int(chat_id_str), owner_id=platform_user["user_id"],
+                                 msg_type="farewell", scope="ch")
+        await _show_msg_prompt(callback, chat_id_str, "farewell", scope="ch")
+
+
+# ─────────────────────── FSM: ввод текста ──────────────────────────
+
+
+async def _handle_msg_input(message: Message, state: FSMContext):
+    """Общий обработчик ввода текста/медиа для приветствия и прощания."""
+    data = await state.get_data()
+    owner_id = data["owner_id"]
+    msg_type = data.get("msg_type", "welcome")
+    scope = data.get("scope", "ch")
+    f = _MSG_FIELDS[msg_type]
+
+    text = sanitize(message.text or message.caption or "", max_len=1024)
+
+    # Определяем media
+    media_fid = None
+    media_type = None
+    if message.photo:
+        media_fid = message.photo[-1].file_id
+        media_type = "photo"
+    elif message.video:
+        media_fid = message.video.file_id
+        media_type = "video"
+    elif message.animation:
+        media_fid = message.animation.file_id
+        media_type = "animation"
+    elif message.document:
+        media_fid = message.document.file_id
+        media_type = "document"
+
+    if scope == "ch":
+        chat_id = data["chat_id"]
+        await db.execute(
+            f"UPDATE bot_chats SET {f['text_col']}=$1, {f['media_col']}=$2, {f['media_type_col']}=$3 "
+            "WHERE owner_id=$4 AND chat_id=$5::bigint",
+            text or None, media_fid, media_type, owner_id, chat_id,
+        )
+        chat_id_str = str(chat_id)
+    else:
+        child_bot_id = data["child_bot_id"]
+        await db.execute(
+            f"UPDATE bot_chats SET {f['text_col']}=$1, {f['media_col']}=$2, {f['media_type_col']}=$3 "
+            "WHERE child_bot_id=$4 AND owner_id=$5",
+            text or None, media_fid, media_type, child_bot_id, owner_id,
+        )
+        chat_id_str = str(child_bot_id)
+
+    await state.clear()
+
+    ch = await (
+        _get_chat_by_id(owner_id, int(chat_id_str))
+        if scope == "ch"
+        else _get_chat_by_bot(owner_id, int(chat_id_str))
     )
-    await callback.answer()
+
+    label = _MSG_FIELDS[msg_type]["label"]
+    # Отправить эхо сообщения
+    if media_fid:
+        if media_type == "photo":
+            await message.answer_photo(media_fid, caption=text or None, parse_mode="HTML")
+        elif media_type == "video":
+            await message.answer_video(media_fid, caption=text or None, parse_mode="HTML")
+        elif media_type == "animation":
+            await message.answer_animation(media_fid, caption=text or None, parse_mode="HTML")
+        else:
+            await message.answer_document(media_fid, caption=text or None, parse_mode="HTML")
+    else:
+        await message.answer(text, parse_mode="HTML")
+
+    # Меню редактора
+    await message.answer(
+        f"<b>{label}</b>",
+        reply_markup=_build_editor_kb(chat_id_str, msg_type, dict(ch) if ch else {}, scope),
+        parse_mode="HTML",
+    )
+
+
+@router.message(SettingsFSM.waiting_for_welcome_text)
+async def on_welcome_input(message: Message, state: FSMContext):
+    await _handle_msg_input(message, state)
 
 
 @router.message(SettingsFSM.waiting_for_farewell_text)
 async def on_farewell_input(message: Message, state: FSMContext):
-    data = await state.get_data()
-    text = sanitize(message.text or "", max_len=512)
-    if data.get("mode") == "bot" and data.get("child_bot_id"):
+    await _handle_msg_input(message, state)
+
+
+# ─────────────────────── ch_msg_* actions ──────────────────────────
+
+
+@router.callback_query(F.data.startswith("ch_msg_edit:"))
+async def on_ch_msg_edit(callback: CallbackQuery, state: FSMContext, platform_user: dict | None):
+    if not platform_user:
+        return
+    _, chat_id_str, msg_type = callback.data.split(":")
+    await state.set_state(
+        SettingsFSM.waiting_for_welcome_text if msg_type == "welcome"
+        else SettingsFSM.waiting_for_farewell_text
+    )
+    await state.update_data(chat_id=int(chat_id_str), owner_id=platform_user["user_id"],
+                             msg_type=msg_type, scope="ch")
+    await _show_msg_prompt(callback, chat_id_str, msg_type, scope="ch")
+
+
+@router.callback_query(F.data.startswith("ch_msg_btns:"))
+async def on_ch_msg_btns(callback: CallbackQuery, state: FSMContext, platform_user: dict | None):
+    if not platform_user:
+        return
+    _, chat_id_str, msg_type = callback.data.split(":")
+    await state.set_state(SettingsFSM.waiting_for_msg_buttons)
+    await state.update_data(chat_id=int(chat_id_str), owner_id=platform_user["user_id"],
+                             msg_type=msg_type, scope="ch")
+    await callback.message.edit_text(
+        "🎛 <b>Кнопки под сообщением</b>\n\n"
+        "Отправьте список кнопок в формате:\n"
+        "<code>Текст кнопки — https://ссылка.com</code>\n\n"
+        "Каждая кнопка на новой строке. Пример:\n"
+        "<code>📢 Наш канал — https://t.me/channel\n"
+        "🌐 Сайт — https://site.com</code>",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="◀️ Отмена", callback_data=f"ch_msg_back:{chat_id_str}:{msg_type}")],
+        ]),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("ch_msg_media:"))
+async def on_ch_msg_media(callback: CallbackQuery, state: FSMContext, platform_user: dict | None):
+    if not platform_user:
+        return
+    _, chat_id_str, msg_type = callback.data.split(":")
+    f = _MSG_FIELDS[msg_type]
+    ch = await _get_chat_by_id(platform_user["user_id"], int(chat_id_str))
+    has_media = ch and ch.get(f["media_col"])
+
+    if has_media:
+        # Удаляем медиа
         await db.execute(
-            "UPDATE bot_chats SET farewell_text=$1 WHERE child_bot_id=$2 AND owner_id=$3",
-            text, data["child_bot_id"], data["owner_id"],
+            f"UPDATE bot_chats SET {f['media_col']}=NULL, {f['media_type_col']}=NULL "
+            "WHERE owner_id=$1 AND chat_id=$2::bigint",
+            platform_user["user_id"], int(chat_id_str),
         )
+        await callback.answer("🎬 Медиа удалено")
+        ch = await _get_chat_by_id(platform_user["user_id"], int(chat_id_str))
+        await _show_msg_editor(callback, chat_id_str, msg_type, dict(ch), scope="ch")
     else:
-        await db.execute(
-            "UPDATE bot_chats SET farewell_text=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
-            text, data["owner_id"], data["chat_id"],
+        # Запрашиваем медиа-файл
+        await state.set_state(SettingsFSM.waiting_for_msg_media)
+        await state.update_data(chat_id=int(chat_id_str), owner_id=platform_user["user_id"],
+                                 msg_type=msg_type, scope="ch")
+        await callback.message.edit_text(
+            "🎬 <b>Медиа</b>\n\nОтправьте фото, видео или GIF:",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="◀️ Отмена", callback_data=f"ch_msg_back:{chat_id_str}:{msg_type}")],
+            ]),
+            parse_mode="HTML",
         )
+        await callback.answer()
+
+
+@router.callback_query(F.data.startswith("ch_msg_preview:"))
+async def on_ch_msg_preview(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    _, chat_id_str, msg_type = callback.data.split(":")
+    f = _MSG_FIELDS[msg_type]
+    ch = await _get_chat_by_id(platform_user["user_id"], int(chat_id_str))
+    new_val = not bool(ch.get(f["preview_col"], False) if ch else False)
+    await db.execute(
+        f"UPDATE bot_chats SET {f['preview_col']}=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
+        new_val, platform_user["user_id"], int(chat_id_str),
+    )
+    await callback.answer(f"👁 Превью: {'да' if new_val else 'нет'}")
+    ch = await _get_chat_by_id(platform_user["user_id"], int(chat_id_str))
+    await _show_msg_editor(callback, chat_id_str, msg_type, dict(ch), scope="ch")
+
+
+@router.callback_query(F.data.startswith("ch_msg_timer:"))
+async def on_ch_msg_timer(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    _, chat_id_str, msg_type = callback.data.split(":")
+    f = _MSG_FIELDS[msg_type]
+    ch = await _get_chat_by_id(platform_user["user_id"], int(chat_id_str))
+    cur = int(ch.get(f["timer_col"]) or 0 if ch else 0)
+    try:
+        idx = _MSG_TIMER_CYCLE.index(cur)
+    except ValueError:
+        idx = 0
+    new_val = _MSG_TIMER_CYCLE[(idx + 1) % len(_MSG_TIMER_CYCLE)]
+    await db.execute(
+        f"UPDATE bot_chats SET {f['timer_col']}=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
+        new_val, platform_user["user_id"], int(chat_id_str),
+    )
+    await callback.answer(f"⏱ Таймер: {_timer_label(new_val)}")
+    ch = await _get_chat_by_id(platform_user["user_id"], int(chat_id_str))
+    await _show_msg_editor(callback, chat_id_str, msg_type, dict(ch), scope="ch")
+
+
+@router.callback_query(F.data.startswith("ch_msg_del:"))
+async def on_ch_msg_del(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    _, chat_id_str, msg_type = callback.data.split(":")
+    f = _MSG_FIELDS[msg_type]
+    await db.execute(
+        f"UPDATE bot_chats SET {f['text_col']}=NULL, {f['media_col']}=NULL, "
+        f"{f['media_type_col']}=NULL, {f['buttons_col']}=NULL "
+        "WHERE owner_id=$1 AND chat_id=$2::bigint",
+        platform_user["user_id"], int(chat_id_str),
+    )
+    await callback.answer("🗑 Удалено")
+    callback.data = f"ch_messages:{chat_id_str}"
+    from handlers.messages import _show_ch_messages
+    await _show_ch_messages(callback, int(chat_id_str), platform_user["user_id"])
+
+
+@router.callback_query(F.data.startswith("ch_msg_back:"))
+async def on_ch_msg_back(callback: CallbackQuery, state: FSMContext, platform_user: dict | None):
+    if not platform_user:
+        return
     await state.clear()
-    await message.answer("✅ Прощание сохранено")
+    _, chat_id_str, msg_type = callback.data.split(":")
+    ch = await _get_chat_by_id(platform_user["user_id"], int(chat_id_str))
+    if ch and (ch.get(_MSG_FIELDS[msg_type]["text_col"]) or ch.get(_MSG_FIELDS[msg_type]["media_col"])):
+        await _show_msg_editor(callback, chat_id_str, msg_type, dict(ch), scope="ch")
+    else:
+        callback.data = f"ch_messages:{chat_id_str}"
+        from handlers.messages import _show_ch_messages
+        await _show_ch_messages(callback, int(chat_id_str), platform_user["user_id"])
+
+
+# ─────────────────────── FSM: кнопки и медиа ──────────────────────────
+
+
+@router.message(SettingsFSM.waiting_for_msg_buttons)
+async def on_msg_buttons_input(message: Message, state: FSMContext):
+    data = await state.get_data()
+    owner_id = data["owner_id"]
+    msg_type = data.get("msg_type", "welcome")
+    scope = data.get("scope", "ch")
+    f = _MSG_FIELDS[msg_type]
+
+    raw = sanitize(message.text or "", max_len=2048)
+    buttons = []
+    for line in raw.splitlines():
+        line = line.strip()
+        if "—" in line:
+            parts = line.split("—", 1)
+        elif "-" in line:
+            parts = line.split("-", 1)
+        else:
+            continue
+        btn_text = parts[0].strip()
+        btn_url = parts[1].strip()
+        if btn_text and btn_url.startswith("http"):
+            buttons.append({"text": btn_text, "url": btn_url})
+
+    if not buttons:
+        await message.answer(
+            "⚠️ Не удалось распознать кнопки. Формат: <code>Текст — https://ссылка</code>",
+            parse_mode="HTML",
+        )
+        return
+
+    buttons_json = _json.dumps(buttons, ensure_ascii=False)
+    if scope == "ch":
+        chat_id = data["chat_id"]
+        await db.execute(
+            f"UPDATE bot_chats SET {f['buttons_col']}=$1::jsonb WHERE owner_id=$2 AND chat_id=$3::bigint",
+            buttons_json, owner_id, chat_id,
+        )
+        chat_id_str = str(chat_id)
+        ch = await _get_chat_by_id(owner_id, chat_id)
+    else:
+        child_bot_id = data["child_bot_id"]
+        await db.execute(
+            f"UPDATE bot_chats SET {f['buttons_col']}=$1::jsonb WHERE child_bot_id=$2 AND owner_id=$3",
+            buttons_json, child_bot_id, owner_id,
+        )
+        chat_id_str = str(child_bot_id)
+        ch = await _get_chat_by_bot(owner_id, child_bot_id)
+
+    await state.clear()
+    await message.answer(f"✅ Добавлено {len(buttons)} кнопок.")
+    await message.answer(
+        f"<b>{_MSG_FIELDS[msg_type]['label']}</b>",
+        reply_markup=_build_editor_kb(chat_id_str, msg_type, dict(ch) if ch else {}, scope),
+        parse_mode="HTML",
+    )
+
+
+@router.message(SettingsFSM.waiting_for_msg_media)
+async def on_msg_media_input(message: Message, state: FSMContext):
+    data = await state.get_data()
+    owner_id = data["owner_id"]
+    msg_type = data.get("msg_type", "welcome")
+    scope = data.get("scope", "ch")
+    f = _MSG_FIELDS[msg_type]
+
+    media_fid = None
+    media_type = None
+    if message.photo:
+        media_fid = message.photo[-1].file_id
+        media_type = "photo"
+    elif message.video:
+        media_fid = message.video.file_id
+        media_type = "video"
+    elif message.animation:
+        media_fid = message.animation.file_id
+        media_type = "animation"
+    elif message.document:
+        media_fid = message.document.file_id
+        media_type = "document"
+    else:
+        await message.answer("⚠️ Поддерживаются: фото, видео, GIF, документ.")
+        return
+
+    if scope == "ch":
+        chat_id = data["chat_id"]
+        await db.execute(
+            f"UPDATE bot_chats SET {f['media_col']}=$1, {f['media_type_col']}=$2 "
+            "WHERE owner_id=$3 AND chat_id=$4::bigint",
+            media_fid, media_type, owner_id, chat_id,
+        )
+        chat_id_str = str(chat_id)
+        ch = await _get_chat_by_id(owner_id, chat_id)
+    else:
+        child_bot_id = data["child_bot_id"]
+        await db.execute(
+            f"UPDATE bot_chats SET {f['media_col']}=$1, {f['media_type_col']}=$2 "
+            "WHERE child_bot_id=$3 AND owner_id=$4",
+            media_fid, media_type, child_bot_id, owner_id,
+        )
+        chat_id_str = str(child_bot_id)
+        ch = await _get_chat_by_bot(owner_id, child_bot_id)
+
+    await state.clear()
+    await message.answer("🎬 Медиа сохранено.")
+    await message.answer(
+        f"<b>{_MSG_FIELDS[msg_type]['label']}</b>",
+        reply_markup=_build_editor_kb(chat_id_str, msg_type, dict(ch) if ch else {}, scope),
+        parse_mode="HTML",
+    )
+
+
+# Legacy-обработчики для удаления (сохранены для обратной совместимости колбэков)
+@router.callback_query(F.data.startswith("welcome_del:"))
+async def on_welcome_del(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    chat_id_str = callback.data.split(":")[1]
+    callback.data = f"ch_msg_del:{chat_id_str}:welcome"
+    await on_ch_msg_del(callback, platform_user)
 
 
 @router.callback_query(F.data.startswith("farewell_del:"))
 async def on_farewell_del(callback: CallbackQuery, platform_user: dict | None):
     if not platform_user:
         return
-    chat_id = int(callback.data.split(":")[1])
-    await db.execute(
-        "UPDATE bot_chats SET farewell_text=NULL WHERE owner_id=$1 AND chat_id=$2::bigint",
-        platform_user["user_id"], chat_id,
-    )
-    await callback.answer("✅ Прощание удалено")
-    callback.data = f"ch_messages:{chat_id}"
-    await on_messages_menu(callback, platform_user)
+    chat_id_str = callback.data.split(":")[1]
+    callback.data = f"ch_msg_del:{chat_id_str}:farewell"
+    await on_ch_msg_del(callback, platform_user)
 
 
 # ══════════════════════════════════════════════════════════════

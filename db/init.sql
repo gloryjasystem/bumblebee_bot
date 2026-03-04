@@ -251,3 +251,14 @@ CREATE TABLE IF NOT EXISTS payments (
 );
 CREATE INDEX IF NOT EXISTS idx_payments_user ON payments(user_id);
 CREATE INDEX IF NOT EXISTS idx_payments_status ON payments(status);
+
+-- Расширенный редактор приветствий и прощаний
+ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS welcome_media_type  VARCHAR(16);   -- photo | video | animation | NULL
+ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS welcome_buttons      JSONB;         -- [{text, url}, ...]
+ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS welcome_preview      BOOLEAN DEFAULT FALSE;
+ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS welcome_timer        INTEGER DEFAULT 0;  -- секунды; 0 = не удалять
+ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS farewell_media       TEXT;          -- file_id
+ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS farewell_media_type  VARCHAR(16);
+ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS farewell_buttons     JSONB;
+ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS farewell_preview     BOOLEAN DEFAULT FALSE;
+ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS farewell_timer       INTEGER DEFAULT 0;

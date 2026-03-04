@@ -1643,9 +1643,9 @@ async def on_bs_blacklist(callback: CallbackQuery, platform_user: dict | None):
         "⛔️ <b>ЧС пользователей</b>\n\n"
         f"🔢 Записей в базе ЧС: {count:,}",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="📂 Загрузить базу ЧС",   callback_data=f"bs_bl_upload:{child_bot_id}")],
-            [InlineKeyboardButton(text="🔍 Найти нарушителей",    callback_data=f"bs_bl_sweep:{child_bot_id}")],
             [InlineKeyboardButton(text="⚙️ Управлять базой ЧС",  callback_data=f"bs_bl_manage:{child_bot_id}")],
+            [InlineKeyboardButton(text="🔍 Найти нарушителей",    callback_data=f"bs_bl_sweep:{child_bot_id}")],
+            [InlineKeyboardButton(text="📂 Загрузить базу ЧС",   callback_data=f"bs_bl_upload:{child_bot_id}")],
             [InlineKeyboardButton(text="◀️ Назад",               callback_data=f"bs_base:{child_bot_id}")],
         ]),
     )

@@ -1787,17 +1787,19 @@ async def _show_bs_protection(callback: CallbackQuery, platform_user: dict, chil
     if not ch:
         await callback.answer("Нет активных площадок", show_alert=True)
         return
-    rtl      = "✅" if ch.get("filter_rtl")       else "☐"
-    hiero    = "✅" if ch.get("filter_hieroglyph") else "☐"
-    no_photo = "✅" if ch.get("filter_no_photo")   else "☐"
+    rtl      = "🔵" if ch.get("filter_rtl")        else "⚫"
+    hiero    = "🔵" if ch.get("filter_hieroglyph")  else "⚫"
+    no_photo = "🔵" if ch.get("filter_no_photo")    else "⚫"
     await callback.message.edit_text(
         "🛡 <b>Защита</b> (все площадки)\n\nФильтры применяются ко всем каналам бота.",
+        parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=f"{rtl} Фильтр RTL-имён",       callback_data=f"bs_filter_rtl:{child_bot_id}")],
-            [InlineKeyboardButton(text=f"{hiero} Фильтр иероглифов",    callback_data=f"bs_filter_hier:{child_bot_id}")],
-            [InlineKeyboardButton(text=f"{no_photo} Фильтр без фото",   callback_data=f"bs_filter_photo:{child_bot_id}")],
-            [InlineKeyboardButton(text="🌍 Языковые фильтры",            callback_data=f"bs_lang_filters:{child_bot_id}")],
-            [InlineKeyboardButton(text="◀️ Назад",                       callback_data=f"bot_settings:{child_bot_id}")],
+            [InlineKeyboardButton(text="🔴 Лимиты",                    callback_data=f"bs_limits:{child_bot_id}")],
+            [InlineKeyboardButton(text="⬛ Фильтр по языкам",           callback_data=f"bs_lang_filters:{child_bot_id}")],
+            [InlineKeyboardButton(text=f"{rtl} RTL-символы в имени",   callback_data=f"bs_filter_rtl:{child_bot_id}")],
+            [InlineKeyboardButton(text=f"{hiero} Иероглифы в имени",   callback_data=f"bs_filter_hier:{child_bot_id}")],
+            [InlineKeyboardButton(text=f"{no_photo} Аккаунты без фото",callback_data=f"bs_filter_photo:{child_bot_id}")],
+            [InlineKeyboardButton(text="◀️ Назад",                     callback_data=f"bot_settings:{child_bot_id}")],
         ]),
     )
     await callback.answer()
@@ -1808,6 +1810,47 @@ async def on_bs_protection(callback: CallbackQuery, platform_user: dict | None):
     if not platform_user:
         return
     await _show_bs_protection(callback, platform_user, int(callback.data.split(":")[1]))
+
+
+@router.callback_query(F.data.startswith("bs_limits:"))
+async def on_bs_limits(callback: CallbackQuery, platform_user: dict | None):
+    """Экран Лимитов для child-bot (берём первую площадку бота)."""
+    if not platform_user:
+        return
+    child_bot_id = int(callback.data.split(":")[1])
+    owner_id = platform_user["user_id"]
+    ch = await _get_bot_first_chat(owner_id, child_bot_id)
+    if not ch:
+        await callback.answer("Нет активных площадок", show_alert=True)
+        return
+    lk = dict(ch)
+    # Показываем тот же экран лимитов, но Назад ведёт к bs_protection
+    from handlers.channel_settings import kb_limits
+    enabled    = lk.get("join_limit_enabled") or False
+    punishment = lk.get("join_limit_punishment") or "kick"
+    period     = int(lk.get("join_limit_period_min") or 1)
+    limit      = int(lk.get("join_limit_count") or 50)
+    probe_label = "🔍 Проверка: вкл" if enabled else "🔍 Проверка: выкл"
+    pun_label   = {"kick": "🏆 Наказание: Кик", "ban": "🏆 Наказание: Бан"}.get(punishment, "🏆 Наказание: Кик")
+    time_label  = f"⏱ Время: за {period} мин." if period != 1 else "⏱ Время: за 1 минуту"
+    limit_label = f"🔴 Лимит на вступление: ≥ {limit}"
+    chat_id     = lk["chat_id"]
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=probe_label,  callback_data=f"lim_probe:{chat_id}")],
+        [InlineKeyboardButton(text=pun_label,    callback_data=f"lim_pun:{chat_id}")],
+        [InlineKeyboardButton(text=time_label,   callback_data=f"lim_time:{chat_id}")],
+        [InlineKeyboardButton(text=limit_label,  callback_data=f"lim_count:{chat_id}")],
+        [InlineKeyboardButton(text="◀️ Назад",   callback_data=f"bs_protection:{child_bot_id}")],
+    ])
+    await callback.message.edit_text(
+        "🔄 <b>Лимит</b>\n\n"
+        "<i>Установите лимит на количество вступлений в течении определённого времени.</i>\n\n"
+        "ⓘ При <u>превышении лимита</u>, бот пришлёт уведомление.",
+        parse_mode="HTML",
+        reply_markup=kb,
+    )
+    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("bs_filter_rtl:"))

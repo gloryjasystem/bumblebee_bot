@@ -206,19 +206,78 @@ async def _delayed_approve(event: ChatJoinRequest, owner_id: int, delay_minutes:
 # ── Вспомогательные функции ───────────────────────────────────
 async def _register_user(owner_id: int, chat_id: int, user,
                           invite_link=None):
-    """Сохраняет пользователя в bot_users."""
+    """
+    Сохраняет пользователя в bot_users и обновляет детальную статистику
+    ссылки-приглашения в invite_links.
+    """
+    from services.security import detect_rtl, detect_hieroglyph
+    import json
+
     full_name = f"{user.first_name or ''} {user.last_name or ''}".strip()
+    has_rtl       = detect_rtl(full_name)
+    has_hieroglyph = detect_hieroglyph(full_name)
+    is_premium    = bool(getattr(user, "is_premium", False))
+
+    # Страна по language_code (приблизительно)
+    LANG_TO_COUNTRY = {
+        "ru": "RU", "uk": "UA", "be": "BY", "kk": "KZ",
+        "en": "US", "de": "DE", "fr": "FR", "es": "ES",
+        "it": "IT", "pt": "BR", "zh": "CN", "ar": "AR",
+        "tr": "TR", "pl": "PL", "nl": "NL", "sv": "SE",
+        "da": "DK", "fi": "FI", "no": "NO", "cs": "CZ",
+        "ro": "RO", "hu": "HU", "bg": "BG", "hr": "HR",
+        "sk": "SK", "sl": "SL", "lt": "LT", "lv": "LV",
+        "et": "EE", "fa": "IR", "he": "IL", "hi": "IN",
+        "id": "ID", "ms": "MY", "th": "TH", "vi": "VN",
+        "ko": "KR", "ja": "JP",
+    }
+    country_code = LANG_TO_COUNTRY.get(
+        (user.language_code or "").split("-")[0].lower()
+    )
+
     link_id = None
     if invite_link:
         row = await db.fetchrow(
-            "SELECT id FROM invite_links WHERE owner_id=$1 AND link=$2",
-            owner_id, invite_link.invite_link,
+            "SELECT id FROM invite_links WHERE link=$1",
+            invite_link.invite_link,
         )
         if row:
             link_id = row["id"]
-            await db.execute(
-                "UPDATE invite_links SET joined=joined+1 WHERE id=$1", link_id
-            )
+
+            # Обновляем базовый счётчик + детальную статистику
+            # Страны: читаем текущий JSONB, обновляем и записываем обратно
+            if country_code:
+                await db.execute(
+                    """
+                    UPDATE invite_links SET
+                        joined      = joined + 1,
+                        rtl_count   = rtl_count + $2::int,
+                        hieroglyph_count = hieroglyph_count + $3::int,
+                        premium_count    = premium_count + $4::int,
+                        countries   = jsonb_set(
+                            COALESCE(countries, '{}'),
+                            ARRAY[$5],
+                            (COALESCE(countries->$5, '0')::int + 1)::text::jsonb
+                        )
+                    WHERE id = $1
+                    """,
+                    link_id,
+                    int(has_rtl), int(has_hieroglyph), int(is_premium),
+                    country_code,
+                )
+            else:
+                await db.execute(
+                    """
+                    UPDATE invite_links SET
+                        joined      = joined + 1,
+                        rtl_count   = rtl_count + $2::int,
+                        hieroglyph_count = hieroglyph_count + $3::int,
+                        premium_count    = premium_count + $4::int
+                    WHERE id = $1
+                    """,
+                    link_id,
+                    int(has_rtl), int(has_hieroglyph), int(is_premium),
+                )
 
     await db.execute(
         """
@@ -235,8 +294,8 @@ async def _register_user(owner_id: int, chat_id: int, user,
         owner_id, chat_id, user.id,
         user.username, user.first_name,
         user.language_code,
-        getattr(user, "is_premium", False),
-        detect_rtl(full_name), detect_hieroglyph(full_name),
+        is_premium,
+        has_rtl, has_hieroglyph,
         link_id,
     )
 

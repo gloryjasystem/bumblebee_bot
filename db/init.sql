@@ -252,7 +252,6 @@ CREATE TABLE IF NOT EXISTS payments (
 CREATE INDEX IF NOT EXISTS idx_payments_user ON payments(user_id);
 CREATE INDEX IF NOT EXISTS idx_payments_status ON payments(status);
 
--- Расширенный редактор приветствий и прощаний
 ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS welcome_media_type  VARCHAR(16);   -- photo | video | animation | NULL
 ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS welcome_buttons      JSONB;         -- [{text, url}, ...]
 ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS welcome_preview      BOOLEAN DEFAULT FALSE;
@@ -262,3 +261,12 @@ ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS farewell_media_type  VARCHAR(16);
 ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS farewell_buttons     JSONB;
 ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS farewell_preview     BOOLEAN DEFAULT FALSE;
 ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS farewell_timer       INTEGER DEFAULT 0;
+
+-- Расширенная статистика для ссылок-приглашений
+ALTER TABLE invite_links ADD COLUMN IF NOT EXISTS males             INTEGER DEFAULT 0;
+ALTER TABLE invite_links ADD COLUMN IF NOT EXISTS females           INTEGER DEFAULT 0;
+ALTER TABLE invite_links ADD COLUMN IF NOT EXISTS rtl_count         INTEGER DEFAULT 0;   -- RTL-символы в имени
+ALTER TABLE invite_links ADD COLUMN IF NOT EXISTS hieroglyph_count  INTEGER DEFAULT 0;   -- Иероглифы в имени
+ALTER TABLE invite_links ADD COLUMN IF NOT EXISTS premium_count     INTEGER DEFAULT 0;   -- Telegram Premium
+ALTER TABLE invite_links ADD COLUMN IF NOT EXISTS countries         JSONB DEFAULT '{}';  -- {"RU": 5, "UA": 3}
+ALTER TABLE invite_links ADD COLUMN IF NOT EXISTS auto_accept       VARCHAR(16) DEFAULT 'base'; -- base | off | instant

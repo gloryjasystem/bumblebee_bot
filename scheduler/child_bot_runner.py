@@ -295,19 +295,85 @@ async def _handle_chat_member(bot: Bot, child_bot_id: int, event: ChatMemberUpda
 
     # ── Пользователь вступил ──────────────────────────────────
     if new_status == "member" and old_status in (None, "left", "kicked"):
+        from services.security import detect_rtl, detect_hieroglyph
+
+        full_name = f"{user.first_name or ''} {user.last_name or ''}".strip()
+        has_rtl        = detect_rtl(full_name)
+        has_hieroglyph = detect_hieroglyph(full_name)
+        is_premium     = bool(getattr(user, "is_premium", False))
+
+        LANG_TO_COUNTRY = {
+            "ru": "RU", "uk": "UA", "be": "BY", "kk": "KZ",
+            "en": "US", "de": "DE", "fr": "FR", "es": "ES",
+            "it": "IT", "pt": "BR", "zh": "CN", "ar": "AR",
+            "tr": "TR", "pl": "PL", "nl": "NL", "sv": "SE",
+            "da": "DK", "fi": "FI", "no": "NO", "cs": "CZ",
+            "ro": "RO", "hu": "HU", "bg": "BG",
+            "fa": "IR", "he": "IL", "hi": "IN",
+            "id": "ID", "ms": "MY", "th": "TH", "vi": "VN",
+            "ko": "KR", "ja": "JP",
+        }
+        country_code = LANG_TO_COUNTRY.get(
+            (user.language_code or "").split("-")[0].lower()
+        )
+
+        # Ищем ссылку по invite_link из события
+        link_id = None
+        if event.invite_link:
+            row = await db.fetchrow(
+                "SELECT id FROM invite_links WHERE link=$1",
+                event.invite_link.invite_link,
+            )
+            if row:
+                link_id = row["id"]
+                if country_code:
+                    await db.execute(
+                        """
+                        UPDATE invite_links SET
+                            joined           = joined + 1,
+                            rtl_count        = rtl_count + $2::int,
+                            hieroglyph_count = hieroglyph_count + $3::int,
+                            premium_count    = premium_count + $4::int,
+                            countries        = jsonb_set(
+                                COALESCE(countries, '{}'),
+                                ARRAY[$5],
+                                (COALESCE(countries->$5, '0')::int + 1)::text::jsonb
+                            )
+                        WHERE id = $1
+                        """,
+                        link_id,
+                        int(has_rtl), int(has_hieroglyph), int(is_premium),
+                        country_code,
+                    )
+                else:
+                    await db.execute(
+                        """
+                        UPDATE invite_links SET
+                            joined           = joined + 1,
+                            rtl_count        = rtl_count + $2::int,
+                            hieroglyph_count = hieroglyph_count + $3::int,
+                            premium_count    = premium_count + $4::int
+                        WHERE id = $1
+                        """,
+                        link_id,
+                        int(has_rtl), int(has_hieroglyph), int(is_premium),
+                    )
+
         await db.execute(
             """
             INSERT INTO bot_users (owner_id, chat_id, user_id, username, first_name,
-                                   language_code, is_premium, joined_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, now())
+                                   language_code, is_premium, has_rtl, has_hieroglyph,
+                                   joined_via_link_id, joined_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now())
             ON CONFLICT (owner_id, chat_id, user_id) DO UPDATE
                 SET is_active=true, left_at=NULL,
                     username=EXCLUDED.username,
-                    first_name=EXCLUDED.first_name
+                    first_name=EXCLUDED.first_name,
+                    joined_via_link_id=EXCLUDED.joined_via_link_id
             """,
             owner_id, chat_id, user.id,
             user.username, user.first_name, user.language_code,
-            getattr(user, "is_premium", False),
+            is_premium, has_rtl, has_hieroglyph, link_id,
         )
         logger.info(f"[MEMBER] User {user.id} joined chat {chat_id} (owner={owner_id})")
 
@@ -321,6 +387,18 @@ async def _handle_chat_member(bot: Bot, child_bot_id: int, event: ChatMemberUpda
 
     # ── Пользователь вышел/забанен ────────────────────────────
     elif new_status in ("left", "kicked") and old_status == "member":
+        # Обновляем счётчик отписок для ссылки (через joined_via_link_id)
+        await db.execute(
+            """
+            UPDATE invite_links SET unsubscribed = unsubscribed + 1
+            WHERE id = (
+                SELECT joined_via_link_id FROM bot_users
+                WHERE owner_id=$1 AND chat_id=$2 AND user_id=$3
+                  AND joined_via_link_id IS NOT NULL
+            )
+            """,
+            owner_id, chat_id, user.id,
+        )
         await db.execute(
             "UPDATE bot_users SET is_active=false, left_at=now() "
             "WHERE owner_id=$1 AND chat_id=$2 AND user_id=$3",

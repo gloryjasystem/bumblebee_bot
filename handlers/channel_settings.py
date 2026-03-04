@@ -411,6 +411,10 @@ _MSG_FIELDS = {
 
 _MSG_TIMER_CYCLE = [0, 5, 15, 30, 60, 120, 300]  # секунды
 
+# Кэш message_id эхо-сообщения: (owner_id, chat_id_str, msg_type) -> message_id
+# Используется чтобы надёжно удалить эхо при нажатии «◀️ Назад»
+_echo_msg_ids: dict = {}
+
 import json as _json
 
 
@@ -494,26 +498,32 @@ async def _show_msg_editor(callback: CallbackQuery, chat_id_str: str, msg_type: 
     except Exception:
         pass
 
-    # Отправить эхо сообщения
+    # Отправить эхо сообщения и запомнить его message_id для последующего удаления
+    sent_echo = None
     if media_fid:
         if media_type == "photo":
-            await callback.message.answer_photo(media_fid, caption=text or None,
+            sent_echo = await callback.message.answer_photo(media_fid, caption=text or None,
                                                 reply_markup=user_msg_kb, parse_mode="HTML")
         elif media_type == "video":
-            await callback.message.answer_video(media_fid, caption=text or None,
+            sent_echo = await callback.message.answer_video(media_fid, caption=text or None,
                                                 reply_markup=user_msg_kb, parse_mode="HTML")
         elif media_type == "animation":
-            await callback.message.answer_animation(media_fid, caption=text or None,
+            sent_echo = await callback.message.answer_animation(media_fid, caption=text or None,
                                                     reply_markup=user_msg_kb, parse_mode="HTML")
         else:
-            await callback.message.answer_document(media_fid, caption=text or None,
+            sent_echo = await callback.message.answer_document(media_fid, caption=text or None,
                                                    reply_markup=user_msg_kb, parse_mode="HTML")
     else:
-        await callback.message.answer(text, reply_markup=user_msg_kb,
+        sent_echo = await callback.message.answer(text, reply_markup=user_msg_kb,
                                       parse_mode="HTML",
                                       disable_web_page_preview=not bool(ch.get(f["preview_col"])))
 
-    # Отправить меню редактора под собщением
+    # Сохраняем message_id эхо в кэш — чтобы надёжно удалить при «Назад»
+    if sent_echo:
+        owner_id = ch.get("owner_id", 0)
+        _echo_msg_ids[(owner_id, chat_id_str, msg_type)] = sent_echo.message_id
+
+    # Отправить меню редактора под сообщением
     await callback.message.answer(
         f"<b>{label}</b>",
         reply_markup=editor_kb,
@@ -812,23 +822,23 @@ async def on_ch_msg_back(callback: CallbackQuery, state: FSMContext, platform_us
     await state.clear()
     _, chat_id_str, msg_type = callback.data.split(":")
     chat_id = int(chat_id_str)
-    ch = await _get_chat_by_id(platform_user["user_id"], chat_id)
+    owner_id = platform_user["user_id"]
 
-    # Если сообщение сохранено — эхо было показано выше меню, удаляем его
-    has_msg = ch and (ch.get(_MSG_FIELDS[msg_type]["text_col"]) or ch.get(_MSG_FIELDS[msg_type]["media_col"]))
-    if has_msg:
-        # Эхо-сообщение находится прямо над меню (message_id - 1)
+    # Удаляем эхо-сообщение по надёжному кэшированному message_id
+    echo_key = (owner_id, chat_id_str, msg_type)
+    echo_mid = _echo_msg_ids.pop(echo_key, None)
+    if echo_mid:
         try:
             await callback.bot.delete_message(
                 chat_id=callback.message.chat.id,
-                message_id=callback.message.message_id - 1,
+                message_id=echo_mid,
             )
         except Exception:
-            pass  # уже удалено или недоступно — не критично
+            pass  # уже удалено — не критично
 
-    # Редактируем текущее меню-сообщение в экран "Сообщения" (edit_text, без нового сообщения)
+    # Редактируем меню на месте в экран «Сообщения» (edit_text, без нового сообщения)
     from handlers.messages import _show_ch_messages
-    await _show_ch_messages(callback, chat_id, platform_user["user_id"])
+    await _show_ch_messages(callback, chat_id, owner_id)
 
 
 # ─────────────────────── FSM: кнопки и медиа ──────────────────────────

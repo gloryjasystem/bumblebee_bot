@@ -460,84 +460,86 @@ async def on_link_detail(callback: CallbackQuery, platform_user: dict | None):
         await callback.answer("Ссылка не найдена", show_alert=True)
         return
 
-    if not chat_id:
-        chat_id = link["chat_id"]
+    try:
+        if not chat_id:
+            chat_id = link["chat_id"]
 
-    # Конвертируем asyncpg Record → dict чтобы .get() работал безопасно
-    lk = dict(link)
+        lk = dict(link)
 
-    joined   = lk.get("joined") or 0
-    unsub    = lk.get("unsubscribed") or 0
-    remained = joined - unsub
+        joined   = lk.get("joined") or 0
+        unsub    = lk.get("unsubscribed") or 0
+        remained = joined - unsub
 
-    males        = lk.get("males") or 0
-    females      = lk.get("females") or 0
-    total_gender = males + females
-    m_pct = f"{males / total_gender * 100:.2f}" if total_gender > 0 else "0.00"
-    f_pct = f"{females / total_gender * 100:.2f}" if total_gender > 0 else "0.00"
+        males        = lk.get("males") or 0
+        females      = lk.get("females") or 0
+        total_gender = males + females
+        m_pct = f"{males / total_gender * 100:.2f}" if total_gender > 0 else "0.00"
+        f_pct = f"{females / total_gender * 100:.2f}" if total_gender > 0 else "0.00"
 
-    # Страны
-    countries_raw = lk.get("countries") or {}
-    if countries_raw:
-        sorted_c = sorted(countries_raw.items(), key=lambda x: x[1], reverse=True)[:3]
-        countries_text = "  " + ", ".join(f"{c}: {n}" for c, n in sorted_c)
-    else:
-        countries_text = "  —"
+        countries_raw = lk.get("countries") or {}
+        if countries_raw:
+            sorted_c = sorted(countries_raw.items(), key=lambda x: x[1], reverse=True)
+            countries_text = "  " + ", ".join(f"{c}: {n}" for c, n in sorted_c[:3])
+        else:
+            countries_text = "  —"
 
-    rtl        = lk.get("rtl_count") or 0
-    hieroglyph = lk.get("hieroglyph_count") or 0
-    premium    = lk.get("premium_count") or 0
-    rtl_pct   = f"{rtl / joined * 100:.2f}" if joined > 0 else "0.00"
-    hier_pct  = f"{hieroglyph / joined * 100:.2f}" if joined > 0 else "0.00"
-    prem_pct  = f"{premium / joined * 100:.2f}" if joined > 0 else "0.00"
+        rtl        = lk.get("rtl_count") or 0
+        hieroglyph = lk.get("hieroglyph_count") or 0
+        premium    = lk.get("premium_count") or 0
+        rtl_pct   = f"{rtl / joined * 100:.2f}"  if joined > 0 else "0.00"
+        hier_pct  = f"{hieroglyph / joined * 100:.2f}" if joined > 0 else "0.00"
+        prem_pct  = f"{premium / joined * 100:.2f}" if joined > 0 else "0.00"
 
-    # Стоимость подписчика
-    cost_text = ""
-    if lk.get("budget"):
-        budget  = float(lk["budget"])
-        cur     = lk.get("budget_currency") or "₽"
-        cur_sym = {"₽": "₽", "RUB": "₽", "USD": "$", "EUR": "€"}.get(cur, cur)
-        per_all  = budget / joined if joined > 0 else budget
-        per_stay = budget / remained if remained > 0 else budget
-        cost_text = (
-            f"\nСтоимость подписчика:\n"
-            f"🔴 Общая: {per_all:.2f}{cur_sym}\n"
-            f"🟢 Итоговая: {per_stay:.2f}{cur_sym}\n"
+        cost_text = ""
+        if lk.get("budget"):
+            budget   = float(lk["budget"])
+            cur      = lk.get("budget_currency") or "RUB"
+            cur_sym  = {"RUB": "₽", "USD": "$", "EUR": "€"}.get(cur, cur)
+            per_all  = budget / joined   if joined   > 0 else budget
+            per_stay = budget / remained if remained > 0 else budget
+            cost_text = (
+                f"\nСтоимость подписчика:\n"
+                f"🔴 Общая: {per_all:.2f}{cur_sym}\n"
+                f"🟢 Итоговая: {per_stay:.2f}{cur_sym}\n"
+            )
+
+        type_map   = {"request": "заявки", "regular": "обычная", "onetime": "одноразовая"}
+        auto_accept = lk.get("auto_accept") or "base"
+        safe_name   = html.escape(str(lk.get("name") or ""))
+        safe_link   = html.escape(str(lk.get("link") or ""))
+        link_type   = type_map.get(lk.get("link_type", ""), lk.get("link_type", ""))
+        created_at  = lk["created_at"].strftime('%d.%m.%Y') if lk.get("created_at") else "—"
+
+        text = (
+            f"📊 Статистика по {safe_name}\n\n"
+            f"🔗 Ссылка: <code>{safe_link}</code>\n"
+            f"🔒 Вид: {link_type}\n\n"
+            f"👤 <u>Подписчики</u>\n"
+            f"👤 Подписалось: {joined}\n"
+            f"👤 Отписалось: {unsub}\n"
+            f"👤 Осталось: {remained}\n\n"
+            f"🎯 <u>Пол аудитории</u>\n"
+            f"М: {m_pct}% | Ж: {f_pct}%\n\n"
+            f"🌍 <u>Страны</u>\n"
+            f"{countries_text}\n\n"
+            f"📋 <u>Аккаунты</u>\n"
+            f"🌙 RTL-символы в имени: {rtl} | {rtl_pct}%\n"
+            f"Иероглифы в имени: {hieroglyph} | {hier_pct}%\n"
+            f"⭐ Telegram Premium: {premium} | {prem_pct}%\n"
+            f"{cost_text}"
+            f"📅 Дата создания: {created_at}"
         )
 
-    type_map    = {"request": "заявки", "regular": "обычная", "onetime": "одноразовая"}
-    auto_accept = lk.get("auto_accept") or "base"
-    safe_name   = html.escape(lk.get("name") or "")
-    safe_link   = html.escape(lk.get("link") or "")
-    link_type   = type_map.get(lk.get("link_type", ""), lk.get("link_type", ""))
-    created_at  = lk["created_at"].strftime('%d.%m.%Y') if lk.get("created_at") else "—"
+        await callback.message.edit_text(
+            text,
+            parse_mode="HTML",
+            reply_markup=kb_link_detail(link_id, chat_id, child_bot_id, auto_accept),
+        )
+        await callback.answer()
 
-    text = (
-        f"📊 Статистика по {safe_name}\n\n"
-        f"🔗 Ссылка: <code>{safe_link}</code>\n"
-        f"🔒 Вид: {link_type}\n\n"
-        f"👤 <u>Подписчики</u>\n"
-        f"👤 Подписалось: {joined}\n"
-        f"👤 Отписалось: {unsub}\n"
-        f"👤 Осталось: {remained}\n\n"
-        f"🎯 <u>Пол аудитории</u>\n"
-        f"♂️М: {m_pct}% | ♀️Ж: {f_pct}%\n\n"
-        f"🌍 <u>Страны</u>\n"
-        f"{countries_text}\n\n"
-        f"📋 <u>Аккаунты</u>\n"
-        f"🌙 RTL-символы в имени: {rtl} | {rtl_pct}%\n"
-        f"🈳 Иероглифы в имени: {hieroglyph} | {hier_pct}%\n"
-        f"⭐ Telegram Premium: {premium} | {prem_pct}%\n"
-        f"{cost_text}"
-        f"📅 Дата создания: {created_at}"
-    )
-
-    await callback.message.edit_text(
-        text,
-        parse_mode="HTML",
-        reply_markup=kb_link_detail(link_id, chat_id, child_bot_id, auto_accept),
-    )
-    await callback.answer()
+    except Exception as e:
+        logger.error(f"on_link_detail error: {e}")
+        await callback.answer(f"Ошибка: {e}", show_alert=True)
 
 
 # ── Автопринятие: переключение ────────────────────────────────

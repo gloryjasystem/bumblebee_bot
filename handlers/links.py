@@ -12,6 +12,7 @@ handlers/links.py — Управление ссылками-приглашени
 """
 import logging
 import re
+import html
 from aiogram import Router, F, Bot
 from aiogram.types import CallbackQuery, Message, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
@@ -462,53 +463,59 @@ async def on_link_detail(callback: CallbackQuery, platform_user: dict | None):
     if not chat_id:
         chat_id = link["chat_id"]
 
-    joined  = link.get("joined") or 0
-    unsub   = link.get("unsubscribed") or 0
+    # Конвертируем asyncpg Record → dict чтобы .get() работал безопасно
+    lk = dict(link)
+
+    joined   = lk.get("joined") or 0
+    unsub    = lk.get("unsubscribed") or 0
     remained = joined - unsub
 
-    males   = link.get("males") or 0
-    females = link.get("females") or 0
+    males        = lk.get("males") or 0
+    females      = lk.get("females") or 0
     total_gender = males + females
     m_pct = f"{males / total_gender * 100:.2f}" if total_gender > 0 else "0.00"
     f_pct = f"{females / total_gender * 100:.2f}" if total_gender > 0 else "0.00"
 
     # Страны
-    countries_raw = link.get("countries") or {}
+    countries_raw = lk.get("countries") or {}
     if countries_raw:
-        # Топ-3 страны
         sorted_c = sorted(countries_raw.items(), key=lambda x: x[1], reverse=True)[:3]
         countries_text = "  " + ", ".join(f"{c}: {n}" for c, n in sorted_c)
     else:
         countries_text = "  —"
 
-    rtl       = link.get("rtl_count") or 0
-    hieroglyph = link.get("hieroglyph_count") or 0
-    premium   = link.get("premium_count") or 0
-    rtl_pct      = f"{rtl / joined * 100:.2f}" if joined > 0 else "0.00"
-    hier_pct     = f"{hieroglyph / joined * 100:.2f}" if joined > 0 else "0.00"
-    prem_pct     = f"{premium / joined * 100:.2f}" if joined > 0 else "0.00"
+    rtl        = lk.get("rtl_count") or 0
+    hieroglyph = lk.get("hieroglyph_count") or 0
+    premium    = lk.get("premium_count") or 0
+    rtl_pct   = f"{rtl / joined * 100:.2f}" if joined > 0 else "0.00"
+    hier_pct  = f"{hieroglyph / joined * 100:.2f}" if joined > 0 else "0.00"
+    prem_pct  = f"{premium / joined * 100:.2f}" if joined > 0 else "0.00"
 
     # Стоимость подписчика
     cost_text = ""
-    if link["budget"]:
-        budget = float(link["budget"])
-        cur = link["budget_currency"] or "₽"
+    if lk.get("budget"):
+        budget  = float(lk["budget"])
+        cur     = lk.get("budget_currency") or "₽"
         cur_sym = {"₽": "₽", "RUB": "₽", "USD": "$", "EUR": "€"}.get(cur, cur)
-        per_all   = budget / joined if joined > 0 else budget
-        per_stay  = budget / remained if remained > 0 else budget
+        per_all  = budget / joined if joined > 0 else budget
+        per_stay = budget / remained if remained > 0 else budget
         cost_text = (
             f"\nСтоимость подписчика:\n"
             f"🔴 Общая: {per_all:.2f}{cur_sym}\n"
             f"🟢 Итоговая: {per_stay:.2f}{cur_sym}\n"
         )
 
-    type_map = {"request": "заявки", "regular": "обычная", "onetime": "одноразовая"}
-    auto_accept = link.get("auto_accept") or "base"
+    type_map    = {"request": "заявки", "regular": "обычная", "onetime": "одноразовая"}
+    auto_accept = lk.get("auto_accept") or "base"
+    safe_name   = html.escape(lk.get("name") or "")
+    safe_link   = html.escape(lk.get("link") or "")
+    link_type   = type_map.get(lk.get("link_type", ""), lk.get("link_type", ""))
+    created_at  = lk["created_at"].strftime('%d.%m.%Y') if lk.get("created_at") else "—"
 
     text = (
-        f"📊 Статистика по {link['name']}\n\n"
-        f"🔗 Ссылка: <code>{link['link']}</code>\n"
-        f"🔒 Вид: {type_map.get(link['link_type'], link['link_type'])}\n\n"
+        f"📊 Статистика по {safe_name}\n\n"
+        f"🔗 Ссылка: <code>{safe_link}</code>\n"
+        f"🔒 Вид: {link_type}\n\n"
         f"👤 <u>Подписчики</u>\n"
         f"👤 Подписалось: {joined}\n"
         f"👤 Отписалось: {unsub}\n"
@@ -522,7 +529,7 @@ async def on_link_detail(callback: CallbackQuery, platform_user: dict | None):
         f"🈳 Иероглифы в имени: {hieroglyph} | {hier_pct}%\n"
         f"⭐ Telegram Premium: {premium} | {prem_pct}%\n"
         f"{cost_text}"
-        f"📅 Дата создания: {link['created_at'].strftime('%d.%m.%Y')}"
+        f"📅 Дата создания: {created_at}"
     )
 
     await callback.message.edit_text(

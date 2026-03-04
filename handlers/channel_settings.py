@@ -1678,6 +1678,7 @@ async def on_bs_bl_export(callback: CallbackQuery, platform_user: dict | None):
         await callback.message.edit_text(
             "📤 <b>Экспорт базы ЧС</b>\n\n"
             "⚠️ База ЧС пуста. Нечего экспортировать.",
+            parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="◀️ Назад", callback_data=f"bs_blacklist:{child_bot_id}")],
             ]),
@@ -1695,6 +1696,7 @@ async def on_bs_bl_export(callback: CallbackQuery, platform_user: dict | None):
         f"📊 Всего записей: <b>{total:,}</b>\n"
         f"📅 Добавлено за 7 дней: <b>{week_ago_count:,}</b>\n"
         f"🕐 Последнее добавление: <b>{last_str}</b>",
+        parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="📥 Скачать CSV (полная база)",        callback_data=f"bs_bl_export_csv:{child_bot_id}")],
             [InlineKeyboardButton(text="📋 Скачать TXT (для импорта в бот)",  callback_data=f"bs_bl_export_txt:{child_bot_id}")],
@@ -1742,6 +1744,7 @@ async def on_bs_bl_export_csv(callback: CallbackQuery, platform_user: dict | Non
             f"📊 Записей: <b>{len(rows):,}</b>\n"
             "Формат: CSV, разделитель ; | Кодировка UTF-8 с BOM (совместимо с Excel)"
         ),
+        parse_mode="HTML",
     )
 
 
@@ -1777,6 +1780,7 @@ async def on_bs_bl_export_txt(callback: CallbackQuery, platform_user: dict | Non
             f"📊 Записей: <b>{len(lines):,}</b>\n"
             "Формат: один ID или @username на строку — готово для импорта в другой бот"
         ),
+        parse_mode="HTML",
     )
 
 

@@ -1178,7 +1178,7 @@ async def on_filter_photo(callback: CallbackQuery, platform_user: dict | None):
 
 # ── Лимиты ────────────────────────────────────────────────────
 
-def kb_limits(ch: dict) -> InlineKeyboardMarkup:
+def kb_limits(ch: dict, back_callback: str | None = None) -> InlineKeyboardMarkup:
     """Клавиатура экрана Лимитов (скрин 2)."""
     chat_id    = ch["chat_id"]
     enabled    = ch.get("join_limit_enabled") or False
@@ -1191,12 +1191,16 @@ def kb_limits(ch: dict) -> InlineKeyboardMarkup:
     time_label  = f"⏱ Время: за {period} мин." if period != 1 else "⏱ Время: за 1 минуту"
     limit_label = f"🚫 Лимит на вступление: ≥ {limit}"
 
+    # Каллбаки кнопок-переключателей: если контекст bs (бот), используем префикс bs_lim_
+    is_bs = back_callback and back_callback.startswith("bs_protection:")
+    prefix = "bs_lim" if is_bs else "lim"
+
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=probe_label,  callback_data=f"lim_probe:{chat_id}")],
-        [InlineKeyboardButton(text=pun_label,    callback_data=f"lim_pun:{chat_id}")],
-        [InlineKeyboardButton(text=time_label,   callback_data=f"lim_time:{chat_id}")],
-        [InlineKeyboardButton(text=limit_label,  callback_data=f"lim_count:{chat_id}")],
-        [InlineKeyboardButton(text="◀️ Назад",   callback_data=f"filter_limits_back:{chat_id}")],
+        [InlineKeyboardButton(text=probe_label,  callback_data=f"{prefix}_probe:{chat_id}")],
+        [InlineKeyboardButton(text=pun_label,    callback_data=f"{prefix}_pun:{chat_id}")],
+        [InlineKeyboardButton(text=time_label,   callback_data=f"{prefix}_time:{chat_id}")],
+        [InlineKeyboardButton(text=limit_label,  callback_data=f"{prefix}_count:{chat_id}")],
+        [InlineKeyboardButton(text="◀️ Назад",   callback_data=back_callback or f"filter_limits_back:{chat_id}")],
     ])
 
 
@@ -1229,17 +1233,29 @@ async def on_filter_limits(callback: CallbackQuery, platform_user: dict | None):
 
 @router.callback_query(F.data.startswith("filter_limits_back:"))
 async def on_filter_limits_back(callback: CallbackQuery, platform_user: dict | None):
-    """Назад → экран Защиты."""
+    """Назад → экран Защиты (ch-контекст, при нажатии из отдельной площадки)."""
     if not platform_user:
         return
     chat_id = int(callback.data.split(":")[1])
+    owner_id = platform_user["user_id"]
     ch = await db.fetchrow(
         "SELECT * FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint",
-        platform_user["user_id"], chat_id,
+        owner_id, chat_id,
     )
     if not ch:
         return
-    await callback.message.edit_reply_markup(reply_markup=kb_protection(dict(ch), []))
+    lk = dict(ch)
+    # Правильный edit_text (не edit_reply_markup!) — иначе заголовок "Лимит" оставался бы видием
+    rtl      = "🔵" if lk.get("filter_rtl")       else "⚪"
+    hiero    = "🔵" if lk.get("filter_hieroglyph") else "⚪"
+    no_photo = "🔵" if lk.get("filter_no_photo")   else "⚪"
+    limits_label  = "🚫 Лимиты"
+    lang_label    = "🏁 Фильтр по языкам"
+    await callback.message.edit_text(
+        "🛡 <b>Защита</b>\n\nФильтры площадки.",
+        parse_mode="HTML",
+        reply_markup=kb_protection(lk, []),
+    )
     await callback.answer()
 
 
@@ -1816,45 +1832,128 @@ async def on_bs_protection(callback: CallbackQuery, platform_user: dict | None):
     await _show_bs_protection(callback, platform_user, int(callback.data.split(":")[1]))
 
 
+
+
 @router.callback_query(F.data.startswith("bs_limits:"))
 async def on_bs_limits(callback: CallbackQuery, platform_user: dict | None):
-    """Экран Лимитов для child-bot (берём первую площадку бота)."""
+    """Экран Лимитов для child-bot."""
     if not platform_user:
         return
     child_bot_id = int(callback.data.split(":")[1])
-    owner_id = platform_user["user_id"]
+    await _show_bs_limits(callback, child_bot_id, platform_user["user_id"])
+
+
+async def _show_bs_limits(callback: CallbackQuery, child_bot_id: int, owner_id: int):
+    """Единая точка рендера экрана Лимитов в bs-контексте (назад → bs_protection)."""
     ch = await _get_bot_first_chat(owner_id, child_bot_id)
     if not ch:
         await callback.answer("Нет активных площадок", show_alert=True)
         return
     lk = dict(ch)
-    # Показываем тот же экран лимитов, но Назад ведёт к bs_protection
-    from handlers.channel_settings import kb_limits
-    enabled    = lk.get("join_limit_enabled") or False
-    punishment = lk.get("join_limit_punishment") or "kick"
-    period     = int(lk.get("join_limit_period_min") or 1)
-    limit      = int(lk.get("join_limit_count") or 50)
-    probe_label = "🔍 Проверка: вкл" if enabled else "🔍 Проверка: выкл"
-    pun_label   = {"kick": "🏆 Наказание: Кик", "ban": "🏆 Наказание: Бан"}.get(punishment, "🏆 Наказание: Кик")
-    time_label  = f"⏱ Время: за {period} мин." if period != 1 else "⏱ Время: за 1 минуту"
-    limit_label = f"🔴 Лимит на вступление: ≥ {limit}"
-    chat_id     = lk["chat_id"]
-    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=probe_label,  callback_data=f"lim_probe:{chat_id}")],
-        [InlineKeyboardButton(text=pun_label,    callback_data=f"lim_pun:{chat_id}")],
-        [InlineKeyboardButton(text=time_label,   callback_data=f"lim_time:{chat_id}")],
-        [InlineKeyboardButton(text=limit_label,  callback_data=f"lim_count:{chat_id}")],
-        [InlineKeyboardButton(text="◀️ Назад",   callback_data=f"bs_protection:{child_bot_id}")],
-    ])
     await callback.message.edit_text(
         "🔄 <b>Лимит</b>\n\n"
         "<i>Установите лимит на количество вступлений в течении определённого времени.</i>\n\n"
         "ⓘ При <u>превышении лимита</u>, бот пришлёт уведомление.",
         parse_mode="HTML",
-        reply_markup=kb,
+        reply_markup=kb_limits(lk, back_callback=f"bs_protection:{child_bot_id}"),
     )
     await callback.answer()
+
+
+# bs_lim_* — переключатели для bs-контекста (получают chat_id, но знают child_bot_id через DB)
+async def _get_child_bot_id_by_chat(chat_id: int, owner_id: int) -> int | None:
+    row = await db.fetchrow(
+        "SELECT child_bot_id FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint",
+        owner_id, chat_id,
+    )
+    return row["child_bot_id"] if row else None
+
+
+@router.callback_query(F.data.startswith("bs_lim_probe:"))
+async def on_bs_lim_probe(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    chat_id = int(callback.data.split(":")[1])
+    owner_id = platform_user["user_id"]
+    ch = await db.fetchrow(
+        "SELECT join_limit_enabled FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint",
+        owner_id, chat_id,
+    )
+    new_val = not (ch["join_limit_enabled"] if ch else False)
+    await db.execute(
+        "UPDATE bot_chats SET join_limit_enabled=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
+        new_val, owner_id, chat_id,
+    )
+    child_bot_id = await _get_child_bot_id_by_chat(chat_id, owner_id)
+    if child_bot_id:
+        await _show_bs_limits(callback, child_bot_id, owner_id)
+
+
+@router.callback_query(F.data.startswith("bs_lim_pun:"))
+async def on_bs_lim_pun(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    chat_id = int(callback.data.split(":")[1])
+    owner_id = platform_user["user_id"]
+    ch = await db.fetchrow(
+        "SELECT join_limit_punishment FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint",
+        owner_id, chat_id,
+    )
+    cycle = {"kick": "ban", "ban": "kick"}
+    cur   = (ch["join_limit_punishment"] if ch else None) or "kick"
+    new_val = cycle.get(cur, "kick")
+    await db.execute(
+        "UPDATE bot_chats SET join_limit_punishment=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
+        new_val, owner_id, chat_id,
+    )
+    child_bot_id = await _get_child_bot_id_by_chat(chat_id, owner_id)
+    if child_bot_id:
+        await _show_bs_limits(callback, child_bot_id, owner_id)
+
+
+@router.callback_query(F.data.startswith("bs_lim_time:"))
+async def on_bs_lim_time(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    chat_id = int(callback.data.split(":")[1])
+    owner_id = platform_user["user_id"]
+    ch = await db.fetchrow(
+        "SELECT join_limit_period_min FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint",
+        owner_id, chat_id,
+    )
+    cycle = {1: 5, 5: 10, 10: 30, 30: 1}
+    cur   = int((ch["join_limit_period_min"] if ch and ch.get("join_limit_period_min") else 1))
+    new_val = cycle.get(cur, 1)
+    await db.execute(
+        "UPDATE bot_chats SET join_limit_period_min=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
+        new_val, owner_id, chat_id,
+    )
+    child_bot_id = await _get_child_bot_id_by_chat(chat_id, owner_id)
+    if child_bot_id:
+        await _show_bs_limits(callback, child_bot_id, owner_id)
+
+
+@router.callback_query(F.data.startswith("bs_lim_count:"))
+async def on_bs_lim_count(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    chat_id = int(callback.data.split(":")[1])
+    owner_id = platform_user["user_id"]
+    ch = await db.fetchrow(
+        "SELECT join_limit_count FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint",
+        owner_id, chat_id,
+    )
+    cycle = {10: 20, 20: 50, 50: 100, 100: 200, 200: 10}
+    cur   = int((ch["join_limit_count"] if ch and ch.get("join_limit_count") else 50))
+    new_val = cycle.get(cur, 50)
+    await db.execute(
+        "UPDATE bot_chats SET join_limit_count=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
+        new_val, owner_id, chat_id,
+    )
+    child_bot_id = await _get_child_bot_id_by_chat(chat_id, owner_id)
+    if child_bot_id:
+        await _show_bs_limits(callback, child_bot_id, owner_id)
+
 
 
 @router.callback_query(F.data.startswith("bs_filter_rtl:"))

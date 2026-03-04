@@ -811,13 +811,24 @@ async def on_ch_msg_back(callback: CallbackQuery, state: FSMContext, platform_us
         return
     await state.clear()
     _, chat_id_str, msg_type = callback.data.split(":")
-    ch = await _get_chat_by_id(platform_user["user_id"], int(chat_id_str))
-    if ch and (ch.get(_MSG_FIELDS[msg_type]["text_col"]) or ch.get(_MSG_FIELDS[msg_type]["media_col"])):
-        await _show_msg_editor(callback, chat_id_str, msg_type, dict(ch), scope="ch")
-    else:
-        callback.data = f"ch_messages:{chat_id_str}"
-        from handlers.messages import _show_ch_messages
-        await _show_ch_messages(callback, int(chat_id_str), platform_user["user_id"])
+    chat_id = int(chat_id_str)
+    ch = await _get_chat_by_id(platform_user["user_id"], chat_id)
+
+    # Если сообщение сохранено — эхо было показано выше меню, удаляем его
+    has_msg = ch and (ch.get(_MSG_FIELDS[msg_type]["text_col"]) or ch.get(_MSG_FIELDS[msg_type]["media_col"]))
+    if has_msg:
+        # Эхо-сообщение находится прямо над меню (message_id - 1)
+        try:
+            await callback.bot.delete_message(
+                chat_id=callback.message.chat.id,
+                message_id=callback.message.message_id - 1,
+            )
+        except Exception:
+            pass  # уже удалено или недоступно — не критично
+
+    # Редактируем текущее меню-сообщение в экран "Сообщения" (edit_text, без нового сообщения)
+    from handlers.messages import _show_ch_messages
+    await _show_ch_messages(callback, chat_id, platform_user["user_id"])
 
 
 # ─────────────────────── FSM: кнопки и медиа ──────────────────────────

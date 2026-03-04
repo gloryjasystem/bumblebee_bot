@@ -467,7 +467,8 @@ def _build_editor_kb(chat_id_str: str, msg_type: str, ch: dict, scope: str = "ch
 
 
 async def _show_msg_editor(callback: CallbackQuery, chat_id_str: str, msg_type: str,
-                            ch: dict, scope: str = "ch"):
+                            ch: dict, scope: str = "ch",
+                            state: FSMContext | None = None):
     """Экран редактора: сначала эхо текущего сообщения, затем меню."""
     f = _MSG_FIELDS[msg_type]
     label = f["label"]
@@ -518,10 +519,18 @@ async def _show_msg_editor(callback: CallbackQuery, chat_id_str: str, msg_type: 
                                       parse_mode="HTML",
                                       disable_web_page_preview=not bool(ch.get(f["preview_col"])))
 
-    # Сохраняем message_id эхо в кэш — чтобы надёжно удалить при «Назад»
+    # Сохраняем message_id эхо в FSM state (надёжно — переживает рестарты сервера)
+    if sent_echo and state:
+        try:
+            await state.update_data(
+                editor_echo_mid=sent_echo.message_id,
+                editor_echo_chat_id=callback.message.chat.id,
+            )
+        except Exception:
+            pass
+    # Также обновляем in-memory cache как запасной вариант
     if sent_echo:
-        owner_id = ch.get("owner_id", 0)
-        _echo_msg_ids[(owner_id, chat_id_str, msg_type)] = sent_echo.message_id
+        _echo_msg_ids[(chat_id_str, msg_type)] = (sent_echo.message_id, callback.message.chat.id)
 
     # Отправить меню редактора под сообщением
     await callback.message.answer(
@@ -566,7 +575,7 @@ async def on_welcome_set(callback: CallbackQuery, state: FSMContext, platform_us
     chat_id_str = callback.data.split(":")[1]
     ch = await _get_chat_by_id(platform_user["user_id"], int(chat_id_str))
     if ch and (ch.get("welcome_text") or ch.get("welcome_media")):
-        await _show_msg_editor(callback, chat_id_str, "welcome", dict(ch), scope="ch")
+        await _show_msg_editor(callback, chat_id_str, "welcome", dict(ch), scope="ch", state=state)
     else:
         await state.set_state(SettingsFSM.waiting_for_welcome_text)
         await state.update_data(chat_id=int(chat_id_str), owner_id=platform_user["user_id"],
@@ -581,7 +590,7 @@ async def on_farewell_set(callback: CallbackQuery, state: FSMContext, platform_u
     chat_id_str = callback.data.split(":")[1]
     ch = await _get_chat_by_id(platform_user["user_id"], int(chat_id_str))
     if ch and (ch.get("farewell_text") or ch.get("farewell_media")):
-        await _show_msg_editor(callback, chat_id_str, "farewell", dict(ch), scope="ch")
+        await _show_msg_editor(callback, chat_id_str, "farewell", dict(ch), scope="ch", state=state)
     else:
         await state.set_state(SettingsFSM.waiting_for_farewell_text)
         await state.update_data(chat_id=int(chat_id_str), owner_id=platform_user["user_id"],
@@ -644,18 +653,28 @@ async def _handle_msg_input(message: Message, state: FSMContext):
     )
 
     label = _MSG_FIELDS[msg_type]["label"]
-    # Отправить эхо сообщения
+
+    # Эхо отправлено, запоминаем message_id в FSM state
+    sent_echo = None
     if media_fid:
         if media_type == "photo":
-            await message.answer_photo(media_fid, caption=text or None, parse_mode="HTML")
+            sent_echo = await message.answer_photo(media_fid, caption=text or None, parse_mode="HTML")
         elif media_type == "video":
-            await message.answer_video(media_fid, caption=text or None, parse_mode="HTML")
+            sent_echo = await message.answer_video(media_fid, caption=text or None, parse_mode="HTML")
         elif media_type == "animation":
-            await message.answer_animation(media_fid, caption=text or None, parse_mode="HTML")
+            sent_echo = await message.answer_animation(media_fid, caption=text or None, parse_mode="HTML")
         else:
-            await message.answer_document(media_fid, caption=text or None, parse_mode="HTML")
+            sent_echo = await message.answer_document(media_fid, caption=text or None, parse_mode="HTML")
     else:
-        await message.answer(text, parse_mode="HTML")
+        sent_echo = await message.answer(text, parse_mode="HTML")
+
+    # Сохраняем echo_mid в FSM state (читаем потом в on_ch_msg_back)
+    if sent_echo:
+        await state.update_data(
+            editor_echo_mid=sent_echo.message_id,
+            editor_echo_chat_id=message.chat.id,
+        )
+        _echo_msg_ids[(chat_id_str, msg_type)] = (sent_echo.message_id, message.chat.id)
 
     # Меню редактора
     await message.answer(
@@ -819,24 +838,31 @@ async def on_ch_msg_del(callback: CallbackQuery, platform_user: dict | None):
 async def on_ch_msg_back(callback: CallbackQuery, state: FSMContext, platform_user: dict | None):
     if not platform_user:
         return
-    await state.clear()
     _, chat_id_str, msg_type = callback.data.split(":")
     chat_id = int(chat_id_str)
     owner_id = platform_user["user_id"]
 
-    # Удаляем эхо-сообщение по надёжному кэшированному message_id
-    echo_key = (owner_id, chat_id_str, msg_type)
-    echo_mid = _echo_msg_ids.pop(echo_key, None)
+    # Приоритет: FSM state (переживает рестарты)
+    fsm_data = await state.get_data()
+    echo_mid = fsm_data.get("editor_echo_mid")
+    echo_chat_id = fsm_data.get("editor_echo_chat_id") or callback.message.chat.id
+
+    # Запасной вариант: in-memory cache
+    if not echo_mid:
+        cached = _echo_msg_ids.pop((chat_id_str, msg_type), None)
+        if cached:
+            echo_mid, echo_chat_id = cached
+
+    await state.clear()
+
+    # Удаляем эхо если нашли его ID
     if echo_mid:
         try:
-            await callback.bot.delete_message(
-                chat_id=callback.message.chat.id,
-                message_id=echo_mid,
-            )
+            await callback.bot.delete_message(chat_id=echo_chat_id, message_id=echo_mid)
         except Exception:
-            pass  # уже удалено — не критично
+            pass  # уже удалено или недоступно
 
-    # Редактируем меню на месте в экран «Сообщения» (edit_text, без нового сообщения)
+    # Меню редактируем на месте в экран «Сообщения»
     from handlers.messages import _show_ch_messages
     await _show_ch_messages(callback, chat_id, owner_id)
 

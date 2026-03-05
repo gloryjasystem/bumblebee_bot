@@ -105,6 +105,12 @@ async def on_join_request(event: ChatJoinRequest, bot: Bot):
             asyncio.create_task(_delayed_approve(event, owner_id, delay))
         else:
             await event.approve()
+            await _save_pending(owner_id, event.chat.id, user)  # создаём запись если нет
+            await db.execute(
+                "UPDATE join_requests SET status='approved', resolved_at=now() "
+                "WHERE owner_id=$1 AND chat_id=$2 AND user_id=$3",
+                owner_id, event.chat.id, user.id,
+            )
             await _register_user(owner_id, event.chat.id, user)
             await _send_welcome(bot, event.chat.id, user, settings_row)
             await _log_action(owner_id, event.chat.id, "approve", user.id)

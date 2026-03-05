@@ -541,16 +541,16 @@ async def _show_msg_editor(callback: CallbackQuery, chat_id_str: str, msg_type: 
     await callback.answer()
 
 
-async def _show_msg_prompt(callback: CallbackQuery, chat_id_str: str, msg_type: str, scope: str = "ch"):
+async def _show_msg_prompt(callback: CallbackQuery, chat_id_str: str, msg_type: str, scope: str = "ch", cancel_cb: str | None = None):
     """Экран-приглашение ввести текст (скрин 3)."""
-    label = _MSG_FIELDS[msg_type]["label"]
     emoji = "👋" if msg_type == "welcome" else "🤚"
     subject = "новые подписчики при подаче заявки" if msg_type == "welcome" else "отписавшиеся участники"
-    # Кнопка «Отмена» возвращает на скрин 2 (редактор сообщения), а не на скрин 1
-    if scope == "ch":
-        back_cb = f"welcome_set:{chat_id_str}" if msg_type == "welcome" else f"farewell_set:{chat_id_str}"
-    else:
-        back_cb = f"bs_messages:{chat_id_str}"
+    # cancel_cb задаётся снаружи: если редактируем — возврат на скрин 2, если сообщения нет — на скрин 1
+    if cancel_cb is None:
+        if scope == "ch":
+            cancel_cb = f"welcome_set:{chat_id_str}" if msg_type == "welcome" else f"farewell_set:{chat_id_str}"
+        else:
+            cancel_cb = f"bs_messages:{chat_id_str}"
 
     await callback.message.edit_text(
         f"<b>{emoji} Пришлите сообщение, которое будут получать {subject}.</b>\n\n"
@@ -562,7 +562,7 @@ async def _show_msg_prompt(callback: CallbackQuery, chat_id_str: str, msg_type: 
         "└ Текущая дата: <code>{day}</code>\n\n"
         "ⓘ Можно прикрепить медиа.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="◀️ Отмена", callback_data=back_cb)],
+            [InlineKeyboardButton(text="◀️ Отмена", callback_data=cancel_cb)],
         ]),
         parse_mode="HTML",
     )
@@ -584,7 +584,9 @@ async def on_welcome_set(callback: CallbackQuery, state: FSMContext, platform_us
         await state.set_state(SettingsFSM.waiting_for_welcome_text)
         await state.update_data(chat_id=int(chat_id_str), owner_id=platform_user["user_id"],
                                  msg_type="welcome", scope="ch")
-        await _show_msg_prompt(callback, chat_id_str, "welcome", scope="ch")
+        # Сообщения нет — «Отмена» возвращает на экран Сообщений (скрин 1), а не на редактор
+        await _show_msg_prompt(callback, chat_id_str, "welcome", scope="ch",
+                               cancel_cb=f"ch_messages:{chat_id_str}")
 
 
 @router.callback_query(F.data.startswith("farewell_set:"))
@@ -599,7 +601,9 @@ async def on_farewell_set(callback: CallbackQuery, state: FSMContext, platform_u
         await state.set_state(SettingsFSM.waiting_for_farewell_text)
         await state.update_data(chat_id=int(chat_id_str), owner_id=platform_user["user_id"],
                                  msg_type="farewell", scope="ch")
-        await _show_msg_prompt(callback, chat_id_str, "farewell", scope="ch")
+        # Сообщения нет — «Отмена» возвращает на экран Сообщений (скрин 1), а не на редактор
+        await _show_msg_prompt(callback, chat_id_str, "farewell", scope="ch",
+                               cancel_cb=f"ch_messages:{chat_id_str}")
 
 
 # ─────────────────────── FSM: ввод текста ──────────────────────────
@@ -727,7 +731,9 @@ async def on_ch_msg_edit(callback: CallbackQuery, state: FSMContext, platform_us
     )
     await state.update_data(chat_id=int(chat_id_str), owner_id=platform_user["user_id"],
                              msg_type=msg_type, scope="ch")
-    await _show_msg_prompt(callback, chat_id_str, msg_type, scope="ch")
+    # Редактируем существующее сообщение — «Отмена» возвращает на скрин 2 (редактор)
+    back_to_editor = f"welcome_set:{chat_id_str}" if msg_type == "welcome" else f"farewell_set:{chat_id_str}"
+    await _show_msg_prompt(callback, chat_id_str, msg_type, scope="ch", cancel_cb=back_to_editor)
 
 
 @router.callback_query(F.data.startswith("ch_msg_btns:"))

@@ -542,11 +542,15 @@ async def _show_msg_editor(callback: CallbackQuery, chat_id_str: str, msg_type: 
 
 
 async def _show_msg_prompt(callback: CallbackQuery, chat_id_str: str, msg_type: str, scope: str = "ch"):
-    """Экран-приглашение ввести текст (скрин 2)."""
+    """Экран-приглашение ввести текст (скрин 3)."""
     label = _MSG_FIELDS[msg_type]["label"]
     emoji = "👋" if msg_type == "welcome" else "🤚"
     subject = "новые подписчики при подаче заявки" if msg_type == "welcome" else "отписавшиеся участники"
-    back_cb = f"ch_messages:{chat_id_str}" if scope == "ch" else f"bs_messages:{chat_id_str}"
+    # Кнопка «Отмена» возвращает на скрин 2 (редактор сообщения), а не на скрин 1
+    if scope == "ch":
+        back_cb = f"welcome_set:{chat_id_str}" if msg_type == "welcome" else f"farewell_set:{chat_id_str}"
+    else:
+        back_cb = f"bs_messages:{chat_id_str}"
 
     await callback.message.edit_text(
         f"<b>{emoji} Пришлите сообщение, которое будут получать {subject}.</b>\n\n"
@@ -702,6 +706,21 @@ async def on_ch_msg_edit(callback: CallbackQuery, state: FSMContext, platform_us
     if not platform_user:
         return
     _, chat_id_str, msg_type = callback.data.split(":")
+
+    # Удаляем эхо текущего сообщения (отображается над меню скрин 2) перед показом формы ввода
+    fsm_data = await state.get_data()
+    echo_mid = fsm_data.get("editor_echo_mid")
+    echo_chat_id = fsm_data.get("editor_echo_chat_id") or callback.message.chat.id
+    if not echo_mid:
+        cached = _echo_msg_ids.pop((chat_id_str, msg_type), None)
+        if cached:
+            echo_mid, echo_chat_id = cached
+    if echo_mid:
+        try:
+            await callback.bot.delete_message(chat_id=echo_chat_id, message_id=echo_mid)
+        except Exception:
+            pass
+
     await state.set_state(
         SettingsFSM.waiting_for_welcome_text if msg_type == "welcome"
         else SettingsFSM.waiting_for_farewell_text

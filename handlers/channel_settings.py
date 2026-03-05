@@ -742,6 +742,21 @@ async def on_ch_msg_btns(callback: CallbackQuery, state: FSMContext, platform_us
     if not platform_user:
         return
     _, chat_id_str, msg_type = callback.data.split(":")
+
+    # Удаляем эхо-сообщение перед показом экрана ввода кнопок
+    fsm_data = await state.get_data()
+    echo_mid = fsm_data.get("editor_echo_mid")
+    echo_chat_id = fsm_data.get("editor_echo_chat_id") or callback.message.chat.id
+    if not echo_mid:
+        cached = _echo_msg_ids.pop((chat_id_str, msg_type), None)
+        if cached:
+            echo_mid, echo_chat_id = cached
+    if echo_mid:
+        try:
+            await callback.bot.delete_message(chat_id=echo_chat_id, message_id=echo_mid)
+        except Exception:
+            pass
+
     await state.set_state(SettingsFSM.waiting_for_msg_buttons)
     await state.update_data(chat_id=int(chat_id_str), owner_id=platform_user["user_id"],
                              msg_type=msg_type, scope="ch")

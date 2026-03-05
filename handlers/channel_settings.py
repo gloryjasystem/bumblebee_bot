@@ -453,7 +453,8 @@ def _build_editor_kb(chat_id_str: str, msg_type: str, ch: dict, scope: str = "ch
     timer_label_txt = f"⏱ Таймер: {_timer_label(timer_val)}"
 
     pfx = f"{scope}_msg"  # ch_msg or bs_msg
-    back_cb = f"ch_messages:{chat_id_str}" if scope == "ch" else f"bs_messages:{chat_id_str}"
+    # Используем ch_msg_back чтобы удалить эхо-сообщение при нажатии «Назад»
+    back_cb = f"ch_msg_back:{chat_id_str}:{msg_type}" if scope == "ch" else f"bs_messages:{chat_id_str}"
 
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✏️ Редактировать",  callback_data=f"{pfx}_edit:{chat_id_str}:{msg_type}")],

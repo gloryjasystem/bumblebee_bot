@@ -153,7 +153,20 @@ async def on_bot_settings(callback: CallbackQuery, platform_user: dict | None):
            WHERE bc.child_bot_id=$1 AND bc.owner_id=$2 AND bu.is_active=true AND bu.bot_activated=true""",
         child_bot_id, owner_id,
     ) or 0
-    dead_users = max(total_users - active_users, 0)
+    not_started = max(total_users - active_users, 0)
+    left_users = await db.fetchval(
+        """SELECT COUNT(*) FROM bot_users bu
+           JOIN bot_chats bc ON bu.chat_id=bc.chat_id AND bu.owner_id=bc.owner_id
+           WHERE bc.child_bot_id=$1 AND bc.owner_id=$2 AND bu.is_active=false AND bu.left_at IS NOT NULL""",
+        child_bot_id, owner_id,
+    ) or 0
+    premium_users = await db.fetchval(
+        """SELECT COUNT(*) FROM bot_users bu
+           JOIN bot_chats bc ON bu.chat_id=bc.chat_id AND bu.owner_id=bc.owner_id
+           WHERE bc.child_bot_id=$1 AND bc.owner_id=$2 AND bu.is_premium=true""",
+        child_bot_id, owner_id,
+    ) or 0
+    conversion = round(active_users / total_users * 100) if total_users > 0 else 0
 
     username = bot["bot_username"]
     text = (
@@ -162,12 +175,17 @@ async def on_bot_settings(callback: CallbackQuery, platform_user: dict | None):
         f"├ Сегодня ≈ {today_users}\n"
         f"├ Вчера ≈ {yesterday_users}\n"
         f"├ Всего ≈ {total_users}\n"
-        f"└ Заявок в очереди ≈ {pending}\n\n"
+        f"├ Заявок в очереди ≈ {pending}\n"
+        f"├ 🟢 Активны в боте ≈ {active_users}\n"
+        f"└ ⚪ Не запустили бота ≈ {not_started}\n\n"
         f"<u>💬 Сообщений</u>\n"
         f"├ Сегодня ≈ 0\n"
         f"├ Вчера ≈ 0\n"
         f"└ Всего ≈ 0\n\n"
-        f"🟢 Живые ≈ {active_users}    🔴 Мёртвые ≈ {dead_users}"
+        f"<u>📊 Аналитика</u>\n"
+        f"├ 📈 Конверсия бота: {conversion}%\n"
+        f"├ 🚪 Отписались: {left_users}\n"
+        f"└ ⭐ Telegram Premium: {premium_users}"
     )
 
     keyboard = [
@@ -657,7 +675,16 @@ async def _show_channel_detail(callback: CallbackQuery, platform_user: dict, ch_
         "SELECT COUNT(*) FROM bot_users WHERE owner_id=$1 AND chat_id=$2::bigint AND is_active=true AND bot_activated=true",
         owner_id, chat_id,
     ) or 0
-    dead_users = max(total_users - active_users, 0)
+    not_started = max(total_users - active_users, 0)
+    left_users = await db.fetchval(
+        "SELECT COUNT(*) FROM bot_users WHERE owner_id=$1 AND chat_id=$2::bigint AND is_active=false AND left_at IS NOT NULL",
+        owner_id, chat_id,
+    ) or 0
+    premium_users = await db.fetchval(
+        "SELECT COUNT(*) FROM bot_users WHERE owner_id=$1 AND chat_id=$2::bigint AND is_premium=true",
+        owner_id, chat_id,
+    ) or 0
+    conversion = round(active_users / total_users * 100) if total_users > 0 else 0
 
     # ── Формируем текст ───────────────────────────────────────
     text = (
@@ -666,12 +693,17 @@ async def _show_channel_detail(callback: CallbackQuery, platform_user: dict, ch_
         f"├ Сегодня ≈ {today_users}\n"
         f"├ Вчера ≈ {yesterday_users}\n"
         f"├ Всего ≈ {total_users}\n"
-        f"└ Заявок в очереди ≈ {pending_requests}\n\n"
+        f"├ Заявок в очереди ≈ {pending_requests}\n"
+        f"├ 🟢 Активны в боте ≈ {active_users}\n"
+        f"└ ⚪ Не запустили бота ≈ {not_started}\n\n"
         f"<u>💬 Сообщений</u>\n"
         f"├ Сегодня ≈ 0\n"
         f"├ Вчера ≈ 0\n"
         f"└ Всего ≈ 0\n\n"
-        f"🟢 Живые ≈ {active_users}    🔴 Мёртвые ≈ {dead_users}"
+        f"<u>📊 Аналитика</u>\n"
+        f"├ 📈 Конверсия бота: {conversion}%\n"
+        f"├ 🚪 Отписались: {left_users}\n"
+        f"└ ⭐ Telegram Premium: {premium_users}"
     )
 
     ch_id_b = ch["id"]

@@ -145,7 +145,10 @@ async def _handle_child_update(
 async def _handle_message(bot: Bot, child_bot_id: int, owner_id: int, message):
     """
     Обрабатывает сообщения пользователя в личку дочернего бота.
-    /start → устанавливает bot_activated=true для всех записей юзера по каналам этого бота.
+    /start → устанавливает bot_activated=true. Работает в обоих порядках:
+      - Если юзер уже в канале → UPDATE существующей записи
+      - Если юзер ещё не в канале → INSERT с bot_activated=true (is_active=false)
+        При вступлении в канал ON CONFLICT DO UPDATE не трогает bot_activated.
     """
     user = message.from_user
     if not user or user.is_bot:
@@ -154,26 +157,33 @@ async def _handle_message(bot: Bot, child_bot_id: int, owner_id: int, message):
     text = message.text or ""
 
     if text.startswith("/start"):
-        # Отмечаем пользователя как активировавшего бота во всех каналах этого бота
-        updated = await db.execute(
-            """
-            UPDATE bot_users
-            SET bot_activated = true
-            WHERE user_id = $1
-              AND chat_id IN (
-                  SELECT chat_id FROM bot_chats
-                  WHERE child_bot_id = $2 AND is_active = true
-              )
-            """,
-            user.id, child_bot_id,
+        # UPSERT: создаём/обновляем запись по каждому каналу этого бота
+        chats = await db.fetch(
+            "SELECT chat_id, owner_id FROM bot_chats WHERE child_bot_id=$1 AND is_active=true",
+            child_bot_id,
         )
-        logger.info(f"[START] user {user.id} activated bot {child_bot_id}: {updated}")
+        for ch in chats:
+            await db.execute(
+                """
+                INSERT INTO bot_users (owner_id, chat_id, user_id, username, first_name,
+                                       language_code, is_premium, bot_activated, is_active)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, true, false)
+                ON CONFLICT (owner_id, chat_id, user_id) DO UPDATE
+                    SET bot_activated = true
+                """,
+                ch["owner_id"], ch["chat_id"], user.id,
+                user.username, user.first_name or "",
+                user.language_code,
+                bool(getattr(user, "is_premium", False)),
+            )
+        logger.info(f"[START] user {user.id} activated bot {child_bot_id} ({len(chats)} channels)")
 
-        # Отвечаем пользователю
+        # Подтверждение пользователю
         try:
             await bot.send_message(
                 user.id,
-                "✅ Вы активировали бота. Теперь вы будете получать сообщения от нашего канала.",
+                "✅ Вы подписались на уведомления от канала. "
+                "Теперь вы будете получать приветствие и рассылки.",
             )
         except Exception as e:
             logger.debug(f"[START] send reply failed for {user.id}: {e}")

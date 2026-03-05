@@ -142,9 +142,9 @@ async def on_bot_settings(callback: CallbackQuery, platform_user: dict | None):
         child_bot_id, owner_id, yesterday,
     ) or 0
     pending = await db.fetchval(
-        """SELECT COUNT(*) FROM bot_users bu
-           JOIN bot_chats bc ON bu.chat_id=bc.chat_id AND bu.owner_id=bc.owner_id
-           WHERE bc.child_bot_id=$1 AND bc.owner_id=$2 AND bu.is_active=false AND bu.left_at IS NULL""",
+        """SELECT COUNT(*) FROM join_requests jr
+           JOIN bot_chats bc ON jr.chat_id=bc.chat_id AND jr.owner_id=bc.owner_id
+           WHERE bc.child_bot_id=$1 AND bc.owner_id=$2 AND jr.status='pending'""",
         child_bot_id, owner_id,
     ) or 0
     active_users = await db.fetchval(
@@ -668,7 +668,7 @@ async def _show_channel_detail(callback: CallbackQuery, platform_user: dict, ch_
         owner_id, chat_id, yesterday,
     ) or 0
     pending_requests = await db.fetchval(
-        "SELECT COUNT(*) FROM bot_users WHERE owner_id=$1 AND chat_id=$2::bigint AND is_active=false AND left_at IS NULL",
+        "SELECT COUNT(*) FROM join_requests WHERE owner_id=$1 AND chat_id=$2::bigint AND status='pending'",
         owner_id, chat_id,
     ) or 0
     active_users = await db.fetchval(

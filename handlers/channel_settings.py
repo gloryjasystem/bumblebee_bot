@@ -1709,7 +1709,10 @@ async def on_bs_req_accept_all(callback: CallbackQuery, bot: Bot, platform_user:
     if bot_row:
         await child_bot_instance.session.close()
     await callback.answer(f"✔️ Принято: {approved}", show_alert=True)
-    await _show_bs_requests(callback, platform_user, child_bot_id)
+    try:
+        await _show_bs_requests(callback, platform_user, child_bot_id)
+    except Exception:
+        pass  # MessageNotModified — экран уже актуален
 
 
 @router.callback_query(F.data.startswith("bs_req_decline_all:"))

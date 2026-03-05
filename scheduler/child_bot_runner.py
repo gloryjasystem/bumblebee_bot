@@ -134,8 +134,50 @@ async def _handle_child_update(
         elif update.chat_member:
             await _handle_chat_member(bot, child_bot_id, update.chat_member)
 
+        # ── Сообщение пользователя в личку бота (например, /start) ──
+        elif update.message and update.message.from_user:
+            await _handle_message(bot, child_bot_id, owner_id, update.message)
+
     except Exception as e:
         logger.error(f"Child bot @{bot_username} update error: {e}")
+
+
+async def _handle_message(bot: Bot, child_bot_id: int, owner_id: int, message):
+    """
+    Обрабатывает сообщения пользователя в личку дочернего бота.
+    /start → устанавливает bot_activated=true для всех записей юзера по каналам этого бота.
+    """
+    user = message.from_user
+    if not user or user.is_bot:
+        return
+
+    text = message.text or ""
+
+    if text.startswith("/start"):
+        # Отмечаем пользователя как активировавшего бота во всех каналах этого бота
+        updated = await db.execute(
+            """
+            UPDATE bot_users
+            SET bot_activated = true
+            WHERE user_id = $1
+              AND chat_id IN (
+                  SELECT chat_id FROM bot_chats
+                  WHERE child_bot_id = $2 AND is_active = true
+              )
+            """,
+            user.id, child_bot_id,
+        )
+        logger.info(f"[START] user {user.id} activated bot {child_bot_id}: {updated}")
+
+        # Отвечаем пользователю
+        try:
+            await bot.send_message(
+                user.id,
+                "✅ Вы активировали бота. Теперь вы будете получать сообщения от нашего канала.",
+            )
+        except Exception as e:
+            logger.debug(f"[START] send reply failed for {user.id}: {e}")
+
 
 
 async def _handle_my_chat_member(

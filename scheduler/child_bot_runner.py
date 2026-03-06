@@ -549,10 +549,9 @@ async def _handle_join_request(bot: Bot, child_bot_id: int, event: ChatJoinReque
                 "WHERE owner_id=$1 AND chat_id=$2 AND user_id=$3",
                 owner_id, chat_id, user.id,
             )
-            # Трекинг ссылки-приглашения (если пришёл по ссылке с заявкой)
-            link_id = None
-            if getattr(event, "invite_link", None) and event.invite_link:
-                link_id = await _track_invite_link(event.invite_link.invite_link, user)
+            # Трекинг ссылки-приглашения (fallback уже вычислен выше в invite_link_url)
+            if invite_link_url:
+                await _track_invite_link(invite_link_url, user)
             # Приветственное сообщение
             welcome = chat_settings.get("welcome_text")
             if welcome:

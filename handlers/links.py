@@ -405,19 +405,21 @@ async def on_link_budget(event, state: FSMContext, bot: Bot):
             await event.answer(text, parse_mode="HTML", reply_markup=kb)
 
     try:
-        if link_type == "request":
-            tg_link = await child_bot_instance.create_chat_invite_link(
-                chat_id, creates_join_request=True, name=data["name"]
-            )
-        elif link_type == "onetime":
+        if link_type == "onetime":
+            # Одноразовая ссылка: member_limit=1, без creates_join_request (взаимоисключающие)
             tg_link = await child_bot_instance.create_chat_invite_link(
                 chat_id, member_limit=1, name=data["name"]
             )
         else:
-            kwargs = {"name": data["name"]}
-            if member_limit:
-                kwargs["member_limit"] = member_limit
+            # request или regular — ВСЕГДА creates_join_request=True
+            # Только так Telegram заполняет invite_link в событиях (для статистики)
+            kwargs = {"name": data["name"], "creates_join_request": True}
+            if link_type == "regular" and member_limit:
+                # Лимит несовместим с creates_join_request, игнорируем
+                pass
             tg_link = await child_bot_instance.create_chat_invite_link(chat_id, **kwargs)
+            # Принудительно сохраняем как тип "request" (потому что creates_join_request=True)
+            link_type = "request"
     except Exception as e:
         await _edit_final(f"❌ Не удалось создать ссылку: {e}")
         return

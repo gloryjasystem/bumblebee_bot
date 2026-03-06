@@ -649,6 +649,7 @@ async def _handle_join_request(bot: Bot, child_bot_id: int, event: ChatJoinReque
                 VALUES ($1, $2, $3, $4, $5, $6, $7, now())
                 ON CONFLICT (owner_id, chat_id, user_id) DO UPDATE
                     SET is_active=true, left_at=NULL,
+                        joined_at=now(),
                         username=EXCLUDED.username,
                         is_premium=EXCLUDED.is_premium,
                         bot_activated = (bot_users.bot_activated OR EXCLUDED.bot_activated)
@@ -777,6 +778,7 @@ async def _handle_chat_member(bot: Bot, child_bot_id: int, event: ChatMemberUpda
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now())
             ON CONFLICT (owner_id, chat_id, user_id) DO UPDATE
                 SET is_active=true, left_at=NULL,
+                    joined_at=now(),
                     username=EXCLUDED.username,
                     first_name=EXCLUDED.first_name,
                     is_premium=EXCLUDED.is_premium,

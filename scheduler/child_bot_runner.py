@@ -389,7 +389,7 @@ async def _handle_chat_member(bot: Bot, child_bot_id: int, event: ChatMemberUpda
     # Получаем настройки площадки
     chat_settings = await db.fetchrow(
         """
-        SELECT owner_id, welcome_text
+        SELECT owner_id, welcome_text, farewell_text
         FROM bot_chats
         WHERE child_bot_id=$1 AND chat_id=$2 AND is_active=true
         """,
@@ -514,3 +514,11 @@ async def _handle_chat_member(bot: Bot, child_bot_id: int, event: ChatMemberUpda
             owner_id, chat_id, user.id,
         )
         logger.info(f"[MEMBER] User {user.id} left chat {chat_id} (owner={owner_id})")
+
+        # Прощальное сообщение
+        farewell = chat_settings.get("farewell_text")
+        if farewell:
+            try:
+                await bot.send_message(user.id, farewell, parse_mode="HTML")
+            except Exception:
+                pass  # Пользователь заблокировал бота

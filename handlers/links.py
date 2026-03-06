@@ -87,7 +87,8 @@ def kb_links_list(links: list, chat_id: int, child_bot_id: int,
     )])
     buttons.append([InlineKeyboardButton(
         text="◀️ Назад",
-        callback_data=f"bs_links:{child_bot_id}",
+        # Идём сразу в настройки бота, минуя picker (который ломается)
+        callback_data=f"bot_settings:{child_bot_id}" if child_bot_id else "noop",
     )])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -580,7 +581,7 @@ async def on_link_share(callback: CallbackQuery, platform_user: dict | None):
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="↗️ Поделиться в Telegram", url=share_url)],
-            [InlineKeyboardButton(text="◀️ Назад", callback_data=f"link_detail:{link_id}:0:0")],
+            [InlineKeyboardButton(text="◀️ Назад", callback_data=f"link_detail:{link_id}:{link['chat_id']}:0")],
         ]),
     )
     await callback.answer()

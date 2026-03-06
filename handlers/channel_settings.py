@@ -3344,7 +3344,8 @@ async def _bs_channel_picker(callback: CallbackQuery, platform_user: dict,
         return
     buttons = [[InlineKeyboardButton(
         text=f"📍 {ch['chat_title'] or ch['chat_id']}",
-        callback_data=f"{section}:{ch['chat_id']}",
+        # Передаём child_bot_id в callback чтобы Back-кнопка не терялась
+        callback_data=f"{section}:{ch['chat_id']}:{child_bot_id}",
     )] for ch in chats]
     buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"bot_settings:{child_bot_id}")])
     await callback.message.edit_text(

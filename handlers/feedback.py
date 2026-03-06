@@ -352,9 +352,9 @@ async def handle_feedback_message(
 # ── Обработка кнопки «Ответить» ────────────────────────────────
 @router.callback_query(F.data.startswith("fb_reply:"))
 async def on_fb_reply(callback: CallbackQuery, state: FSMContext):
-    """Владелец/админ нажал «Ответить». Не требует platform_user — проверяем права через БД."""
-    # Отвечаем СРАЗУ, чтобы Telegram не показывал часы загрузки
-    await callback.answer()
+    """DIAGNOSTIC: minimum version to check if handler is reached at all."""
+    logger.info(f"[FB_REPLY_DIAG] callback received from {callback.from_user.id}, data={callback.data}")
+    await callback.answer("🔔 Кнопка работает! Пишите ответ.", show_alert=True)
     try:
         parts          = callback.data.split(":")
         if len(parts) < 4:

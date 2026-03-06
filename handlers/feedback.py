@@ -390,11 +390,11 @@ async def on_fb_reply(callback: CallbackQuery, state: FSMContext):
                         target_name = raw
                     break
 
-        # Меняем кнопку на статус ожидания
+        # Меняем кнопку на статус ожидания (убираем кнопку из уведомления)
         waiting_text = (
             f"✉️ <b>Ответ на обратную связь</b>\n"
             f"От: {target_name} ({target_username})\n\n"
-            f"⏳ <i>Ожидаем ответ... Напишите сообщение в этот чат ↓↓↓</i>"
+            f"⏳ <i>Ожидаем ответ...</i>"
         )
         try:
             await callback.message.edit_text(waiting_text, parse_mode="HTML")
@@ -410,12 +410,22 @@ async def on_fb_reply(callback: CallbackQuery, state: FSMContext):
         )
         logger.info(f"[FB_REPLY] clicker={clicker_id} set reply state for user={target_user_id} via bot={child_bot_id}")
 
+        # Отправляем явное сообщение-подсказку куда писать ответ
+        name_display = f"{target_name} ({target_username})" if target_username else target_name
+        await callback.message.answer(
+            f"✉️ <b>Напишите ответ для {name_display}:</b>\n\n"
+            f"Следующее сообщение, которое вы напишете сюда, будет отправлено пользователю в личку через дочернего бота.",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="❌ Отмена", callback_data="fb_cancel_reply")],
+            ]),
+        )
+        # Видимый тост — подтверждение нажатия
+        await callback.answer(f"✅ Пишите ответ для {target_name} 👇")
+
     except Exception as e:
         logger.error(f"[FB_REPLY] Unexpected error: {e}", exc_info=True)
-        try:
-            await callback.message.answer(f"⚠️ Ошибка: {e}")
-        except Exception:
-            pass
+        await callback.answer(f"⚠️ Ошибка: {e}", show_alert=True)
 
 
 # ── Обработка кнопки «Ответить» ────────────────────────────────

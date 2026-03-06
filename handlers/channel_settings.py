@@ -1400,9 +1400,9 @@ async def on_lim_count(callback: CallbackQuery, platform_user: dict | None):
         "SELECT join_limit_count FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint",
         platform_user["user_id"], chat_id,
     )
-    cycle   = {10: 20, 20: 50, 50: 100, 100: 200, 200: 10}
-    cur     = int(ch["join_limit_count"] if ch and ch.get("join_limit_count") else 50)
-    new_val = cycle.get(cur, 50)
+    cycle   = {2: 5, 5: 10, 10: 20, 20: 50, 50: 100, 100: 200, 200: 2}
+    cur     = int(ch["join_limit_count"] if ch and ch.get("join_limit_count") else 2)
+    new_val = cycle.get(cur, 2)
     await db.execute(
         "UPDATE bot_chats SET join_limit_count=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
         new_val, platform_user["user_id"], chat_id,
@@ -1986,6 +1986,7 @@ async def on_bs_lim_probe(callback: CallbackQuery, platform_user: dict | None):
         "UPDATE bot_chats SET join_limit_enabled=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
         new_val, owner_id, chat_id,
     )
+    await callback.answer("Проверка: " + ("✅ Вкл" if new_val else "☐ Выкл"))
     child_bot_id = await _get_child_bot_id_by_chat(chat_id, owner_id)
     if child_bot_id:
         await _show_bs_limits(callback, child_bot_id, owner_id)
@@ -2008,6 +2009,7 @@ async def on_bs_lim_pun(callback: CallbackQuery, platform_user: dict | None):
         "UPDATE bot_chats SET join_limit_punishment=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
         new_val, owner_id, chat_id,
     )
+    await callback.answer("Наказание: " + new_val.capitalize())
     child_bot_id = await _get_child_bot_id_by_chat(chat_id, owner_id)
     if child_bot_id:
         await _show_bs_limits(callback, child_bot_id, owner_id)
@@ -2030,6 +2032,7 @@ async def on_bs_lim_time(callback: CallbackQuery, platform_user: dict | None):
         "UPDATE bot_chats SET join_limit_period_min=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
         new_val, owner_id, chat_id,
     )
+    await callback.answer(f"⏱ {new_val} мин.")
     child_bot_id = await _get_child_bot_id_by_chat(chat_id, owner_id)
     if child_bot_id:
         await _show_bs_limits(callback, child_bot_id, owner_id)
@@ -2045,13 +2048,14 @@ async def on_bs_lim_count(callback: CallbackQuery, platform_user: dict | None):
         "SELECT join_limit_count FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint",
         owner_id, chat_id,
     )
-    cycle = {10: 20, 20: 50, 50: 100, 100: 200, 200: 10}
-    cur   = int((ch["join_limit_count"] if ch and ch.get("join_limit_count") else 50))
-    new_val = cycle.get(cur, 50)
+    cycle = {2: 5, 5: 10, 10: 20, 20: 50, 50: 100, 100: 200, 200: 2}
+    cur   = int((ch["join_limit_count"] if ch and ch.get("join_limit_count") else 2))
+    new_val = cycle.get(cur, 2)
     await db.execute(
         "UPDATE bot_chats SET join_limit_count=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
         new_val, owner_id, chat_id,
     )
+    await callback.answer(f"🚫 Лимит: {new_val}")
     child_bot_id = await _get_child_bot_id_by_chat(chat_id, owner_id)
     if child_bot_id:
         await _show_bs_limits(callback, child_bot_id, owner_id)

@@ -443,6 +443,14 @@ async def _handle_join_request(bot: Bot, child_bot_id: int, event: ChatJoinReque
     raw_invite = event.invite_link.invite_link if event.invite_link else None
     logger.info(f"[JOIN REQ] user={user.id} chat={chat_id} invite_link={raw_invite}")
 
+    # RAW dump — чтобы увидеть всё что прислал Telegram
+    try:
+        import json
+        raw = event.model_dump() if hasattr(event, "model_dump") else {}
+        logger.info(f"[JOIN REQ RAW] {json.dumps(raw, ensure_ascii=False, default=str)[:600]}")
+    except Exception as _e:
+        logger.info(f"[JOIN REQ RAW err] {_e}")
+
     # Получаем настройки площадки
     chat_settings = await db.fetchrow(
         """
@@ -474,6 +482,22 @@ async def _handle_join_request(bot: Bot, child_bot_id: int, event: ChatJoinReque
 
     captcha_type = (chat_settings.get("captcha_type") or "off")
 
+    # Определяем invite_link_url:
+    # 1) Берём из события (если Telegram прислал)
+    # 2) Fallback: если только одна активная request-ссылка в чате — атрибутируем к ней
+    raw_invite = event.invite_link.invite_link if event.invite_link else None
+    invite_link_url = raw_invite
+    if not invite_link_url:
+        link_rows = await db.fetch(
+            "SELECT link FROM invite_links WHERE chat_id=$1::bigint AND link_type='request' AND is_active=true",
+            chat_id,
+        )
+        if len(link_rows) == 1:
+            invite_link_url = link_rows[0]["link"]
+            logger.info(f"[JOIN REQ FALLBACK] Inferred link from single active request link: {invite_link_url}")
+        elif len(link_rows) > 1:
+            logger.info(f"[JOIN REQ FALLBACK] Multiple active links ({len(link_rows)}), can't infer")
+
     # ── КАПЧА (приоритет над авто-принятием) ──────────────────
     if captcha_type != "off":
         # chat_join_request даёт боту временное право писать в личку —
@@ -489,6 +513,7 @@ async def _handle_join_request(bot: Bot, child_bot_id: int, event: ChatJoinReque
             "captcha_accept_all":       chat_settings.get("captcha_accept_all") or False,
             "welcome_text":             chat_settings.get("welcome_text"),
             "owner_id":                 owner_id,
+            "invite_link_url":          invite_link_url,   # для трекинга статистики
         }
         await send_captcha(bot, event, settings_for_captcha)
         return  # дальнейшая обработка — в captcha.py после нажатия кнопки

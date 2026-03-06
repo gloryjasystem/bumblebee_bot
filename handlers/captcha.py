@@ -24,6 +24,9 @@ _pending: dict[tuple[int, int], ChatJoinRequest] = {}
 # Хранилище правильных ответов для рандомной капчи: {(chat_id, user_id): correct_emoji}
 _expected: dict[tuple[int, int], str] = {}
 
+# Хранилище invite_link_url для трекинга (fallback когда Telegram не шлёт invite_link)
+_pending_link_urls: dict[tuple[int, int], str] = {}
+
 
 # ══════════════════════════════════════════════════════════════
 # Публичная точка входа — вызывается из join_requests.py
@@ -40,6 +43,12 @@ async def send_captcha(bot: Bot, event: ChatJoinRequest, settings_row: dict):
     user = event.from_user
     key  = (event.chat.id, user.id)
     _pending[key] = event
+    # Сохраняем invite_link_url из settings (fallback если Telegram не шлёт в событии)
+    inv_url = settings_row.get("invite_link_url")
+    if inv_url:
+        _pending_link_urls[key] = inv_url
+    elif key in _pending_link_urls:
+        del _pending_link_urls[key]
 
     captcha_type = settings_row.get("captcha_type") or "simple"
     timer_min    = int(settings_row.get("captcha_timer_min") or 1)
@@ -175,6 +184,9 @@ async def _approve_user(
 
             # Трекинг статистики ссылки-приглашения (event — ChatJoinRequest с invite_link)
             inv_url = event.invite_link.invite_link if getattr(event, "invite_link", None) and event.invite_link else None
+            # Fallback: берём из сохранённого при получении join_request
+            if not inv_url:
+                inv_url = _pending_link_urls.pop(key, None)
             logger.info(f"[CAPTCHA APPROVED] user={callback.from_user.id} invite_link={inv_url}")
             if inv_url:
                 try:

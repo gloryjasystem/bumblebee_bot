@@ -124,19 +124,19 @@ async def on_bot_settings(callback: CallbackQuery, platform_user: dict | None):
     yesterday = today - timedelta(days=1)
 
     total_users = await db.fetchval(
-        """SELECT COUNT(*) FROM bot_users bu
+        """SELECT COUNT(DISTINCT bu.user_id) FROM bot_users bu
            JOIN bot_chats bc ON bu.chat_id=bc.chat_id AND bu.owner_id=bc.owner_id
            WHERE bc.child_bot_id=$1 AND bc.owner_id=$2""",
         child_bot_id, owner_id,
     ) or 0
     today_users = await db.fetchval(
-        """SELECT COUNT(*) FROM bot_users bu
+        """SELECT COUNT(DISTINCT bu.user_id) FROM bot_users bu
            JOIN bot_chats bc ON bu.chat_id=bc.chat_id AND bu.owner_id=bc.owner_id
            WHERE bc.child_bot_id=$1 AND bc.owner_id=$2 AND bu.joined_at::date=$3""",
         child_bot_id, owner_id, today,
     ) or 0
     yesterday_users = await db.fetchval(
-        """SELECT COUNT(*) FROM bot_users bu
+        """SELECT COUNT(DISTINCT bu.user_id) FROM bot_users bu
            JOIN bot_chats bc ON bu.chat_id=bc.chat_id AND bu.owner_id=bc.owner_id
            WHERE bc.child_bot_id=$1 AND bc.owner_id=$2 AND bu.joined_at::date=$3""",
         child_bot_id, owner_id, yesterday,
@@ -148,20 +148,20 @@ async def on_bot_settings(callback: CallbackQuery, platform_user: dict | None):
         child_bot_id, owner_id,
     ) or 0
     active_users = await db.fetchval(
-        """SELECT COUNT(*) FROM bot_users bu
+        """SELECT COUNT(DISTINCT bu.user_id) FROM bot_users bu
            JOIN bot_chats bc ON bu.chat_id=bc.chat_id AND bu.owner_id=bc.owner_id
            WHERE bc.child_bot_id=$1 AND bc.owner_id=$2 AND bu.is_active=true AND bu.bot_activated=true""",
         child_bot_id, owner_id,
     ) or 0
     not_started = max(total_users - active_users, 0)
     left_users = await db.fetchval(
-        """SELECT COUNT(*) FROM bot_users bu
+        """SELECT COUNT(DISTINCT bu.user_id) FROM bot_users bu
            JOIN bot_chats bc ON bu.chat_id=bc.chat_id AND bu.owner_id=bc.owner_id
            WHERE bc.child_bot_id=$1 AND bc.owner_id=$2 AND bu.is_active=false AND bu.left_at IS NOT NULL""",
         child_bot_id, owner_id,
     ) or 0
     premium_users = await db.fetchval(
-        """SELECT COUNT(*) FROM bot_users bu
+        """SELECT COUNT(DISTINCT bu.user_id) FROM bot_users bu
            JOIN bot_chats bc ON bu.chat_id=bc.chat_id AND bu.owner_id=bc.owner_id
            WHERE bc.child_bot_id=$1 AND bc.owner_id=$2 AND bu.is_premium=true""",
         child_bot_id, owner_id,

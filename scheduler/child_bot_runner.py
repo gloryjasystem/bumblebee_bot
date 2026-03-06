@@ -388,9 +388,12 @@ async def _handle_message(bot: Bot, child_bot_id: int, owner_id: int, message):
         )
         if chats:
             from handlers.feedback import handle_feedback_message
+            sent_owners: set = set()
             for ch in chats:
-                await handle_feedback_message(message, bot, ch["owner_id"], ch["chat_id"], child_bot_id)
-            logger.info(f"[FEEDBACK] Forwarded msg from user {user.id} to {len(chats)} chat(s)")
+                if ch["owner_id"] not in sent_owners:
+                    sent_owners.add(ch["owner_id"])
+                    await handle_feedback_message(message, bot, ch["owner_id"], ch["chat_id"], child_bot_id)
+            logger.info(f"[FEEDBACK] Forwarded msg from user {user.id} to {len(sent_owners)} owner(s)")
         else:
             logger.debug(f"[FEEDBACK] No feedback-enabled chats for user {user.id}")
 

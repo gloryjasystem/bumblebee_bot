@@ -440,7 +440,13 @@ async def _check_join_limit(
 ) -> bool:
     """Проверяет лимит вступлений за период. Возвращает True если пользователь заблокирован.
     Наказание применяется через дочернего бота (bot). Уведомление — через главного (_main_bot)."""
-    if not settings.get("join_limit_enabled"):
+    enabled = settings.get("join_limit_enabled")
+    logger.info(
+        f"[LIMIT DBG] user={user.id} chat={chat_id} "
+        f"enabled={enabled} count_cfg={settings.get('join_limit_count')} "
+        f"period={settings.get('join_limit_period_min')}"
+    )
+    if not enabled:
         return False
 
     period_min = int(settings.get("join_limit_period_min") or 1)
@@ -454,6 +460,7 @@ async def _check_join_limit(
         "AND joined_at >= now() - ($3 * interval '1 minute')",
         owner_id, chat_id, period_min,
     )
+    logger.info(f"[LIMIT DBG] count_now={count} limit={limit} period={period_min}min")
 
     if count is not None and count >= limit:
         logger.info(

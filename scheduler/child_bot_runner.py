@@ -693,7 +693,8 @@ async def _handle_chat_member(bot: Bot, child_bot_id: int, event: ChatMemberUpda
     owner_id = chat_settings["owner_id"]
 
     # ── Пользователь вступил ──────────────────────────────────
-    if new_status == "member" and old_status in (None, "left", "kicked"):
+    # old_status может быть: None, "left", "kicked", "restricted" (одобрение заявки)
+    if new_status == "member" and old_status not in ("member", "administrator", "creator"):
         from services.security import detect_rtl, detect_hieroglyph
 
         full_name = f"{user.first_name or ''} {user.last_name or ''}".strip()

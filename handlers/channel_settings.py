@@ -190,11 +190,43 @@ async def on_req_accept_all(callback: CallbackQuery, bot: Bot, platform_user: di
     from services.security import decrypt_token
     child_bot = AioBot(token=decrypt_token(bot_row["token_encrypted"])) if bot_row else bot
 
+    # Находим единственную активную ссылку с типом request (для трекинга)
+    link_rows = await db.fetch(
+        "SELECT link FROM invite_links WHERE chat_id=$1::bigint AND link_type='request' AND is_active=true",
+        chat_id,
+    )
+    invite_link_url = link_rows[0]["link"] if len(link_rows) == 1 else None
+
+    # Получаем данные пользователей для трекинга демографии
+    pending_full = await db.fetch(
+        "SELECT jr.user_id, jr.first_name, COALESCE(bu.language_code,'') AS language_code, "
+        "       COALESCE(bu.is_premium, false) AS is_premium "
+        "FROM join_requests jr "
+        "LEFT JOIN bot_users bu ON bu.user_id=jr.user_id AND bu.chat_id=$2::bigint "
+        "WHERE jr.owner_id=$1 AND jr.chat_id=$2::bigint AND jr.status='pending'",
+        owner_id, chat_id,
+    )
+
     approved = 0
-    for row in pending:
+    for row in pending_full:
         try:
             await child_bot.approve_chat_join_request(chat_id, row["user_id"])
             approved += 1
+            # Трекинг статистики ссылки
+            if invite_link_url:
+                try:
+                    from scheduler.child_bot_runner import _track_invite_link
+
+                    class _FakeUser:
+                        id = row["user_id"]
+                        first_name = row["first_name"] or ""
+                        last_name = None
+                        language_code = row["language_code"] or None
+                        is_premium = row["is_premium"]
+
+                    await _track_invite_link(invite_link_url, _FakeUser())
+                except Exception:
+                    pass
         except Exception:
             pass
     if bot_row:
@@ -1692,20 +1724,46 @@ async def on_bs_req_accept_all(callback: CallbackQuery, bot: Bot, platform_user:
     child_bot_instance = AioBot(token=decrypt_token(bot_row["token_encrypted"])) if bot_row else bot
     approved = 0
     for chat_row in chats:
+        chat_id = chat_row["chat_id"]
+        # Находим единственную активную request-ссылку для трекинга
+        link_rows = await db.fetch(
+            "SELECT link FROM invite_links WHERE chat_id=$1::bigint AND link_type='request' AND is_active=true",
+            chat_id,
+        )
+        invite_link_url = link_rows[0]["link"] if len(link_rows) == 1 else None
+
         pending = await db.fetch(
-            "SELECT user_id FROM join_requests WHERE owner_id=$1 AND chat_id=$2::bigint AND status='pending'",
-            owner_id, chat_row["chat_id"])
+            "SELECT jr.user_id, jr.first_name, COALESCE(bu.language_code,'') AS language_code, "
+            "       COALESCE(bu.is_premium, false) AS is_premium "
+            "FROM join_requests jr "
+            "LEFT JOIN bot_users bu ON bu.user_id=jr.user_id AND bu.chat_id=$2::bigint "
+            "WHERE jr.owner_id=$1 AND jr.chat_id=$2::bigint AND jr.status='pending'",
+            owner_id, chat_id)
         for row in pending:
             try:
-                await child_bot_instance.approve_chat_join_request(chat_row["chat_id"], row["user_id"])
+                await child_bot_instance.approve_chat_join_request(chat_id, row["user_id"])
                 approved += 1
+                if invite_link_url:
+                    try:
+                        from scheduler.child_bot_runner import _track_invite_link
+
+                        class _FakeUser:
+                            id = row["user_id"]
+                            first_name = row["first_name"] or ""
+                            last_name = None
+                            language_code = row["language_code"] or None
+                            is_premium = row["is_premium"]
+
+                        await _track_invite_link(invite_link_url, _FakeUser())
+                    except Exception:
+                        pass
             except Exception:
                 pass
         if pending:
             await db.execute(
                 "UPDATE join_requests SET status='approved', resolved_at=now() "
                 "WHERE owner_id=$1 AND chat_id=$2::bigint AND status='pending'",
-                owner_id, chat_row["chat_id"])
+                owner_id, chat_id)
     if bot_row:
         await child_bot_instance.session.close()
     await callback.answer(f"✔️ Принято: {approved}", show_alert=True)

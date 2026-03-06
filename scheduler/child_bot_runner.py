@@ -436,7 +436,8 @@ async def _handle_my_chat_member(
 
 
 async def _check_join_limit(
-    bot: Bot, owner_id: int, chat_id: int, settings: dict, user
+    bot: Bot, owner_id: int, chat_id: int, settings: dict, user,
+    chat_title: str = "", chat_username: str = "",
 ) -> bool:
     """Проверяет лимит вступлений за период. Возвращает True если пользователь заблокирован.
     Наказание применяется через дочернего бота (bot). Уведомление — через главного (_main_bot)."""
@@ -465,7 +466,7 @@ async def _check_join_limit(
     if count is not None and count >= limit:
         logger.info(
             f"[LIMIT] owner={owner_id} chat={chat_id} "
-            f"count={count}/{limit} per {period_min}min → {punishment} user={user.id}"
+            f"count={count}/{limit} per {period_min}min \u2192 {punishment} user={user.id}"
         )
         try:
             await bot.ban_chat_member(chat_id, user.id)
@@ -475,16 +476,24 @@ async def _check_join_limit(
         except Exception as _e:
             logger.warning(f"[LIMIT] punishment failed: {_e}")
 
+        # Формируем название чата
+        if chat_username:
+            chat_display = f'<a href="https://t.me/{chat_username}">{chat_title or chat_username}</a>'
+        elif chat_title:
+            chat_display = f"<b>{chat_title}</b>"
+        else:
+            chat_display = f"<code>{chat_id}</code>"
+
         # Уведомление владельцу через главного бота
         if _main_bot:
             try:
-                pun_ru = "🦵 Кик" if punishment == "kick" else "🔨 Бан"
+                pun_ru = "\U0001f9b5 Кик" if punishment == "kick" else "\U0001f528 Бан"
                 await _main_bot.send_message(
                     owner_id,
-                    f"⚠️ <b>Превышен лимит вступлений!</b>\n\n"
-                    f"Чат: <code>{chat_id}</code>\n"
+                    f"\u26a0\ufe0f <b>Превышен лимит вступлений!</b>\n\n"
+                    f"Чат: {chat_display}\n"
                     f"За <b>{period_min} мин.</b> вступило: <b>{count}</b> чел. "
-                    f"(лимит ≥{limit})\n"
+                    f"(лимит \u2265{limit})\n"
                     f"Пользователь <a href='tg://user?id={user.id}'>"
                     f"{user.first_name or user.id}</a> — {pun_ru}",
                     parse_mode="HTML",
@@ -666,8 +675,6 @@ async def _handle_join_request(bot: Bot, child_bot_id: int, event: ChatJoinReque
             # Трекинг ссылки-приглашения (fallback уже вычислен выше в invite_link_url)
             if invite_link_url:
                 await _track_invite_link(invite_link_url, user)
-            # Проверка лимита вступлений (после регистрации, чтобы счётчик учитывал текущего)
-            await _check_join_limit(bot, owner_id, chat_id, dict(chat_settings), user)
             # Приветственное сообщение
             welcome = chat_settings.get("welcome_text")
             if welcome:
@@ -791,8 +798,12 @@ async def _handle_chat_member(bot: Bot, child_bot_id: int, event: ChatMemberUpda
         )
         logger.info(f"[MEMBER] User {user.id} joined chat {chat_id} (owner={owner_id})")
 
-        # Проверка лимита вступлений (открытый канал/группа)
-        await _check_join_limit(bot, owner_id, chat_id, dict(chat_settings), user)
+        # Проверка лимита вступлений
+        await _check_join_limit(
+            bot, owner_id, chat_id, dict(chat_settings), user,
+            chat_title=event.chat.title or "",
+            chat_username=event.chat.username or "",
+        )
 
         # Приветственное сообщение — отправляем только если капча выключена.
         # Если капча включена — приветствие отправляет captcha.py после нажатия кнопки.

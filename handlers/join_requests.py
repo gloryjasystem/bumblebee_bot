@@ -171,17 +171,12 @@ async def on_member_update(event: ChatMemberUpdated, bot: Bot):
             """,
             owner_id, event.chat.id, user.id,
         )
-        # Прощание (только если bot_activated)
+        # Прощание — отправляем всегда (право писать дано Telegram через chat_join_request)
         if settings_row.get("farewell_text"):
-            activated = await db.fetchval(
-                "SELECT bot_activated FROM bot_users WHERE owner_id=$1 AND chat_id=$2 AND user_id=$3",
-                owner_id, event.chat.id, user.id,
-            )
-            if activated:
-                try:
-                    await bot.send_message(user.id, settings_row["farewell_text"])
-                except Exception:
-                    pass
+            try:
+                await bot.send_message(user.id, settings_row["farewell_text"])
+            except Exception:
+                pass
 
 
 async def _save_pending(owner_id: int, chat_id: int, user):
@@ -329,12 +324,6 @@ async def _send_welcome(bot: Bot, chat_id: int, user, settings_row: dict):
     ).replace(
         "{channel}", settings_row.get("chat_title", "")
     )
-    activated = await db.fetchval(
-        "SELECT bot_activated FROM bot_users WHERE owner_id=$1 AND chat_id=$2 AND user_id=$3",
-        settings_row["owner_id"], chat_id, user.id,
-    )
-    if not activated:
-        return
     try:
         # Имитация набора текста
         if settings_row.get("typing_action"):

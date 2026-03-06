@@ -571,8 +571,17 @@ async def on_link_share(callback: CallbackQuery, platform_user: dict | None):
         await callback.answer("Ссылка не найдена", show_alert=True)
         return
 
-    import urllib.parse
+    chat_id = link["chat_id"]
     link_url = link["link"]
+
+    # Получаем child_bot_id чтобы Back работал корректно
+    bc_row = await db.fetchrow(
+        "SELECT child_bot_id FROM bot_chats WHERE chat_id=$1::bigint AND owner_id=$2",
+        chat_id, platform_user["user_id"],
+    )
+    child_bot_id = bc_row["child_bot_id"] if bc_row else 0
+
+    import urllib.parse
     share_url = f"https://t.me/share/url?url={urllib.parse.quote(link_url)}"
 
     await callback.message.edit_text(
@@ -581,7 +590,7 @@ async def on_link_share(callback: CallbackQuery, platform_user: dict | None):
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="↗️ Поделиться в Telegram", url=share_url)],
-            [InlineKeyboardButton(text="◀️ Назад", callback_data=f"link_detail:{link_id}:{link['chat_id']}:0")],
+            [InlineKeyboardButton(text="◀️ Назад", callback_data=f"link_detail:{link_id}:{chat_id}:{child_bot_id}")],
         ]),
     )
     await callback.answer()

@@ -24,6 +24,27 @@ _running_bots: Dict[int, asyncio.Task] = {}  # child_bot_id → Task
 _main_bot: Bot = None   # Bumblebee management bot для уведомлений
 
 
+async def _try_send_dm(child_bot: Bot, user_id: int, text: str, parse_mode: str = "HTML") -> bool:
+    """Отправляет сообщение пользователю в личку.
+    Сначала через дочернего бота, при неудаче — через главного.
+    Возвращает True если отправлено.
+    """
+    # Попытка 1: дочерний бот (работает если есть права через chat_join_request)
+    try:
+        await child_bot.send_message(user_id, text, parse_mode=parse_mode)
+        return True
+    except Exception:
+        pass
+    # Попытка 2: главный бот (работает если пользователь писал /start главному боту)
+    if _main_bot:
+        try:
+            await _main_bot.send_message(user_id, text, parse_mode=parse_mode)
+            return True
+        except Exception:
+            pass
+    return False
+
+
 def init_runner(main_bot: Bot):
     global _main_bot
     _main_bot = main_bot
@@ -370,10 +391,7 @@ async def _handle_join_request(bot: Bot, child_bot_id: int, event: ChatJoinReque
             # Приветственное сообщение
             welcome = chat_settings.get("welcome_text")
             if welcome:
-                try:
-                    await bot.send_message(user.id, welcome, parse_mode="HTML")
-                except Exception:
-                    pass  # Пользователь не открыл диалог с ботом
+                await _try_send_dm(bot, user.id, welcome)
         except Exception as e:
             logger.warning(f"approve join request error: {e}")
     # Если autoaccept=false — заявка остаётся в очереди со статусом pending
@@ -486,13 +504,10 @@ async def _handle_chat_member(bot: Bot, child_bot_id: int, event: ChatMemberUpda
         )
         logger.info(f"[MEMBER] User {user.id} joined chat {chat_id} (owner={owner_id})")
 
-        # Приветственное сообщение (если юзер открыл бота)
+        # Приветственное сообщение
         welcome = chat_settings.get("welcome_text")
         if welcome:
-            try:
-                await bot.send_message(user.id, welcome, parse_mode="HTML")
-            except Exception:
-                pass  # Пользователь не начал диалог с ботом
+            await _try_send_dm(bot, user.id, welcome)
 
     # ── Пользователь вышел/забанен ────────────────────────────
     elif new_status in ("left", "kicked") and old_status == "member":
@@ -518,7 +533,4 @@ async def _handle_chat_member(bot: Bot, child_bot_id: int, event: ChatMemberUpda
         # Прощальное сообщение
         farewell = chat_settings.get("farewell_text")
         if farewell:
-            try:
-                await bot.send_message(user.id, farewell, parse_mode="HTML")
-            except Exception:
-                pass  # Пользователь заблокировал бота
+            await _try_send_dm(bot, user.id, farewell)

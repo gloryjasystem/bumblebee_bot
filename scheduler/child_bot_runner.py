@@ -400,7 +400,7 @@ async def _handle_chat_member(bot: Bot, child_bot_id: int, event: ChatMemberUpda
     # Получаем настройки площадки
     chat_settings = await db.fetchrow(
         """
-        SELECT owner_id, welcome_text, farewell_text
+        SELECT owner_id, welcome_text, farewell_text, captcha_type
         FROM bot_chats
         WHERE child_bot_id=$1 AND chat_id=$2 AND is_active=true
         """,
@@ -497,10 +497,12 @@ async def _handle_chat_member(bot: Bot, child_bot_id: int, event: ChatMemberUpda
         )
         logger.info(f"[MEMBER] User {user.id} joined chat {chat_id} (owner={owner_id})")
 
-        # Приветственное сообщение
+        # Приветственное сообщение — отправляем только если капча выключена.
+        # Если капча включена — приветствие отправляет captcha.py после нажатия кнопки.
+        captcha_type = chat_settings.get("captcha_type") or "off"
         welcome = chat_settings.get("welcome_text")
-        logger.info(f"[WELCOME] user={user.id} welcome_text={repr(welcome)[:80]}")
-        if welcome:
+        logger.info(f"[WELCOME] user={user.id} captcha={captcha_type} welcome_text={repr(welcome)[:60]}")
+        if welcome and captcha_type == "off":
             await _try_send_dm(bot, user.id, welcome)
 
     # ── Пользователь вышел/забанен ────────────────────────────

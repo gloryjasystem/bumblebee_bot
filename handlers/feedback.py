@@ -352,9 +352,8 @@ async def handle_feedback_message(
 # ── Обработка кнопки «Ответить» ────────────────────────────────
 @router.callback_query(F.data.startswith("fb_reply:"))
 async def on_fb_reply(callback: CallbackQuery, state: FSMContext):
-    """DIAGNOSTIC: minimum version to check if handler is reached at all."""
-    logger.info(f"[FB_REPLY_DIAG] callback received from {callback.from_user.id}, data={callback.data}")
-    await callback.answer("🔔 Кнопка работает! Пишите ответ.", show_alert=True)
+    """Владелец/админ нажал «Ответить». Callback приходит в главный бот т.к. уведомление отправлялось от него."""
+    await callback.answer()
     try:
         parts          = callback.data.split(":")
         if len(parts) < 4:

@@ -404,7 +404,7 @@ async def _handle_message(bot: Bot, child_bot_id: int, owner_id: int, message):
                     logger.debug(f"[FEEDBACK] Skipping: user {user.id} is a team member")
                     continue
                 sent_owners.add(oid)
-                await handle_feedback_message(message, bot, oid, ch["chat_id"], child_bot_id)
+                await handle_feedback_message(message, _main_bot, oid, ch["chat_id"], child_bot_id)
             if sent_owners:
                 logger.info(f"[FEEDBACK] Forwarded msg from user {user.id} to {len(sent_owners)} owner(s)")
         else:

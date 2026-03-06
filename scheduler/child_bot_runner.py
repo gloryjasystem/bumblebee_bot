@@ -373,23 +373,25 @@ async def _handle_message(bot: Bot, child_bot_id: int, owner_id: int, message):
 
     else:
         # Обычное сообщение (не /start) → обратная связь
+        # Проверяем флаг на уровне бота (child_bots) ИЛИ на уровне площадки (bot_chats)
         chats = await db.fetch(
             """
             SELECT bc.owner_id, bc.chat_id
             FROM bot_chats bc
             JOIN bot_users bu ON bu.owner_id = bc.owner_id AND bu.chat_id = bc.chat_id
+            LEFT JOIN child_bots cb ON cb.id = bc.child_bot_id
             WHERE bu.user_id=$1 AND bc.child_bot_id=$2
-              AND bc.is_active=true AND bc.feedback_enabled=true
+              AND bc.is_active=true
+              AND (bc.feedback_enabled=true OR cb.feedback_enabled=true)
             """,
             user.id, child_bot_id,
         )
         if chats:
             from handlers.feedback import handle_feedback_message
             for ch in chats:
-                await handle_feedback_message(message, bot, ch["owner_id"], ch["chat_id"])
+                await handle_feedback_message(message, bot, ch["owner_id"], ch["chat_id"], child_bot_id)
             logger.info(f"[FEEDBACK] Forwarded msg from user {user.id} to {len(chats)} chat(s)")
         else:
-            # Обратная связь выключена или пользователь не в каналах этого бота
             logger.debug(f"[FEEDBACK] No feedback-enabled chats for user {user.id}")
 
 

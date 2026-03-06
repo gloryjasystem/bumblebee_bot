@@ -253,26 +253,53 @@ async def on_feedback_lang(callback: CallbackQuery, platform_user: dict | None):
 
 
 # ── Форвардинг входящих сообщений ─────────────────────────────
-async def handle_feedback_message(message: Message, bot: Bot, owner_id: int, chat_id: int):
+async def handle_feedback_message(
+    message: Message, bot: Bot, owner_id: int, chat_id: int,
+    child_bot_id: int | None = None,
+):
     """
-    Вызывается из join_requests.py или autoresponder.
-    Пересылает (анонимно) сообщение владельцу через copy_message.
+    Вызывается из child_bot_runner при входящем личном сообщении.
+    Проверяет feedback_enabled на уровне площадки (bot_chats) ИЛИ бота (child_bots).
+    Пересылает сообщение владельцу (или всем администраторам) через copy_message.
     """
+    # Получаем настройки площадки
     settings = await db.fetchrow(
         "SELECT * FROM bot_chats WHERE owner_id=$1 AND chat_id=$2",
         owner_id, chat_id,
     )
-    if not settings or not settings.get("feedback_enabled"):
+    if not settings:
         return
 
-    target = settings.get("feedback_target", "owner")
-    from_user = message.from_user
-    username = f"@{from_user.username}" if from_user.username else f"ID: {from_user.id}"
+    # Проверяем: включена ли обратная связь на уровне площадки ИЛИ на уровне бота
+    chat_level_enabled = settings.get("feedback_enabled") or False
+    bot_level_enabled  = False
+    bot_row = None
 
+    if not chat_level_enabled and child_bot_id:
+        bot_row = await db.fetchrow(
+            "SELECT feedback_enabled, feedback_target, feedback_lang FROM child_bots WHERE id=$1",
+            child_bot_id,
+        )
+        bot_level_enabled = (bot_row.get("feedback_enabled") or False) if bot_row else False
+
+    if not chat_level_enabled and not bot_level_enabled:
+        return
+
+    # Берём target из того уровня, который включён
+    if chat_level_enabled:
+        target = settings.get("feedback_target", "owner")
+    else:
+        target = (bot_row.get("feedback_target") or "owner") if bot_row else "owner"
+
+    from_user = message.from_user
+    username  = f"@{from_user.username}" if from_user and from_user.username else f"ID: {from_user.id if from_user else '?'}"
+    name      = (from_user.first_name or "?") if from_user else "?"
+
+    chat_title = settings.get("chat_title") or str(chat_id)
     caption = (
         f"📩 <b>Обратная связь</b>\n"
-        f"Площадка: <b>{settings.get('chat_title','?')}</b>\n"
-        f"От: {from_user.first_name} ({username})"
+        f"Площадка: <b>{chat_title}</b>\n"
+        f"От: {name} ({username})"
     )
 
     recipients = [owner_id]
@@ -285,7 +312,7 @@ async def handle_feedback_message(message: Message, bot: Bot, owner_id: int, cha
 
     for recipient_id in set(recipients):
         try:
-            await bot.send_message(recipient_id, caption)
+            await bot.send_message(recipient_id, caption, parse_mode="HTML")
             await message.copy_to(recipient_id)
         except Exception as e:
             logger.debug(f"Feedback forward failed to {recipient_id}: {e}")

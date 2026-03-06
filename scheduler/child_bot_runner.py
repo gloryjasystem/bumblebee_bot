@@ -435,6 +435,59 @@ async def _handle_my_chat_member(
                 pass
 
 
+async def _check_join_limit(
+    bot: Bot, owner_id: int, chat_id: int, settings: dict, user
+) -> bool:
+    """Проверяет лимит вступлений за период. Возвращает True если пользователь заблокирован.
+    Наказание применяется через дочернего бота (bot). Уведомление — через главного (_main_bot)."""
+    if not settings.get("join_limit_enabled"):
+        return False
+
+    period_min = int(settings.get("join_limit_period_min") or 1)
+    limit      = int(settings.get("join_limit_count") or 50)
+    punishment = (settings.get("join_limit_punishment") or "kick")
+
+    # Считаем вступления за последние N минут
+    count = await db.fetchval(
+        "SELECT COUNT(*) FROM bot_users "
+        "WHERE owner_id=$1 AND chat_id=$2::bigint "
+        "AND joined_at >= now() - ($3 * interval '1 minute')",
+        owner_id, chat_id, period_min,
+    )
+
+    if count is not None and count >= limit:
+        logger.info(
+            f"[LIMIT] owner={owner_id} chat={chat_id} "
+            f"count={count}/{limit} per {period_min}min → {punishment} user={user.id}"
+        )
+        try:
+            await bot.ban_chat_member(chat_id, user.id)
+            if punishment == "kick":
+                # Кик = бан + немедленный разбан
+                await bot.unban_chat_member(chat_id, user.id, only_if_banned=True)
+        except Exception as _e:
+            logger.warning(f"[LIMIT] punishment failed: {_e}")
+
+        # Уведомление владельцу через главного бота
+        if _main_bot:
+            try:
+                pun_ru = "🦵 Кик" if punishment == "kick" else "🔨 Бан"
+                await _main_bot.send_message(
+                    owner_id,
+                    f"⚠️ <b>Превышен лимит вступлений!</b>\n\n"
+                    f"Чат: <code>{chat_id}</code>\n"
+                    f"За <b>{period_min} мин.</b> вступило: <b>{count}</b> чел. "
+                    f"(лимит ≥{limit})\n"
+                    f"Пользователь <a href='tg://user?id={user.id}'>"
+                    f"{user.first_name or user.id}</a> — {pun_ru}",
+                    parse_mode="HTML",
+                )
+            except Exception:
+                pass
+        return True
+    return False
+
+
 async def _handle_join_request(bot: Bot, child_bot_id: int, event: ChatJoinRequest):
     """Заявка на вступление — проверяем настройки и обрабатываем."""
     chat_id = event.chat.id
@@ -457,6 +510,9 @@ async def _handle_join_request(bot: Bot, child_bot_id: int, event: ChatJoinReque
         SELECT autoaccept, autoaccept_delay, welcome_text,
                captcha_type, captcha_text, captcha_timer_min, captcha_emoji_set,
                captcha_greet, captcha_accept_now, captcha_accept_all,
+               filter_rtl, filter_hieroglyph, filter_no_photo,
+               join_limit_enabled, join_limit_punishment,
+               join_limit_period_min, join_limit_count,
                owner_id
         FROM bot_chats
         WHERE child_bot_id=$1 AND chat_id=$2 AND is_active=true
@@ -479,6 +535,56 @@ async def _handle_join_request(bot: Bot, child_bot_id: int, event: ChatJoinReque
         owner_id, chat_id, user.id,
         user.username or "", user.first_name or "",
     )
+
+    # ── ЗАЩИТНЫЕ ФИЛЬТРЫ (применяются до капчи/авто-принятия) ───
+    # 1. Языковой фильтр
+    if user.language_code:
+        lang_blocked = await db.fetchrow(
+            "SELECT 1 FROM language_filters "
+            "WHERE owner_id=$1 AND chat_id=$2::bigint AND language_code=$3",
+            owner_id, chat_id, user.language_code,
+        )
+        if lang_blocked:
+            try:
+                await event.decline()
+            except Exception:
+                pass
+            logger.info(f"[FILTER-LANG] Declined {user.id} lang={user.language_code}")
+            return
+
+    # 2. RTL-символы в имени
+    full_name = f"{user.first_name or ''} {user.last_name or ''}".strip()
+    if chat_settings.get("filter_rtl"):
+        from services.security import detect_rtl
+        if detect_rtl(full_name):
+            try:
+                await event.decline()
+            except Exception:
+                pass
+            logger.info(f"[FILTER-RTL] Declined {user.id} name={full_name!r}")
+            return
+
+    # 3. Иероглифы в имени
+    if chat_settings.get("filter_hieroglyph"):
+        from services.security import detect_hieroglyph
+        if detect_hieroglyph(full_name):
+            try:
+                await event.decline()
+            except Exception:
+                pass
+            logger.info(f"[FILTER-HIER] Declined {user.id} name={full_name!r}")
+            return
+
+    # 4. Аккаунты без фото
+    if chat_settings.get("filter_no_photo"):
+        try:
+            photos = await bot.get_user_profile_photos(user.id, limit=1)
+            if photos.total_count == 0:
+                await event.decline()
+                logger.info(f"[FILTER-PHOTO] Declined {user.id} — no avatar")
+                return
+        except Exception as _e:
+            logger.warning(f"[FILTER-PHOTO] get_user_profile_photos failed: {_e}")
 
     captcha_type = (chat_settings.get("captcha_type") or "off")
 
@@ -552,6 +658,8 @@ async def _handle_join_request(bot: Bot, child_bot_id: int, event: ChatJoinReque
             # Трекинг ссылки-приглашения (fallback уже вычислен выше в invite_link_url)
             if invite_link_url:
                 await _track_invite_link(invite_link_url, user)
+            # Проверка лимита вступлений (после регистрации, чтобы счётчик учитывал текущего)
+            await _check_join_limit(bot, owner_id, chat_id, dict(chat_settings), user)
             # Приветственное сообщение
             welcome = chat_settings.get("welcome_text")
             if welcome:
@@ -571,7 +679,9 @@ async def _handle_chat_member(bot: Bot, child_bot_id: int, event: ChatMemberUpda
     # Получаем настройки площадки
     chat_settings = await db.fetchrow(
         """
-        SELECT owner_id, welcome_text, farewell_text, captcha_type
+        SELECT owner_id, welcome_text, farewell_text, captcha_type,
+               join_limit_enabled, join_limit_punishment,
+               join_limit_period_min, join_limit_count
         FROM bot_chats
         WHERE child_bot_id=$1 AND chat_id=$2 AND is_active=true
         """,
@@ -670,6 +780,9 @@ async def _handle_chat_member(bot: Bot, child_bot_id: int, event: ChatMemberUpda
             is_premium, has_rtl, has_hieroglyph, link_id,
         )
         logger.info(f"[MEMBER] User {user.id} joined chat {chat_id} (owner={owner_id})")
+
+        # Проверка лимита вступлений (открытый канал/группа)
+        await _check_join_limit(bot, owner_id, chat_id, dict(chat_settings), user)
 
         # Приветственное сообщение — отправляем только если капча выключена.
         # Если капча включена — приветствие отправляет captcha.py после нажатия кнопки.

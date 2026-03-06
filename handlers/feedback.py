@@ -1,16 +1,22 @@
 """
-handlers/feedback.py — Обратная связь: выбор режима, получателя, языка.
+handlers/feedback.py — Обратная связь: выбор режима, получателя, языка, ответ на сообщение.
 """
 import logging
 from aiogram import Router, F, Bot
 from aiogram.types import (
     Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 )
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 
 import db.pool as db
 
 logger = logging.getLogger(__name__)
 router = Router()
+
+
+class FeedbackFSM(StatesGroup):
+    waiting_for_reply = State()
 
 
 # ── Языковая сетка ───────────────────────────────────────────
@@ -262,7 +268,6 @@ async def handle_feedback_message(
     Проверяет feedback_enabled на уровне площадки (bot_chats) ИЛИ бота (child_bots).
     Пересылает сообщение владельцу (или всем администраторам) через copy_message.
     """
-    # Получаем настройки площадки
     settings = await db.fetchrow(
         "SELECT * FROM bot_chats WHERE owner_id=$1 AND chat_id=$2",
         owner_id, chat_id,
@@ -270,7 +275,6 @@ async def handle_feedback_message(
     if not settings:
         return
 
-    # Проверяем: включена ли обратная связь на уровне площадки ИЛИ на уровне бота
     chat_level_enabled = settings.get("feedback_enabled") or False
     bot_level_enabled  = False
     bot_row = None
@@ -285,7 +289,6 @@ async def handle_feedback_message(
     if not chat_level_enabled and not bot_level_enabled:
         return
 
-    # Берём target из того уровня, который включён
     if chat_level_enabled:
         target = settings.get("feedback_target", "owner")
     else:
@@ -294,6 +297,7 @@ async def handle_feedback_message(
     from_user = message.from_user
     username  = f"@{from_user.username}" if from_user and from_user.username else f"ID: {from_user.id if from_user else '?'}"
     name      = (from_user.first_name or "?") if from_user else "?"
+    user_id   = from_user.id if from_user else 0
 
     chat_title = settings.get("chat_title") or str(chat_id)
     caption = (
@@ -301,6 +305,16 @@ async def handle_feedback_message(
         f"Площадка: <b>{chat_title}</b>\n"
         f"От: {name} ({username})"
     )
+
+    # Кнопка «Ответить» — передаём child_bot_id и user_id
+    reply_kb = None
+    if child_bot_id and user_id:
+        reply_kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(
+                text=f"✉️ Ответить {name}",
+                callback_data=f"fb_reply:{child_bot_id}:{user_id}",
+            )]
+        ])
 
     recipients = [owner_id]
     if target == "all":
@@ -312,7 +326,94 @@ async def handle_feedback_message(
 
     for recipient_id in set(recipients):
         try:
-            await bot.send_message(recipient_id, caption, parse_mode="HTML")
+            await bot.send_message(recipient_id, caption, parse_mode="HTML", reply_markup=reply_kb)
             await message.copy_to(recipient_id)
         except Exception as e:
             logger.debug(f"Feedback forward failed to {recipient_id}: {e}")
+
+
+# ── Обработка кнопки «Ответить» ────────────────────────────────
+@router.callback_query(F.data.startswith("fb_reply:"))
+async def on_fb_reply(callback: CallbackQuery, state: FSMContext, platform_user: dict | None):
+    """Владелец/админ нажал «Ответить» — переходим в режим ввода ответа."""
+    if not platform_user:
+        return
+    parts         = callback.data.split(":")
+    child_bot_id  = int(parts[1])
+    target_user_id = int(parts[2])
+
+    # Получаем имя пользователя из сообщения (из caption над копией)
+    target_name = "пользователю"
+    if callback.message and callback.message.text:
+        for line in callback.message.text.splitlines():
+            if line.startswith("От:"):
+                target_name = line.replace("От:", "").strip()
+                break
+
+    await state.set_state(FeedbackFSM.waiting_for_reply)
+    await state.update_data(
+        child_bot_id=child_bot_id,
+        target_user_id=target_user_id,
+        target_name=target_name,
+    )
+
+    await callback.message.answer(
+        f"✉️ <b>Ответ на обратную связь</b>\n\n"
+        f"Напишите ответ для <b>{target_name}</b>.\n"
+        f"Сообщение будет отправлено в его личку через дочернего бота.",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="fb_cancel_reply")],
+        ]),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "fb_cancel_reply")
+async def on_fb_cancel_reply(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await callback.message.edit_text("❌ Ответ отменён.")
+    await callback.answer()
+
+
+# ── Обработка введённого ответа ────────────────────────────────
+@router.message(FeedbackFSM.waiting_for_reply)
+async def on_feedback_reply_text(message: Message, state: FSMContext):
+    """Владелец ввёл текст ответа — отправляем через дочернего бота."""
+    data           = await state.get_data()
+    child_bot_id   = data.get("child_bot_id")
+    target_user_id = data.get("target_user_id")
+    target_name    = data.get("target_name", "пользователю")
+    await state.clear()
+
+    if not child_bot_id or not target_user_id:
+        await message.answer("⚠️ Ошибка: данные для ответа потеряны.")
+        return
+
+    # Берём токен дочернего бота из БД
+    row = await db.fetchrow(
+        "SELECT encrypted_token FROM child_bots WHERE id=$1",
+        child_bot_id,
+    )
+    if not row:
+        await message.answer("⚠️ Дочерний бот не найден.")
+        return
+
+    from services.security import decrypt_token
+    token = decrypt_token(row["encrypted_token"])
+    child_bot = Bot(token=token)
+    try:
+        await message.copy_to(target_user_id, bot=child_bot)
+        await message.answer(
+            f"✅ Ответ отправлен <b>{target_name}</b>.",
+            parse_mode="HTML",
+        )
+        logger.info(f"[FEEDBACK REPLY] Sent reply to user {target_user_id} via bot {child_bot_id}")
+    except Exception as e:
+        await message.answer(
+            f"⚠️ Не удалось отправить ответ: {e}\n\n"
+            "Возможно, пользователь не писал боту (/start не нажал)."
+        )
+        logger.warning(f"[FEEDBACK REPLY] Failed: {e}")
+    finally:
+        await child_bot.session.close()

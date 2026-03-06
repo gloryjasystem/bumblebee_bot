@@ -173,6 +173,16 @@ async def _approve_user(
             from handlers.join_requests import _register_user, _send_welcome
             await _register_user(settings_row["owner_id"], chat_id, callback.from_user)
 
+            # Трекинг статистики ссылки-приглашения (event — ChatJoinRequest с invite_link)
+            if getattr(event, "invite_link", None) and event.invite_link:
+                try:
+                    from scheduler.child_bot_runner import _track_invite_link
+                    await _track_invite_link(
+                        event.invite_link.invite_link, callback.from_user
+                    )
+                except Exception as e:
+                    logger.warning(f"[LINK TRACK] failed: {e}")
+
             # Отправляем приветствие — сначала через дочернего бота (есть DM-права
             # после chat_join_request), при неудаче — через главного
             welcome = settings_row.get("welcome_text")

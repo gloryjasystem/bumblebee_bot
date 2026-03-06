@@ -553,6 +553,26 @@ async def on_link_detail(callback: CallbackQuery, platform_user: dict | None):
         await callback.answer(f"Ошибка: {e}", show_alert=True)
 
 
+# ── Поделиться ссылкой ────────────────────────────────────────
+
+@router.callback_query(F.data.startswith("link_share:"))
+async def on_link_share(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    link_id = int(callback.data.split(":")[1])
+    link = await db.fetchrow(
+        "SELECT link FROM invite_links WHERE id=$1 AND owner_id=$2",
+        link_id, platform_user["user_id"],
+    )
+    if not link:
+        await callback.answer("Ссылка не найдена", show_alert=True)
+        return
+    import urllib.parse
+    share_url = f"https://t.me/share/url?url={urllib.parse.quote(link['link'])}"
+    # Открывает нативный диалог «Поделиться» в Telegram
+    await callback.answer(url=share_url)
+
+
 # ── Автопринятие: переключение ────────────────────────────────
 
 @router.callback_query(F.data.startswith("link_auto_accept:"))

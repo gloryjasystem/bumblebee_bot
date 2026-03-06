@@ -92,7 +92,7 @@ async def _poll_child_bot(child_bot_id: int, owner_id: int, bot_username: str, r
                 updates = await bot.get_updates(
                     offset=offset,
                     timeout=30,
-                    allowed_updates=["my_chat_member", "chat_join_request", "chat_member", "message"],
+                    allowed_updates=["my_chat_member", "chat_join_request", "chat_member", "message", "callback_query"],
                 )
                 for update in updates:
                     offset = update.update_id + 1
@@ -130,6 +130,10 @@ async def _handle_child_update(
         elif update.chat_join_request:
             await _handle_join_request(bot, child_bot_id, update.chat_join_request)
 
+        # ── Колбэк от кнопки капчи ────────────────────────────
+        elif update.callback_query:
+            await _handle_captcha_callback(bot, update.callback_query)
+
         # ── Пользователь вступил/вышел (открытый канал/группа) ─
         elif update.chat_member:
             await _handle_chat_member(bot, child_bot_id, update.chat_member)
@@ -140,6 +144,31 @@ async def _handle_child_update(
 
     except Exception as e:
         logger.error(f"Child bot @{bot_username} update error: {e}")
+
+
+async def _handle_captcha_callback(bot: Bot, callback):
+    """Обрабатывает нажатие кнопки капчи в дочернем боте."""
+    data = callback.data or ""
+    if data.startswith("captcha_ok:") or data.startswith("captcha:") or data.startswith("captcha_rnd:"):
+        from handlers.captcha import on_captcha_simple_passed, on_captcha_random_press, on_captcha_passed
+        try:
+            if data.startswith("captcha_ok:"):
+                await on_captcha_simple_passed(callback, bot)
+            elif data.startswith("captcha_rnd:"):
+                await on_captcha_random_press(callback, bot)
+            elif data.startswith("captcha:"):
+                await on_captcha_passed(callback, bot)
+        except Exception as e:
+            logger.error(f"Captcha callback error: {e}")
+            try:
+                await callback.answer("Ошибка, попробуйте ещё раз", show_alert=True)
+            except Exception:
+                pass
+    else:
+        try:
+            await callback.answer()
+        except Exception:
+            pass
 
 
 async def _handle_message(bot: Bot, child_bot_id: int, owner_id: int, message):

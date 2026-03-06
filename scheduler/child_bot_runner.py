@@ -440,6 +440,9 @@ async def _handle_join_request(bot: Bot, child_bot_id: int, event: ChatJoinReque
     chat_id = event.chat.id
     user = event.from_user
 
+    raw_invite = event.invite_link.invite_link if event.invite_link else None
+    logger.info(f"[JOIN REQ] user={user.id} chat={chat_id} invite_link={raw_invite}")
+
     # Получаем настройки площадки
     chat_settings = await db.fetchrow(
         """

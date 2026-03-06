@@ -373,7 +373,6 @@ async def _handle_message(bot: Bot, child_bot_id: int, owner_id: int, message):
 
     else:
         # Обычное сообщение (не /start) → обратная связь
-        # Проверяем флаг на уровне бота (child_bots) ИЛИ на уровне площадки (bot_chats)
         chats = await db.fetch(
             """
             SELECT bc.owner_id, bc.chat_id
@@ -390,10 +389,24 @@ async def _handle_message(bot: Bot, child_bot_id: int, owner_id: int, message):
             from handlers.feedback import handle_feedback_message
             sent_owners: set = set()
             for ch in chats:
-                if ch["owner_id"] not in sent_owners:
-                    sent_owners.add(ch["owner_id"])
-                    await handle_feedback_message(message, bot, ch["owner_id"], ch["chat_id"], child_bot_id)
-            logger.info(f"[FEEDBACK] Forwarded msg from user {user.id} to {len(sent_owners)} owner(s)")
+                oid = ch["owner_id"]
+                if oid in sent_owners:
+                    continue
+                # Не пересылать если отправитель — владелец или его команда
+                if user.id == oid:
+                    logger.debug(f"[FEEDBACK] Skipping: user {user.id} is the owner")
+                    continue
+                is_team = await db.fetchval(
+                    "SELECT 1 FROM team_members WHERE user_id=$1 AND owner_id=$2 AND is_active=true",
+                    user.id, oid,
+                )
+                if is_team:
+                    logger.debug(f"[FEEDBACK] Skipping: user {user.id} is a team member")
+                    continue
+                sent_owners.add(oid)
+                await handle_feedback_message(message, bot, oid, ch["chat_id"], child_bot_id)
+            if sent_owners:
+                logger.info(f"[FEEDBACK] Forwarded msg from user {user.id} to {len(sent_owners)} owner(s)")
         else:
             logger.debug(f"[FEEDBACK] No feedback-enabled chats for user {user.id}")
 

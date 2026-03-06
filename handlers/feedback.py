@@ -306,13 +306,13 @@ async def handle_feedback_message(
         f"От: {name} ({username})"
     )
 
-    # Кнопка «Ответить» — передаём child_bot_id и user_id
+    # Кнопка «Ответить» — передаём child_bot_id, user_id И owner_id (для аутентификации)
     reply_kb = None
     if child_bot_id and user_id:
         reply_kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(
                 text=f"✉️ Ответить {name}",
-                callback_data=f"fb_reply:{child_bot_id}:{user_id}",
+                callback_data=f"fb_reply:{child_bot_id}:{user_id}:{owner_id}",
             )]
         ])
 
@@ -334,45 +334,67 @@ async def handle_feedback_message(
 
 # ── Обработка кнопки «Ответить» ────────────────────────────────
 @router.callback_query(F.data.startswith("fb_reply:"))
-async def on_fb_reply(callback: CallbackQuery, state: FSMContext, platform_user: dict | None):
-    """Владелец/админ нажал «Ответить» — переходим в режим ввода ответа."""
-    if not platform_user:
-        return
-    parts         = callback.data.split(":")
-    child_bot_id  = int(parts[1])
+async def on_fb_reply(callback: CallbackQuery, state: FSMContext):
+    """Владелец/админ нажал «Ответить». Не требует platform_user — проверяем права через БД."""
+    parts          = callback.data.split(":")
+    child_bot_id   = int(parts[1])
     target_user_id = int(parts[2])
+    owner_id       = int(parts[3])
+    clicker_id     = callback.from_user.id
 
-    # Получаем имя пользователя из сообщения (из caption над копией)
+    # Проверяем: пользователь должен быть владельцем ИЛИ членом команды
+    if clicker_id != owner_id:
+        is_allowed = await db.fetchval(
+            "SELECT 1 FROM team_members WHERE user_id=$1 AND owner_id=$2 AND is_active=true",
+            clicker_id, owner_id,
+        )
+        if not is_allowed:
+            await callback.answer("ɪ️ Нет доступа", show_alert=True)
+            return
+
+    # Получаем имя пользователя из caption уведомления
     target_name = "пользователю"
+    target_username = ""
     if callback.message and callback.message.text:
         for line in callback.message.text.splitlines():
             if line.startswith("От:"):
-                target_name = line.replace("От:", "").strip()
+                raw = line.replace("От:", "").strip()  # напр.: "Алекс (@alextgads)"
+                # Разбираем имя и юзернейм
+                if " (" in raw:
+                    target_name     = raw.split(" (")[0].strip()
+                    target_username = raw.split(" (")[1].rstrip(")")
+                else:
+                    target_name = raw
                 break
+
+    # Убираем кнопку из сообщения (чтобы другие не нажали)
+    waiting_text = (
+        f"✉️ <b>Ответ на обратную связь</b>\n"
+        f"От: {target_name} ({target_username})\n\n"
+        f"⏳ <i>Ожидаем ответ... Напишите сообщение в этот чат ↓↓↓</i>"
+    )
+    try:
+        await callback.message.edit_text(waiting_text, parse_mode="HTML")
+    except Exception:
+        pass
 
     await state.set_state(FeedbackFSM.waiting_for_reply)
     await state.update_data(
         child_bot_id=child_bot_id,
         target_user_id=target_user_id,
         target_name=target_name,
+        target_username=target_username,
     )
-
-    await callback.message.answer(
-        f"✉️ <b>Ответ на обратную связь</b>\n\n"
-        f"Напишите ответ для <b>{target_name}</b>.\n"
-        f"Сообщение будет отправлено в его личку через дочернего бота.",
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="❌ Отмена", callback_data="fb_cancel_reply")],
-        ]),
-    )
-    await callback.answer()
+    await callback.answer(f"Напишите ответ для {target_name}")
 
 
 @router.callback_query(F.data == "fb_cancel_reply")
 async def on_fb_cancel_reply(callback: CallbackQuery, state: FSMContext):
     await state.clear()
-    await callback.message.edit_text("❌ Ответ отменён.")
+    try:
+        await callback.message.edit_text("❌ Ответ отменён.")
+    except Exception:
+        pass
     await callback.answer()
 
 
@@ -384,13 +406,13 @@ async def on_feedback_reply_text(message: Message, state: FSMContext):
     child_bot_id   = data.get("child_bot_id")
     target_user_id = data.get("target_user_id")
     target_name    = data.get("target_name", "пользователю")
+    target_username = data.get("target_username", "")
     await state.clear()
 
     if not child_bot_id or not target_user_id:
         await message.answer("⚠️ Ошибка: данные для ответа потеряны.")
         return
 
-    # Берём токен дочернего бота из БД
     row = await db.fetchrow(
         "SELECT encrypted_token FROM child_bots WHERE id=$1",
         child_bot_id,
@@ -402,17 +424,18 @@ async def on_feedback_reply_text(message: Message, state: FSMContext):
     from services.security import decrypt_token
     token = decrypt_token(row["encrypted_token"])
     child_bot = Bot(token=token)
+    name_display = f"{target_name} ({target_username})" if target_username else target_name
     try:
         await message.copy_to(target_user_id, bot=child_bot)
         await message.answer(
-            f"✅ Ответ отправлен <b>{target_name}</b>.",
+            f"✅ Ответ отправлен <b>{name_display}</b>.",
             parse_mode="HTML",
         )
         logger.info(f"[FEEDBACK REPLY] Sent reply to user {target_user_id} via bot {child_bot_id}")
     except Exception as e:
         await message.answer(
             f"⚠️ Не удалось отправить ответ: {e}\n\n"
-            "Возможно, пользователь не писал боту (/start не нажал)."
+            "Возможно, пользователь не писал дочернему боту (/start не нажал)."
         )
         logger.warning(f"[FEEDBACK REPLY] Failed: {e}")
     finally:

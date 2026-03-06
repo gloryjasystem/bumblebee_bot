@@ -306,7 +306,9 @@ async def _register_user(owner_id: int, chat_id: int, user,
         ON CONFLICT (owner_id, chat_id, user_id) DO UPDATE
           SET is_active=true, left_at=NULL,
               username=EXCLUDED.username,
-              joined_via_link_id=EXCLUDED.joined_via_link_id
+              is_premium=EXCLUDED.is_premium,
+              joined_via_link_id=COALESCE(EXCLUDED.joined_via_link_id, bot_users.joined_via_link_id),
+              bot_activated = (bot_users.bot_activated OR EXCLUDED.bot_activated)
         """,
         owner_id, chat_id, user.id,
         user.username, user.first_name,

@@ -301,7 +301,9 @@ async def _handle_join_request(bot: Bot, child_bot_id: int, event: ChatJoinReque
                 VALUES ($1, $2, $3, $4, $5, $6, $7, now())
                 ON CONFLICT (owner_id, chat_id, user_id) DO UPDATE
                     SET is_active=true, left_at=NULL,
-                        username=EXCLUDED.username
+                        username=EXCLUDED.username,
+                        is_premium=EXCLUDED.is_premium,
+                        bot_activated = (bot_users.bot_activated OR EXCLUDED.bot_activated)
                 """,
                 owner_id, chat_id, user.id,
                 user.username, user.first_name, user.language_code,
@@ -421,7 +423,9 @@ async def _handle_chat_member(bot: Bot, child_bot_id: int, event: ChatMemberUpda
                 SET is_active=true, left_at=NULL,
                     username=EXCLUDED.username,
                     first_name=EXCLUDED.first_name,
-                    joined_via_link_id=EXCLUDED.joined_via_link_id
+                    is_premium=EXCLUDED.is_premium,
+                    joined_via_link_id=COALESCE(EXCLUDED.joined_via_link_id, bot_users.joined_via_link_id),
+                    bot_activated = (bot_users.bot_activated OR EXCLUDED.bot_activated)
             """,
             owner_id, chat_id, user.id,
             user.username, user.first_name, user.language_code,

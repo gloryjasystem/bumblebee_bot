@@ -152,9 +152,15 @@ async def _handle_child_update(
         elif update.chat_member:
             await _handle_chat_member(bot, child_bot_id, update.chat_member)
 
-        # ── Сообщение пользователя в личку бота (например, /start) ──
+        # ── Сообщение пользователя ──────────────────────────────────
         elif update.message and update.message.from_user:
-            await _handle_message(bot, child_bot_id, owner_id, update.message)
+            chat_type = update.message.chat.type if update.message.chat else "private"
+            if chat_type in ("group", "supergroup", "channel"):
+                # Групповое сообщение — автоответчик + реакции
+                await _handle_group_message(bot, child_bot_id, update.message)
+            else:
+                # Личное сообщение (/start и др.)
+                await _handle_message(bot, child_bot_id, owner_id, update.message)
 
     except Exception as e:
         logger.error(f"Child bot @{bot_username} update error: {e}")
@@ -183,6 +189,71 @@ async def _handle_captcha_callback(bot: Bot, callback):
             await callback.answer()
         except Exception:
             pass
+
+
+async def _handle_group_message(bot: Bot, child_bot_id: int, message):
+    """Автоответчик и реакции для дочернего бота в группе."""
+    from aiogram.types import ReactionTypeEmoji
+
+    chat_id = message.chat.id
+    user = message.from_user
+    if not user or user.is_bot:
+        return
+
+    settings = await db.fetchrow(
+        "SELECT * FROM bot_chats WHERE child_bot_id=$1 AND chat_id=$2 AND is_active=true",
+        child_bot_id, chat_id,
+    )
+    if not settings:
+        return
+
+    text = message.text or message.caption or ""
+
+    # ── 1. Автоответчик (ключевые слова) ────────────────────
+    if text:
+        owner_id = settings["owner_id"]
+        rules = await db.fetch(
+            "SELECT keyword, reply_text FROM autoreplies "
+            "WHERE owner_id=$1 AND chat_id=$2::bigint",
+            owner_id, chat_id,
+        )
+        for rule in rules:
+            kw = (rule["keyword"] or "").lower().strip()
+            if kw and kw in text.lower():
+                try:
+                    reply = await message.reply(rule["reply_text"])
+                    # Авто-удаление ответа бота
+                    delete_min = int(settings.get("auto_delete_min") or 0)
+                    if delete_min > 0:
+                        import asyncio as _asyncio
+                        _asyncio.create_task(
+                            _delete_later(bot, chat_id, reply.message_id, delete_min)
+                        )
+                    logger.info(f"[AUTOREPLY] keyword='{kw}' matched in chat {chat_id}")
+                except Exception as e:
+                    logger.warning(f"[AUTOREPLY] failed in chat {chat_id}: {e}")
+                break  # только первое совпадение
+
+    # ── 2. Реакции ───────────────────────────────────
+    emoji = settings.get("reaction_emoji")
+    if emoji:
+        try:
+            await bot.set_message_reaction(
+                chat_id=chat_id,
+                message_id=message.message_id,
+                reaction=[ReactionTypeEmoji(emoji=emoji)],
+            )
+        except Exception as e:
+            logger.debug(f"[REACTION] failed for chat {chat_id}: {e}")
+
+
+async def _delete_later(bot: Bot, chat_id: int, message_id: int, delay_min: int):
+    """\u0423\u0434\u0430\u043b\u044f\u0435\u0442 \u0441\u043e\u043e\u0431\u0449\u0435\u043d\u0438\u0435 \u0447\u0435\u0440\u0435\u0437 delay_min \u043c\u0438\u043d\u0443\u0442."""
+    await asyncio.sleep(delay_min * 60)
+    try:
+        await bot.delete_message(chat_id, message_id)
+    except Exception:
+        pass
 
 
 async def _handle_message(bot: Bot, child_bot_id: int, owner_id: int, message):

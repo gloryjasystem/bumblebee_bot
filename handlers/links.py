@@ -561,16 +561,27 @@ async def on_link_share(callback: CallbackQuery, platform_user: dict | None):
         return
     link_id = int(callback.data.split(":")[1])
     link = await db.fetchrow(
-        "SELECT link FROM invite_links WHERE id=$1 AND owner_id=$2",
+        "SELECT link, chat_id FROM invite_links WHERE id=$1 AND owner_id=$2",
         link_id, platform_user["user_id"],
     )
     if not link:
         await callback.answer("Ссылка не найдена", show_alert=True)
         return
+
     import urllib.parse
-    share_url = f"https://t.me/share/url?url={urllib.parse.quote(link['link'])}"
-    # Открывает нативный диалог «Поделиться» в Telegram
-    await callback.answer(url=share_url)
+    link_url = link["link"]
+    share_url = f"https://t.me/share/url?url={urllib.parse.quote(link_url)}"
+
+    await callback.message.edit_text(
+        f"↗️ <b>Поделиться ссылкой</b>\n\n"
+        f"Скопируйте ссылку:\n<code>{link_url}</code>",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="↗️ Поделиться в Telegram", url=share_url)],
+            [InlineKeyboardButton(text="◀️ Назад", callback_data=f"link_detail:{link_id}:0:0")],
+        ]),
+    )
+    await callback.answer()
 
 
 # ── Автопринятие: переключение ────────────────────────────────

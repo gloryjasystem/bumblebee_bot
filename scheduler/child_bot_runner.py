@@ -581,11 +581,14 @@ async def _handle_chat_member(bot: Bot, child_bot_id: int, event: ChatMemberUpda
 
         # Ищем ссылку по invite_link из события
         link_id = None
-        if event.invite_link:
+        raw_invite = event.invite_link.invite_link if event.invite_link else None
+        logger.info(f"[LINK DBG] user={user.id} chat={chat_id} invite_link={raw_invite}")
+        if raw_invite:
             row = await db.fetchrow(
                 "SELECT id FROM invite_links WHERE link=$1",
-                event.invite_link.invite_link,
+                raw_invite,
             )
+            logger.info(f"[LINK DBG] db row found: {row is not None}")
             if row:
                 link_id = row["id"]
                 if country_code:

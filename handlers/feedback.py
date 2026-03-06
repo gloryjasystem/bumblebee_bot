@@ -406,12 +406,13 @@ async def on_fb_reply(callback: CallbackQuery, state: FSMContext):
             target_user_id=target_user_id,
             target_name=target_name,
             target_username=target_username,
+            notification_msg_id=callback.message.message_id,
         )
         logger.info(f"[FB_REPLY] clicker={clicker_id} set reply state for user={target_user_id} via bot={child_bot_id}")
 
-        # Отправляем явное сообщение-подсказку куда писать ответ
+        # Отправляем явное сообщение-подсказку и сохраняем его ID
         name_display = f"{target_name} ({target_username})" if target_username else target_name
-        await callback.message.answer(
+        prompt_msg = await callback.message.answer(
             f"✉️ <b>Напишите ответ для {name_display}:</b>\n\n"
             f"Следующее сообщение, которое вы напишете сюда, будет отправлено пользователю в личку через дочернего бота.",
             parse_mode="HTML",
@@ -419,8 +420,8 @@ async def on_fb_reply(callback: CallbackQuery, state: FSMContext):
                 [InlineKeyboardButton(text="❌ Отмена", callback_data="fb_cancel_reply")],
             ]),
         )
-        # Видимый тост — подтверждение нажатия
-        await callback.answer(f"✅ Пишите ответ для {target_name} 👇")
+        await state.update_data(prompt_msg_id=prompt_msg.message_id)
+        await callback.answer(f"✉️ Напишите ответ для {target_name} 👇")
 
     except Exception as e:
         logger.error(f"[FB_REPLY] Unexpected error: {e}", exc_info=True)
@@ -442,11 +443,13 @@ async def on_fb_cancel_reply(callback: CallbackQuery, state: FSMContext):
 @router.message(FeedbackFSM.waiting_for_reply)
 async def on_feedback_reply_text(message: Message, state: FSMContext):
     """Владелец ввёл текст ответа — отправляем через дочернего бота."""
-    data           = await state.get_data()
-    child_bot_id   = data.get("child_bot_id")
-    target_user_id = data.get("target_user_id")
-    target_name    = data.get("target_name", "пользователю")
-    target_username = data.get("target_username", "")
+    data             = await state.get_data()
+    child_bot_id     = data.get("child_bot_id")
+    target_user_id   = data.get("target_user_id")
+    target_name      = data.get("target_name", "пользователю")
+    target_username  = data.get("target_username", "")
+    prompt_msg_id    = data.get("prompt_msg_id")     # ID промпт-сообщения
+    notification_msg_id = data.get("notification_msg_id")  # ID уведомления наверху
     await state.clear()
 
     if not child_bot_id or not target_user_id:
@@ -466,12 +469,63 @@ async def on_feedback_reply_text(message: Message, state: FSMContext):
     child_bot = Bot(token=token)
     name_display = f"{target_name} ({target_username})" if target_username else target_name
     try:
-        await message.copy_to(target_user_id, bot=child_bot)
-        await message.answer(
-            f"✅ Ответ отправлен <b>{name_display}</b>.",
-            parse_mode="HTML",
-        )
+        # Отправляем через дочернего бота напрямую (не copy_to, т.k. он игнорирует bot=)
+        if message.text:
+            await child_bot.send_message(target_user_id, message.text, entities=message.entities)
+        elif message.photo:
+            await child_bot.send_photo(target_user_id, message.photo[-1].file_id,
+                                       caption=message.caption, caption_entities=message.caption_entities)
+        elif message.video:
+            await child_bot.send_video(target_user_id, message.video.file_id,
+                                       caption=message.caption, caption_entities=message.caption_entities)
+        elif message.document:
+            await child_bot.send_document(target_user_id, message.document.file_id,
+                                          caption=message.caption, caption_entities=message.caption_entities)
+        elif message.voice:
+            await child_bot.send_voice(target_user_id, message.voice.file_id,
+                                       caption=message.caption)
+        elif message.audio:
+            await child_bot.send_audio(target_user_id, message.audio.file_id,
+                                       caption=message.caption)
+        elif message.sticker:
+            await child_bot.send_sticker(target_user_id, message.sticker.file_id)
+        elif message.video_note:
+            await child_bot.send_video_note(target_user_id, message.video_note.file_id)
+        else:
+            await message.answer("⚠️ Такой тип сообщения не поддерживается. Отправьте текст, фото или голосовое.")
+            return
+
         logger.info(f"[FEEDBACK REPLY] Sent reply to user {target_user_id} via bot {child_bot_id}")
+
+        # Редактируем промпт-сообщение — показываем успех
+        if prompt_msg_id:
+            try:
+                await message.bot.edit_message_text(
+                    f"✅ Ответ успешно отправлен пользователю <b>{name_display}</b>.",
+                    chat_id=message.chat.id,
+                    message_id=prompt_msg_id,
+                    parse_mode="HTML",
+                )
+            except Exception as edit_err:
+                logger.debug(f"[FEEDBACK REPLY] Could not edit prompt msg: {edit_err}")
+                await message.answer(
+                    f"✅ Ответ успешно отправлен <b>{name_display}</b>.",
+                    parse_mode="HTML",
+                )
+
+        # Обновляем верхнее уведомление — "Ожидаем ответ" → "Ответ отправлен"
+        if notification_msg_id:
+            try:
+                await message.bot.edit_message_text(
+                    f"✅ <b>Ответ отправлен</b>\n"
+                    f"Пользователь {name_display} получил ваш ответ.",
+                    chat_id=message.chat.id,
+                    message_id=notification_msg_id,
+                    parse_mode="HTML",
+                )
+            except Exception:
+                pass
+
     except Exception as e:
         await message.answer(
             f"⚠️ Не удалось отправить ответ: {e}\n\n"

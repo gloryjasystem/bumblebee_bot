@@ -303,9 +303,9 @@ async def _handle_group_message(bot: Bot, child_bot_id: int, message):
                     logger.warning(f"[AUTOREPLY] failed in chat {chat_id}: {e}")
                 break  # только первое совпадение
 
-    # ── 2. Реакции ───────────────────────────────────
+    # ── 2. Реакции (только на сообщения с текстом, не системные) ───
     emoji = settings.get("reaction_emoji")
-    if emoji:
+    if emoji and text:  # text='' для системных сообщений о вступлении/выходе
         try:
             await bot.set_message_reaction(
                 chat_id=chat_id,

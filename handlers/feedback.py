@@ -457,7 +457,7 @@ async def on_feedback_reply_text(message: Message, state: FSMContext):
         return
 
     row = await db.fetchrow(
-        "SELECT encrypted_token FROM child_bots WHERE id=$1",
+        "SELECT token_encrypted FROM child_bots WHERE id=$1",
         child_bot_id,
     )
     if not row:
@@ -465,7 +465,7 @@ async def on_feedback_reply_text(message: Message, state: FSMContext):
         return
 
     from services.security import decrypt_token
-    token = decrypt_token(row["encrypted_token"])
+    token = decrypt_token(row["token_encrypted"])
     child_bot = Bot(token=token)
     name_display = f"{target_name} ({target_username})" if target_username else target_name
     try:

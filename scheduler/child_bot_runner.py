@@ -373,17 +373,19 @@ async def _handle_message(bot: Bot, child_bot_id: int, owner_id: int, message):
 
     else:
         # Обычное сообщение (не /start) → обратная связь
+        # Ищем все активные площадки этого дочернего бота с включённым feedback.
+        # JOIN с bot_users убран намеренно: feedback должен работать даже если
+        # пользователь ещё не нажимал /start и нет записи в bot_users.
         chats = await db.fetch(
             """
             SELECT bc.owner_id, bc.chat_id
             FROM bot_chats bc
-            JOIN bot_users bu ON bu.owner_id = bc.owner_id AND bu.chat_id = bc.chat_id
             LEFT JOIN child_bots cb ON cb.id = bc.child_bot_id
-            WHERE bu.user_id=$1 AND bc.child_bot_id=$2
+            WHERE bc.child_bot_id=$1
               AND bc.is_active=true
               AND (bc.feedback_enabled=true OR cb.feedback_enabled=true)
             """,
-            user.id, child_bot_id,
+            child_bot_id,
         )
         if chats:
             from handlers.feedback import handle_feedback_message

@@ -45,6 +45,68 @@ async def _try_send_dm(child_bot: Bot, user_id: int, text: str,
     return False
 
 
+async def _track_invite_link(invite_link_url: str, user) -> int | None:
+    """Обновляет статистику ссылки-приглашения. Возвращает link_id или None."""
+    if not invite_link_url:
+        return None
+    row = await db.fetchrow("SELECT id FROM invite_links WHERE link=$1", invite_link_url)
+    if not row:
+        return None
+    link_id = row["id"]
+
+    full_name = f"{user.first_name or ''} {user.last_name or ''}".strip()
+    from services.security import detect_rtl, detect_hieroglyph
+    has_rtl        = detect_rtl(full_name)
+    has_hieroglyph = detect_hieroglyph(full_name)
+    is_premium     = bool(getattr(user, "is_premium", False))
+    LANG_TO_COUNTRY = {
+        "ru": "RU", "uk": "UA", "be": "BY", "kk": "KZ",
+        "en": "US", "de": "DE", "fr": "FR", "es": "ES",
+        "it": "IT", "pt": "BR", "zh": "CN", "ar": "AR",
+        "tr": "TR", "pl": "PL", "nl": "NL", "sv": "SE",
+        "da": "DK", "fi": "FI", "no": "NO", "cs": "CZ",
+        "ro": "RO", "hu": "HU", "bg": "BG",
+        "fa": "IR", "he": "IL", "hi": "IN",
+        "id": "ID", "ms": "MY", "th": "TH", "vi": "VN",
+        "ko": "KR", "ja": "JP",
+    }
+    country_code = LANG_TO_COUNTRY.get(
+        (getattr(user, "language_code", None) or "").split("-")[0].lower()
+    )
+
+    if country_code:
+        await db.execute(
+            """
+            UPDATE invite_links SET
+                joined           = joined + 1,
+                rtl_count        = rtl_count + $2::int,
+                hieroglyph_count = hieroglyph_count + $3::int,
+                premium_count    = premium_count + $4::int,
+                countries        = jsonb_set(
+                    COALESCE(countries, '{}'),
+                    ARRAY[$5],
+                    (COALESCE(countries->$5, '0')::int + 1)::text::jsonb
+                )
+            WHERE id = $1
+            """,
+            link_id, int(has_rtl), int(has_hieroglyph), int(is_premium), country_code,
+        )
+    else:
+        await db.execute(
+            """
+            UPDATE invite_links SET
+                joined           = joined + 1,
+                rtl_count        = rtl_count + $2::int,
+                hieroglyph_count = hieroglyph_count + $3::int,
+                premium_count    = premium_count + $4::int
+            WHERE id = $1
+            """,
+            link_id, int(has_rtl), int(has_hieroglyph), int(is_premium),
+        )
+    logger.info(f"[LINK] Tracked join via link_id={link_id} for user {user.id}")
+    return link_id
+
+
 def init_runner(main_bot: Bot):
     global _main_bot
     _main_bot = main_bot
@@ -459,6 +521,10 @@ async def _handle_join_request(bot: Bot, child_bot_id: int, event: ChatJoinReque
                 "WHERE owner_id=$1 AND chat_id=$2 AND user_id=$3",
                 owner_id, chat_id, user.id,
             )
+            # Трекинг ссылки-приглашения (если пришёл по ссылке с заявкой)
+            link_id = None
+            if getattr(event, "invite_link", None) and event.invite_link:
+                link_id = await _track_invite_link(event.invite_link.invite_link, user)
             # Приветственное сообщение
             welcome = chat_settings.get("welcome_text")
             if welcome:

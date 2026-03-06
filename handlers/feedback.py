@@ -326,68 +326,99 @@ async def handle_feedback_message(
 
     for recipient_id in set(recipients):
         try:
-            await bot.send_message(recipient_id, caption, parse_mode="HTML", reply_markup=reply_kb)
-            await message.copy_to(recipient_id)
+            if message.text:
+                # Текстовое сообщение: объединяем уведомление + текст в одно сообщение
+                full_text = f"{caption}\n\n{message.text}"
+                await bot.send_message(recipient_id, full_text, parse_mode="HTML", reply_markup=reply_kb)
+            else:
+                # Медиа: подставляем напись с кнопкой прямо в caption
+                extra = ("\n\n" + message.caption) if message.caption else ""
+                await message.copy_to(
+                    recipient_id,
+                    caption=caption + extra,
+                    parse_mode="HTML",
+                    reply_markup=reply_kb,
+                )
         except Exception as e:
             logger.debug(f"Feedback forward failed to {recipient_id}: {e}")
+            # У стикеров нет caption — шлём уведомление отдельно
+            try:
+                await bot.send_message(recipient_id, caption, parse_mode="HTML", reply_markup=reply_kb)
+                await message.copy_to(recipient_id)
+            except Exception as e2:
+                logger.debug(f"Feedback fallback also failed to {recipient_id}: {e2}")
 
 
 # ── Обработка кнопки «Ответить» ────────────────────────────────
 @router.callback_query(F.data.startswith("fb_reply:"))
 async def on_fb_reply(callback: CallbackQuery, state: FSMContext):
     """Владелец/админ нажал «Ответить». Не требует platform_user — проверяем права через БД."""
-    parts          = callback.data.split(":")
-    child_bot_id   = int(parts[1])
-    target_user_id = int(parts[2])
-    owner_id       = int(parts[3])
-    clicker_id     = callback.from_user.id
-
-    # Проверяем: пользователь должен быть владельцем ИЛИ членом команды
-    if clicker_id != owner_id:
-        is_allowed = await db.fetchval(
-            "SELECT 1 FROM team_members WHERE user_id=$1 AND owner_id=$2 AND is_active=true",
-            clicker_id, owner_id,
-        )
-        if not is_allowed:
-            await callback.answer("ɪ️ Нет доступа", show_alert=True)
-            return
-
-    # Получаем имя пользователя из caption уведомления
-    target_name = "пользователю"
-    target_username = ""
-    if callback.message and callback.message.text:
-        for line in callback.message.text.splitlines():
-            if line.startswith("От:"):
-                raw = line.replace("От:", "").strip()  # напр.: "Алекс (@alextgads)"
-                # Разбираем имя и юзернейм
-                if " (" in raw:
-                    target_name     = raw.split(" (")[0].strip()
-                    target_username = raw.split(" (")[1].rstrip(")")
-                else:
-                    target_name = raw
-                break
-
-    # Убираем кнопку из сообщения (чтобы другие не нажали)
-    waiting_text = (
-        f"✉️ <b>Ответ на обратную связь</b>\n"
-        f"От: {target_name} ({target_username})\n\n"
-        f"⏳ <i>Ожидаем ответ... Напишите сообщение в этот чат ↓↓↓</i>"
-    )
+    # Отвечаем СРАЗУ, чтобы Telegram не показывал часы загрузки
+    await callback.answer()
     try:
-        await callback.message.edit_text(waiting_text, parse_mode="HTML")
-    except Exception:
-        pass
+        parts          = callback.data.split(":")
+        if len(parts) < 4:
+            logger.warning(f"[FB_REPLY] Old callback format (no owner_id): {callback.data}")
+            await callback.message.answer("⚠️ Устаревшая кнопка. Дождитесь нового сообщения.")
+            return
+        child_bot_id   = int(parts[1])
+        target_user_id = int(parts[2])
+        owner_id       = int(parts[3])
+        clicker_id     = callback.from_user.id
 
-    await state.set_state(FeedbackFSM.waiting_for_reply)
-    await state.update_data(
-        child_bot_id=child_bot_id,
-        target_user_id=target_user_id,
-        target_name=target_name,
-        target_username=target_username,
-    )
-    await callback.answer(f"Напишите ответ для {target_name}")
+        # Проверяем: пользователь должен быть владельцем ИЛИ членом команды
+        if clicker_id != owner_id:
+            is_allowed = await db.fetchval(
+                "SELECT 1 FROM team_members WHERE user_id=$1 AND owner_id=$2 AND is_active=true",
+                clicker_id, owner_id,
+            )
+            if not is_allowed:
+                await callback.message.answer("❌ Нет доступа к этому действию.")
+                return
+
+        # Извлекаем имя и юзернейм из текста уведомления
+        target_name = "пользователю"
+        target_username = ""
+        if callback.message and callback.message.text:
+            for line in callback.message.text.splitlines():
+                if line.startswith("От:"):
+                    raw = line.replace("От:", "").strip()
+                    if " (" in raw:
+                        target_name     = raw.split(" (")[0].strip()
+                        target_username = raw.split(" (")[1].rstrip(")")
+                    else:
+                        target_name = raw
+                    break
+
+        # Меняем кнопку на статус ожидания
+        waiting_text = (
+            f"✉️ <b>Ответ на обратную связь</b>\n"
+            f"От: {target_name} ({target_username})\n\n"
+            f"⏳ <i>Ожидаем ответ... Напишите сообщение в этот чат ↓↓↓</i>"
+        )
+        try:
+            await callback.message.edit_text(waiting_text, parse_mode="HTML")
+        except Exception as edit_err:
+            logger.warning(f"[FB_REPLY] Could not edit notification message: {edit_err}")
+
+        await state.set_state(FeedbackFSM.waiting_for_reply)
+        await state.update_data(
+            child_bot_id=child_bot_id,
+            target_user_id=target_user_id,
+            target_name=target_name,
+            target_username=target_username,
+        )
+        logger.info(f"[FB_REPLY] clicker={clicker_id} set reply state for user={target_user_id} via bot={child_bot_id}")
+
+    except Exception as e:
+        logger.error(f"[FB_REPLY] Unexpected error: {e}", exc_info=True)
+        try:
+            await callback.message.answer(f"⚠️ Ошибка: {e}")
+        except Exception:
+            pass
 
 
+# ── Обработка кнопки «Ответить» ────────────────────────────────
 @router.callback_query(F.data == "fb_cancel_reply")
 async def on_fb_cancel_reply(callback: CallbackQuery, state: FSMContext):
     await state.clear()

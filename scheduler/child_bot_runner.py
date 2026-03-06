@@ -260,8 +260,10 @@ async def _handle_join_request(bot: Bot, child_bot_id: int, event: ChatJoinReque
     # Получаем настройки площадки
     chat_settings = await db.fetchrow(
         """
-        SELECT autoaccept, autoaccept_delay, welcome_text, captcha_enabled,
-               captcha_type, captcha_text, captcha_timer, captcha_emoji_set, owner_id
+        SELECT autoaccept, autoaccept_delay, welcome_text,
+               captcha_type, captcha_text, captcha_timer_min, captcha_emoji_set,
+               captcha_greet, captcha_accept_now, captcha_accept_all,
+               owner_id
         FROM bot_chats
         WHERE child_bot_id=$1 AND chat_id=$2 AND is_active=true
         """,
@@ -284,23 +286,23 @@ async def _handle_join_request(bot: Bot, child_bot_id: int, event: ChatJoinReque
         user.username or "", user.first_name or "",
     )
 
-    captcha_enabled = chat_settings.get("captcha_enabled") or False
+    captcha_type = (chat_settings.get("captcha_type") or "off")
 
     # ── КАПЧА (приоритет над авто-принятием) ──────────────────
-    if captcha_enabled:
+    if captcha_type != "off":
         # chat_join_request даёт боту временное право писать в личку —
         # /start от пользователя НЕ требуется.
         from handlers.captcha import send_captcha
         settings_for_captcha = {
-            "captcha_type":      chat_settings.get("captcha_type") or "simple",
-            "captcha_text":      chat_settings.get("captcha_text"),
-            "captcha_timer_min": (chat_settings.get("captcha_timer") or 60) // 60,
-            "captcha_emoji_set": chat_settings.get("captcha_emoji_set"),
-            "captcha_delete":    chat_settings.get("captcha_delete") or False,
-            "welcome_text":      chat_settings.get("welcome_text"),
-            "owner_id":          owner_id,
-            "captcha_greet":     chat_settings.get("captcha_greet") or False,
-            "captcha_accept_immediately": chat_settings.get("captcha_accept_immediately") or False,
+            "captcha_type":             captcha_type,
+            "captcha_text":             chat_settings.get("captcha_text"),
+            "captcha_timer_min":        chat_settings.get("captcha_timer_min") or 1,
+            "captcha_emoji_set":        chat_settings.get("captcha_emoji_set"),
+            "captcha_greet":            chat_settings.get("captcha_greet") or False,
+            "captcha_accept_now":       chat_settings.get("captcha_accept_now") or False,
+            "captcha_accept_all":       chat_settings.get("captcha_accept_all") or False,
+            "welcome_text":             chat_settings.get("welcome_text"),
+            "owner_id":                 owner_id,
         }
         await send_captcha(bot, event, settings_for_captcha)
         return  # дальнейшая обработка — в captcha.py после нажатия кнопки

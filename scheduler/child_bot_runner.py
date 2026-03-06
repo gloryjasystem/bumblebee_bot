@@ -371,6 +371,26 @@ async def _handle_message(bot: Bot, child_bot_id: int, owner_id: int, message):
         except Exception as e:
             logger.debug(f"[START] send reply failed for {user.id}: {e}")
 
+    else:
+        # Обычное сообщение (не /start) → обратная связь
+        chats = await db.fetch(
+            """
+            SELECT bc.owner_id, bc.chat_id
+            FROM bot_chats bc
+            JOIN bot_users bu ON bu.owner_id = bc.owner_id AND bu.chat_id = bc.chat_id
+            WHERE bu.user_id=$1 AND bc.child_bot_id=$2
+              AND bc.is_active=true AND bc.feedback_enabled=true
+            """,
+            user.id, child_bot_id,
+        )
+        if chats:
+            from handlers.feedback import handle_feedback_message
+            for ch in chats:
+                await handle_feedback_message(message, bot, ch["owner_id"], ch["chat_id"])
+            logger.info(f"[FEEDBACK] Forwarded msg from user {user.id} to {len(chats)} chat(s)")
+        else:
+            # Обратная связь выключена или пользователь не в каналах этого бота
+            logger.debug(f"[FEEDBACK] No feedback-enabled chats for user {user.id}")
 
 
 async def _handle_my_chat_member(

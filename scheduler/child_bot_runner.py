@@ -25,26 +25,16 @@ _main_bot: Bot = None   # Bumblebee management bot для уведомлений
 
 
 async def _try_send_dm(child_bot: Bot, user_id: int, text: str, parse_mode: str = "HTML") -> bool:
-    """Отправляет сообщение пользователю в личку.
-    Сначала через дочернего бота, при неудаче — через главного.
+    """Отправляет сообщение пользователю в личку через дочернего бота.
     Возвращает True если отправлено.
     """
-    # Попытка 1: дочерний бот (работает если есть права через chat_join_request)
     try:
         await child_bot.send_message(user_id, text, parse_mode=parse_mode)
         logger.info(f"[DM] Sent via child_bot to user {user_id} ✅")
         return True
     except Exception as e:
         logger.warning(f"[DM] child_bot failed for user {user_id}: {e}")
-    # Попытка 2: главный бот (работает если пользователь писал /start главному боту)
-    if _main_bot:
-        try:
-            await _main_bot.send_message(user_id, text, parse_mode=parse_mode)
-            logger.info(f"[DM] Sent via main_bot to user {user_id} ✅")
-            return True
-        except Exception as e:
-            logger.warning(f"[DM] main_bot failed for user {user_id}: {e}")
-    logger.error(f"[DM] Не удалось отправить DM user {user_id} — ни через child, ни через main бот")
+    logger.warning(f"[DM] Не удалось отправить DM user {user_id} — пользователь не запустил дочернего бота")
     return False
 
 

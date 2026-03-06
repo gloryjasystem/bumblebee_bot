@@ -32,16 +32,19 @@ async def _try_send_dm(child_bot: Bot, user_id: int, text: str, parse_mode: str 
     # Попытка 1: дочерний бот (работает если есть права через chat_join_request)
     try:
         await child_bot.send_message(user_id, text, parse_mode=parse_mode)
+        logger.info(f"[DM] Sent via child_bot to user {user_id} ✅")
         return True
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"[DM] child_bot failed for user {user_id}: {e}")
     # Попытка 2: главный бот (работает если пользователь писал /start главному боту)
     if _main_bot:
         try:
             await _main_bot.send_message(user_id, text, parse_mode=parse_mode)
+            logger.info(f"[DM] Sent via main_bot to user {user_id} ✅")
             return True
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"[DM] main_bot failed for user {user_id}: {e}")
+    logger.error(f"[DM] Не удалось отправить DM user {user_id} — ни через child, ни через main бот")
     return False
 
 
@@ -506,6 +509,7 @@ async def _handle_chat_member(bot: Bot, child_bot_id: int, event: ChatMemberUpda
 
         # Приветственное сообщение
         welcome = chat_settings.get("welcome_text")
+        logger.info(f"[WELCOME] user={user.id} welcome_text={repr(welcome)[:80]}")
         if welcome:
             await _try_send_dm(bot, user.id, welcome)
 

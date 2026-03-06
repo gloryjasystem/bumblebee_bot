@@ -167,12 +167,18 @@ async def _approve_user(
             return
 
         settings_row = await db.fetchrow(
-            "SELECT * FROM bot_chats WHERE chat_id=$1::bigint", chat_id
+            "SELECT * FROM bot_chats WHERE chat_id=$1::bigint AND is_active=true", chat_id
         )
         if settings_row:
             from handlers.join_requests import _register_user, _send_welcome
             await _register_user(settings_row["owner_id"], chat_id, callback.from_user)
-            await _send_welcome(bot, chat_id, callback.from_user, dict(settings_row))
+
+            # Отправляем приветствие — сначала через дочернего бота (есть DM-права
+            # после chat_join_request), при неудаче — через главного
+            welcome = settings_row.get("welcome_text")
+            if welcome:
+                from scheduler.child_bot_runner import _try_send_dm
+                await _try_send_dm(bot, callback.from_user.id, welcome)
 
             if settings_row.get("captcha_delete"):
                 try:

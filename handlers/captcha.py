@@ -178,7 +178,10 @@ async def _approve_user(
             welcome = settings_row.get("welcome_text")
             if welcome:
                 from scheduler.child_bot_runner import _try_send_dm
-                await _try_send_dm(bot, callback.from_user.id, welcome)
+                await _try_send_dm(
+                    bot, callback.from_user.id, welcome,
+                    show_typing=bool(settings_row.get("typing_action")),
+                )
 
             if settings_row.get("captcha_delete"):
                 try:

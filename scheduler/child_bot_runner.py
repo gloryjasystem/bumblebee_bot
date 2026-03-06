@@ -24,11 +24,18 @@ _running_bots: Dict[int, asyncio.Task] = {}  # child_bot_id → Task
 _main_bot: Bot = None   # Bumblebee management bot для уведомлений
 
 
-async def _try_send_dm(child_bot: Bot, user_id: int, text: str, parse_mode: str = "HTML") -> bool:
+async def _try_send_dm(child_bot: Bot, user_id: int, text: str,
+                       parse_mode: str = "HTML", show_typing: bool = False) -> bool:
     """Отправляет сообщение пользователю в личку через дочернего бота.
     Возвращает True если отправлено.
     """
     try:
+        if show_typing:
+            try:
+                await child_bot.send_chat_action(user_id, "typing")
+                await asyncio.sleep(1.5)
+            except Exception:
+                pass
         await child_bot.send_message(user_id, text, parse_mode=parse_mode)
         logger.info(f"[DM] Sent via child_bot to user {user_id} ✅")
         return True

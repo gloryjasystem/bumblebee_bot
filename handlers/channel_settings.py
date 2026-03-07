@@ -2285,35 +2285,11 @@ async def on_bs_base_edit(callback: CallbackQuery, state: FSMContext,
     await callback.message.edit_text(
         "✏️ <b>Управление базой пользователей</b>\n\n"
         f"<blockquote>В базе сейчас: <b>{total:,}</b> пользователей.\n\n"
-        "Вы можете вручную добавить пользователей по Telegram ID или @username, "
-        "или удалить их из базы. Поддерживается как ввод текстом, так и загрузка файла.</blockquote>\n\n"
+        "Вы можете удалить пользователей из базы по Telegram ID или @username.</blockquote>\n\n"
         "<b>Выберите действие:</b>",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="➕ Добавить пользователей",   callback_data=f"bs_base_add:{child_bot_id}")],
             [InlineKeyboardButton(text="🗑 Удалить пользователей",    callback_data=f"bs_base_del:{child_bot_id}")],
             [InlineKeyboardButton(text="◀️ Назад",                    callback_data=f"bs_base:{child_bot_id}")],
-        ]),
-    )
-    await callback.answer()
-
-
-# ── Добавить пользователей ────────────────────────────────────
-@router.callback_query(F.data.startswith("bs_base_add:"))
-async def on_bs_base_add(callback: CallbackQuery, state: FSMContext,
-                         platform_user: dict | None):
-    if not platform_user:
-        return
-    child_bot_id = int(callback.data.split(":")[1])
-    await state.update_data(child_bot_id=child_bot_id)
-    await state.set_state(SettingsFSM.bs_base_waiting_add)
-    await callback.message.edit_text(
-        "➕ <b>Добавление пользователей</b>\n\n"
-        "Отправьте <b>@username</b> или <b>Telegram ID</b> — можно несколько через пробел или с новой строки.\n"
-        "Или загрузите <b>TXT/CSV файл</b> (один пользователь на строку).\n\n"
-        "<b>Пример:</b>\n"
-        "<code>@ivan @maria\n123456789\n987654321</code>",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🚫 Отменить", callback_data=f"bs_base_edit:{child_bot_id}")],
         ]),
     )
     await callback.answer()
@@ -2414,11 +2390,6 @@ async def _process_base_add(owner_id: int, child_bot_id: int,
                 "VALUES ($1,$2,$3,'',NOW(),true,false) ON CONFLICT DO NOTHING",
                 owner_id, chat_id, uid,
             )
-            added += 1
-            details.append(f"• `{uid}` ✅")
-    return {"added": added, "already": already, "invalid": invalid, "details": details}
-
-
 async def _process_base_del(owner_id: int, child_bot_id: int,
                              tokens: list[str]) -> dict:
     """Удаляет пользователей из bot_users по площадкам бота."""
@@ -2465,65 +2436,6 @@ async def _process_base_del(owner_id: int, child_bot_id: int,
 
 
 # ── Обработка текстового ввода для добавления/удаления ────────
-@router.message(SettingsFSM.bs_base_waiting_add)
-async def on_bs_base_add_input(message: Message, state: FSMContext,
-                                platform_user: dict | None):
-    if not platform_user:
-        return
-    data = await state.get_data()
-    child_bot_id = data.get("child_bot_id")
-    owner_id = platform_user["user_id"]
-
-    # Файл
-    if message.document:
-        doc = message.document
-        if not doc.file_name.lower().endswith((".txt", ".csv")):
-            await message.answer("❌ Поддерживаются только TXT и CSV файлы.")
-            return
-        from aiogram import Bot as AioBot
-        # используем бот платформы (message.bot)
-        file_obj = await message.bot.get_file(doc.file_id)
-        content_io = await message.bot.download_file(file_obj.file_path)
-        text = content_io.read().decode("utf-8", errors="replace")
-    elif message.text:
-        text = message.text
-    else:
-        await message.answer("❌ Отправьте текст или файл.")
-        return
-
-    tokens = _parse_user_lines(text)
-    if not tokens:
-        await message.answer(
-            "⚠️ Не найдено ни одного @username или Telegram ID.\n"
-            "Убедитесь в правильности формата."
-        )
-        return
-
-    res = await _process_base_add(owner_id, child_bot_id, tokens)
-    total_now = await db.fetchval(
-        """SELECT COUNT(*) FROM bot_users bu
-           JOIN bot_chats bc ON bu.chat_id=bc.chat_id AND bu.owner_id=bc.owner_id
-           WHERE bc.child_bot_id=$1 AND bc.owner_id=$2""",
-        child_bot_id, owner_id,
-    ) or 0
-
-    detail_text = "\n".join(res["details"][:20])
-    if len(res["details"]) > 20:
-        detail_text += f"\n... и ещё {len(res['details']) - 20}"
-
-    await state.clear()
-    await message.answer(
-        f"✅ <b>Готово!</b>\n\n"
-        f"➕ Добавлено: <b>{res['added']}</b>\n"
-        f"⏩ Уже были в базе: <b>{res['already']}</b>\n"
-        f"❌ Неверный формат: <b>{res['invalid']}</b>\n\n"
-        f"{detail_text}\n\n"
-        f"👥 Итого в базе: <b>{total_now:,}</b>",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="◀️ Назад к управлению",
-                                  callback_data=f"bs_base_edit:{child_bot_id}")],
-        ]),
-    )
 
 
 @router.message(SettingsFSM.bs_base_waiting_del)

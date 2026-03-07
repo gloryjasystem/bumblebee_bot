@@ -979,56 +979,133 @@ async def on_schedule_input(message: Message, state: FSMContext):
 
 def kb_mailing_control(mailing_id: int, paused: bool, speed: str) -> InlineKeyboardMarkup:
     pause_text = "▶ Возобновить" if paused else "⏸ Пауза"
-    speed_map  = {"low": "🟢 Низкая", "medium": "🟡 Средняя", "high": "🔴 Высокая"}
+    speed_map  = {"low": "🟢 Низкая (~10/сек)", "medium": "🟡 Средняя (~25/сек)", "high": "🔴 Высокая (~50/сек)"}
     next_speed = {"low": "medium", "medium": "high", "high": "low"}
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=pause_text,  callback_data=f"ml_pause:{mailing_id}")],
+        [InlineKeyboardButton(text=pause_text,    callback_data=f"ml_pause:{mailing_id}")],
         [InlineKeyboardButton(text="⏹ Остановить", callback_data=f"ml_cancel:{mailing_id}")],
         [InlineKeyboardButton(
-            text=f"⚡ Скорость: {speed_map.get(speed, '🟢 Низкая')}",
+            text=f"⚡ Скорость: {speed_map.get(speed, '🟢 Низкая (~10/сек)')}",
             callback_data=f"ml_speed:{mailing_id}:{next_speed.get(speed, 'medium')}",
         )],
     ])
+
+
+def _mailing_progress_text(mailing_id: int, sent: int, total: int,
+                            errors: int, status: str, bot_username: str = "",
+                            started_at=None) -> str:
+    """Строит текст экрана прогресса рассылки (как на скриншоте 2)."""
+    # Прогресс-бар 10 символов
+    pct = (sent / total * 100) if total > 0 else 0.0
+    filled = int(pct / 10)
+    bar = "▓" * filled + "░" * (10 - filled)
+
+    status_map = {
+        "running":   "🟢 В процессе",
+        "done":      "✅ Завершено",
+        "cancelled": "⏹ Остановлено",
+    }
+    status_str = status_map.get(status, "🟢 В процессе")
+
+    received = sent - errors
+    bot_line = f"📣 Рассылка: @{bot_username}\n" if bot_username else "📣 Рассылка\n"
+
+    dt_str = ""
+    if started_at:
+        try:
+            dt_str = f"\n📅 Дата запуска: {started_at.strftime('%d.%m.%Y %H:%M')}"
+        except Exception:
+            pass
+
+    return (
+        f"{bot_line}"
+        f"<code>{bar}</code> {pct:.1f}%\n\n"
+        f"{'ϙ' if status == 'running' else '📊'} Статус: {status_str}\n"
+        f"↗️ Отправлено: <b>{sent}</b> из <b>{total}</b>\n"
+        f"✅ Получили: <b>{received}</b>\n"
+        f"🚫 Блокировали: <b>{errors}</b>\n\n"
+        f"⚡ Скорость: Минимальная (~10/сек)"
+        f"{dt_str}"
+    )
 
 
 @router.callback_query(F.data.startswith("mailing_run:"))
 async def on_mailing_run(callback: CallbackQuery, bot: Bot, platform_user: dict | None):
     if not platform_user:
         return
-    parts   = callback.data.split(":")
-    chat_id = int(parts[1])
-    mid     = int(parts[2]) if len(parts) > 2 else None
+    parts = callback.data.split(":")
+    # Безопасный парсинг: chat_id может быть "None" для bot-level рассылки
+    chat_id_raw = parts[1] if len(parts) > 1 else "None"
+    chat_id = int(chat_id_raw) if chat_id_raw not in ("None", "", "0") else None
+    mid     = int(parts[2]) if len(parts) > 2 and parts[2] else None
 
     owner_id = platform_user["user_id"]
 
     if mid:
         mailing = await db.fetchrow(
-            "SELECT id FROM mailings WHERE id=$1 AND owner_id=$2 AND status='draft'",
+            "SELECT m.*, cb.bot_username FROM mailings m "
+            "LEFT JOIN child_bots cb ON cb.id = m.child_bot_id "
+            "WHERE m.id=$1 AND m.owner_id=$2 AND m.status='draft'",
             mid, owner_id,
         )
-    else:
+    elif chat_id:
         mailing = await db.fetchrow(
-            "SELECT id FROM mailings WHERE owner_id=$1 AND chat_id=$2 AND status='draft' "
-            "ORDER BY created_at DESC LIMIT 1",
+            "SELECT m.*, cb.bot_username FROM mailings m "
+            "LEFT JOIN child_bots cb ON cb.id = m.child_bot_id "
+            "WHERE m.owner_id=$1 AND m.chat_id=$2 AND m.status='draft' "
+            "ORDER BY m.created_at DESC LIMIT 1",
             owner_id, chat_id,
         )
+    else:
+        await callback.answer("Черновик не найден", show_alert=True)
+        return
 
     if not mailing:
         await callback.answer("Черновик не найден", show_alert=True)
         return
 
-    mailing_id = mailing["id"]
+    mailing_id   = mailing["id"]
+    bot_username = mailing.get("bot_username") or ""
     await db.execute("UPDATE mailings SET status='pending' WHERE id=$1", mailing_id)
 
-    await callback.message.edit_text(
-        f"📨 <b>Рассылка запущена</b>\n\n"
-        f"⏳ Отправлено: 0\n"
-        f"⚡ Скорость: 🟢 Низкая",
-        parse_mode="HTML",
-        reply_markup=kb_mailing_control(mailing_id, False, "low"),
-    )
-    asyncio.create_task(mailing_svc.run_mailing(mailing_id, bot))
+    # Начальный экран «идём!»
+    progress_text = _mailing_progress_text(mailing_id, 0, 0, 0, "running", bot_username)
+    try:
+        progress_msg = await callback.message.edit_text(
+            progress_text,
+            parse_mode="HTML",
+            reply_markup=kb_mailing_control(mailing_id, False, "low"),
+        )
+    except Exception:
+        progress_msg = None
+
     await callback.answer("▶ Рассылка запущена")
+
+    # Захватываем chat_id / message_id для обновлений
+    upd_chat_id = callback.message.chat.id
+    upd_msg_id  = callback.message.message_id
+
+    async def progress_callback(ml_id: int, sent: int, total: int,
+                                errors: int, status: str):
+        """Обновляем сообщение с прогрессом."""
+        m_row = await db.fetchrow("SELECT started_at FROM mailings WHERE id=$1", ml_id)
+        started_at = m_row["started_at"] if m_row else None
+        text = _mailing_progress_text(ml_id, sent, total, errors, status, bot_username, started_at)
+        kb = kb_mailing_control(ml_id, False, "low") if status == "running" else None
+        try:
+            await bot.edit_message_text(
+                text,
+                chat_id=upd_chat_id,
+                message_id=upd_msg_id,
+                parse_mode="HTML",
+                reply_markup=kb,
+            )
+        except Exception as e:
+            logger.debug(f"Progress update failed: {e}")
+
+    asyncio.create_task(mailing_svc.run_mailing(mailing_id, bot, progress_callback))
+
+
 
 
 # ══════════════════════════════════════════════════════════════

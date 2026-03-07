@@ -83,30 +83,53 @@ def _substitute_vars(text: str, user: dict) -> str:
 
 # ── Основной цикл рассылки ───────────────────────────────────
 
-async def run_mailing(mailing_id: int, bot: Bot):
-    """Запускает рассылку для mailing_id."""
+async def run_mailing(mailing_id: int, bot: Bot,
+                      progress_callback=None):
+    """
+    Запускает рассылку для mailing_id через основной Bumblebee бот.
+    progress_callback(mailing_id, sent, total, errors, status) вызывается
+    каждые 5 сек и по завершении для обновления экрана прогресса.
+    """
+    import time
     mailing = await db.fetchrow("SELECT * FROM mailings WHERE id=$1", mailing_id)
     if not mailing or mailing["status"] != "pending":
         return
 
-    owner_id = mailing["owner_id"]
-    chat_id  = mailing["chat_id"]
+    owner_id     = mailing["owner_id"]
+    chat_id      = mailing["chat_id"]       # None → bot-level
+    child_bot_id = mailing["child_bot_id"]
 
-    # Получаем название канала для переменной {chat}
-    ch_row = await db.fetchrow(
-        "SELECT chat_title FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint",
-        owner_id, chat_id,
-    )
-    chat_title = ch_row["chat_title"] if ch_row else ""
+    # ── Получатели ──────────────────────────────────────────────
+    if chat_id:
+        ch_row = await db.fetchrow(
+            "SELECT chat_title FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint",
+            owner_id, chat_id,
+        )
+        chat_title = ch_row["chat_title"] if ch_row else ""
 
-    recipients = await db.fetch(
-        """SELECT user_id, username, first_name, last_name
-           FROM bot_users
-           WHERE owner_id=$1 AND chat_id=$2
-             AND is_active=true AND bot_activated=true
-           ORDER BY joined_at""",
-        owner_id, chat_id,
-    )
+        recipients = await db.fetch(
+            """SELECT bu.user_id, bu.username, bu.first_name, bu.last_name
+               FROM bot_users bu
+               WHERE bu.owner_id=$1 AND bu.chat_id=$2
+                 AND bu.is_active=true
+               ORDER BY bu.joined_at""",
+            owner_id, chat_id,
+        )
+    else:
+        # Bot-level: уникальные пользователи всех площадок бота
+        chat_title = ""
+        recipients = await db.fetch(
+            """SELECT DISTINCT ON (bu.user_id)
+                      bu.user_id, bu.username, bu.first_name, bu.last_name
+               FROM bot_users bu
+               JOIN bot_chats bc ON bu.chat_id = bc.chat_id
+                                AND bu.owner_id = bc.owner_id
+               WHERE bc.child_bot_id = $1
+                 AND bu.owner_id = $2
+                 AND bu.is_active = true
+               ORDER BY bu.user_id, bu.joined_at""",
+            child_bot_id, owner_id,
+        )
 
     total = len(recipients)
     await db.execute(
@@ -116,8 +139,8 @@ async def run_mailing(mailing_id: int, bot: Bot):
 
     _active_mailings[mailing_id] = {"paused": False, "cancelled": False, "speed": "low"}
     sent = errors = 0
+    last_notify_ts = 0.0
 
-    # Предпарсим кнопки один раз
     kb = _parse_buttons(
         mailing.get("url_buttons_raw") or "",
         mailing.get("button_color") or "blue",
@@ -145,9 +168,8 @@ async def run_mailing(mailing_id: int, bot: Bot):
         except TelegramForbiddenError:
             errors += 1
             await db.execute(
-                "UPDATE bot_users SET bot_activated=false "
-                "WHERE owner_id=$1 AND chat_id=$2 AND user_id=$3",
-                owner_id, chat_id, rec["user_id"],
+                "UPDATE bot_users SET is_active=false WHERE owner_id=$1 AND user_id=$2",
+                owner_id, rec["user_id"],
             )
         except TelegramRetryAfter as e:
             logger.warning(f"Mailing {mailing_id}: rate limit {e.retry_after}s")
@@ -164,6 +186,15 @@ async def run_mailing(mailing_id: int, bot: Bot):
         speed = _active_mailings.get(mailing_id, {}).get("speed", "low")
         await asyncio.sleep(SPEEDS.get(speed, 0.08))
 
+        # Прогресс-колбэк каждые 5 секунд
+        now_ts = time.monotonic()
+        if progress_callback and (now_ts - last_notify_ts) >= 5:
+            last_notify_ts = now_ts
+            try:
+                await progress_callback(mailing_id, sent, total, errors, "running")
+            except Exception as cb_err:
+                logger.debug(f"Progress callback error: {cb_err}")
+
     cancelled = _active_mailings.get(mailing_id, {}).get("cancelled", False)
     final_status = "cancelled" if cancelled else "done"
     await db.execute(
@@ -172,6 +203,15 @@ async def run_mailing(mailing_id: int, bot: Bot):
     )
     _active_mailings.pop(mailing_id, None)
     logger.info(f"Mailing {mailing_id} done: {sent}/{total}, errors={errors}")
+
+    # Финальный колбэк
+    if progress_callback:
+        try:
+            await progress_callback(mailing_id, sent, total, errors, final_status)
+        except Exception as cb_err:
+            logger.debug(f"Final progress callback error: {cb_err}")
+
+
 
 
 async def _send_message(

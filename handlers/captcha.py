@@ -322,9 +322,13 @@ async def _approve_user(
         return
 
     if success:
+        # ← Регистрируем ДО approve, чтобы chat_member-хендлер не кикнул пользователя повторно.
+        # _handle_chat_member видит captcha_type != "off" и при отсутствии ключа кикает снова.
+        _passed_captcha_group.add(key)
         try:
             await event.approve()
         except Exception as e:
+            _passed_captcha_group.discard(key)  # откатываем при неудаче
             logger.warning(f"Approve failed: {e}")
             await callback.answer("❌ Не удалось одобрить заявку", show_alert=True)
             return

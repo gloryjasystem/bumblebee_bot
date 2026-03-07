@@ -99,6 +99,21 @@ async def run_mailing(mailing_id: int, bot: Bot,
     chat_id      = mailing["chat_id"]       # None → bot-level
     child_bot_id = mailing["child_bot_id"]
 
+    logger.info(
+        f"[MAILING {mailing_id}] owner={owner_id} chat_id={chat_id} "
+        f"child_bot_id={child_bot_id} status={mailing['status']}"
+    )
+
+    # ── Если child_bot_id не сохранён — пробуем достать по chat_id ─
+    if not child_bot_id and chat_id:
+        row = await db.fetchrow(
+            "SELECT child_bot_id FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint",
+            owner_id, chat_id,
+        )
+        if row:
+            child_bot_id = row["child_bot_id"]
+        logger.info(f"[MAILING {mailing_id}] resolved child_bot_id={child_bot_id} from chat_id")
+
     # ── Получатели ──────────────────────────────────────────────
     if chat_id:
         ch_row = await db.fetchrow(
@@ -115,7 +130,8 @@ async def run_mailing(mailing_id: int, bot: Bot,
                ORDER BY bu.joined_at""",
             owner_id, chat_id,
         )
-    else:
+        logger.info(f"[MAILING {mailing_id}] chat-level: found {len(recipients)} recipients for chat {chat_id}")
+    elif child_bot_id:
         # Bot-level: уникальные пользователи всех площадок бота
         chat_title = ""
         recipients = await db.fetch(
@@ -130,6 +146,19 @@ async def run_mailing(mailing_id: int, bot: Bot,
                ORDER BY bu.user_id, bu.joined_at""",
             child_bot_id, owner_id,
         )
+        logger.info(f"[MAILING {mailing_id}] bot-level: child_bot_id={child_bot_id} found {len(recipients)} recipients")
+    else:
+        # Нет ни chat_id, ни child_bot_id — рассылаем всем пользователям владельца
+        chat_title = ""
+        recipients = await db.fetch(
+            """SELECT DISTINCT ON (bu.user_id)
+                      bu.user_id, bu.username, bu.first_name, bu.last_name
+               FROM bot_users bu
+               WHERE bu.owner_id=$1 AND bu.user_id IS NOT NULL
+               ORDER BY bu.user_id, bu.joined_at""",
+            owner_id,
+        )
+        logger.info(f"[MAILING {mailing_id}] owner-level fallback: found {len(recipients)} recipients")
 
     total = len(recipients)
     await db.execute(

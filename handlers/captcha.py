@@ -27,6 +27,14 @@ _expected: dict[tuple[int, int], str] = {}
 # Хранилище invite_link_url для трекинга (fallback когда Telegram не шлёт invite_link)
 _pending_link_urls: dict[tuple[int, int], str] = {}
 
+# ── Групповой режим (join via regular link) ────────────────────────────────
+# {(chat_id, user_id): {captcha_type, one_time_link, welcome_text, owner_id, ...}}
+_pending_group: dict[tuple[int, int], dict] = {}
+# Пользователи, успешно прошедшие капчу; chat_member-хендлер пропускает их
+_passed_captcha_group: set[tuple[int, int]] = set()
+# Пользователи, которых мы кикнули для капчи; chat_member (left) -хендлер пропускает их
+_kicked_for_captcha: set[tuple[int, int]] = set()
+
 
 # ══════════════════════════════════════════════════════════════
 # Публичная точка входа — вызывается из join_requests.py
@@ -119,6 +127,112 @@ async def send_captcha(bot: Bot, event: ChatJoinRequest, settings_row: dict):
         await _send_welcome(bot, event.chat.id, user, settings_row)
 
 
+
+# ══════════════════════════════════════════════════════════════
+# Групповой режим: отправка капчи без ChatJoinRequest
+# ══════════════════════════════════════════════════════════════
+
+async def send_captcha_group(
+    bot: Bot, chat_id: int, chat_title: str, user,
+    settings_row: dict, one_time_link: str,
+):
+    """
+    Отправляет капчу пользователю в личку в режиме «открытая группа».
+    Пользователь уже был кикнут; one_time_link — одноразовая ссылка Telegram.
+    При успехе — отправляем one_time_link; при провале — пользователь просто не получает ссылку.
+    """
+    key = (chat_id, user.id)
+    captcha_type = settings_row.get("captcha_type") or "simple"
+    timer_min    = int(settings_row.get("captcha_timer_min") or 1)
+
+    _pending_group[key] = {
+        "captcha_type":  captcha_type,
+        "one_time_link": one_time_link,
+        "welcome_text":  settings_row.get("welcome_text"),
+        "owner_id":      settings_row.get("owner_id"),
+        "chat_title":    chat_title,
+    }
+
+    # ── Простая капча ──────────────────────────────────────────
+    if captcha_type == "simple":
+        text = (
+            settings_row.get("captcha_text")
+            or f"👋 Привет, <b>{user.first_name}</b>!\n\n"
+               f"Чтобы войти в <b>{chat_title}</b>,\n"
+               f"докажи что ты не робот — нажми кнопку ниже ✅\n\n"
+               f"⏱ У тебя {timer_min} мин."
+        )
+        kb = InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(
+                text="✅ Я не робот",
+                callback_data=f"captcha_ok:{chat_id}:{user.id}",
+            )
+        ]])
+
+    # ── Рандомная капча ────────────────────────────────────────
+    elif captcha_type == "random":
+        emoji_set_raw = settings_row.get("captcha_emoji_set") or "🍕🍔🌭🌮"
+        emojis = _split_emojis(emoji_set_raw)
+        if len(emojis) < 2:
+            emojis = ["🍕", "🍔", "🌭", "🌮"]
+        correct = emojis[0]
+        options = emojis[:4] if len(emojis) >= 4 else (emojis * 2)[:4]
+        random.shuffle(options)
+        _expected[key] = correct
+
+        text = (
+            settings_row.get("captcha_text")
+            or f"👋 Привет, <b>{user.first_name}</b>!\n\n"
+               f"Чтобы войти в <b>{chat_title}</b>, нажми на: <b>{correct}</b>\n\n"
+               f"⏱ У тебя {timer_min} мин."
+        )
+        kb = InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(
+                text=e,
+                callback_data=f"captcha_rnd:{chat_id}:{user.id}:{e}",
+            ) for e in options
+        ]])
+    else:
+        logger.warning(f"[GROUP CAPTCHA] Unknown captcha_type={captcha_type!r} — skipping")
+        _pending_group.pop(key, None)
+        return
+
+    try:
+        msg = await bot.send_message(user.id, text, parse_mode="HTML", reply_markup=kb)
+        asyncio.create_task(
+            _captcha_timeout_group(bot, chat_id, user.id, timer_min, msg.message_id)
+        )
+        logger.info(f"[GROUP CAPTCHA] Sent to user={user.id} chat={chat_id} type={captcha_type}")
+    except Exception as e:
+        # Пользователь не открыл бота — не можем отправить DM. Просто убираем pending.
+        logger.warning(f"[GROUP CAPTCHA] Cannot send DM to user={user.id}: {e}")
+        _pending_group.pop(key, None)
+        _expected.pop(key, None)
+
+
+async def _captcha_timeout_group(
+    bot: Bot, chat_id: int, user_id: int, timer_min: int, msg_id: int,
+):
+    """Истекло время капчи в групповом режиме — удаляем pending, сообщаем пользователю."""
+    await asyncio.sleep(timer_min * 60)
+    key = (chat_id, user_id)
+    if key in _pending_group:
+        _pending_group.pop(key, None)
+        _expected.pop(key, None)
+        try:
+            await bot.delete_message(user_id, msg_id)
+        except Exception:
+            pass
+        try:
+            await bot.send_message(
+                user_id,
+                "⏱ Время вышло. Ссылка аннулирована.\n"
+                "Вы можете войти в группу снова и пройти проверку.",
+            )
+        except Exception:
+            pass
+
+
 # ══════════════════════════════════════════════════════════════
 # Обработчики нажатия на капчу
 # ══════════════════════════════════════════════════════════════
@@ -170,7 +284,41 @@ async def _approve_user(
     event = _pending.pop(key, None)
 
     if not event:
-        await callback.answer("Капча уже обработана или истекла", show_alert=True)
+        # ── Групповой режим (пользователь вступил через обычную ссылку) ──
+        group_data = _pending_group.pop(key, None)
+        _expected.pop(key, None)
+        if group_data:
+            if success:
+                _passed_captcha_group.add(key)
+                # Приветственное, если есть
+                welcome = group_data.get("welcome_text")
+                if welcome:
+                    try:
+                        await bot.send_message(user_id, welcome, parse_mode="HTML")
+                    except Exception:
+                        pass
+                # Одноразовая ссылка для вступления
+                one_time_link = group_data.get("one_time_link")
+                if one_time_link:
+                    await callback.message.edit_text(
+                        "✅ Капча пройдена! Нажмите, чтобы войти:"
+                    )
+                    await bot.send_message(
+                        user_id,
+                        f'🔗 <a href="{one_time_link}">Войти в группу</a>\n\nСсылка одноразовая.',
+                        parse_mode="HTML",
+                    )
+                else:
+                    await callback.message.edit_text("✅ Капча пройдена! Добро пожаловать.")
+                await callback.answer("✅ Отлично!")
+            else:
+                await callback.message.edit_text(
+                    "❌ Неверный ответ.\n"
+                    "Для вступления запросите доступ снова."
+                )
+                await callback.answer("❌ Неверно!", show_alert=True)
+        else:
+            await callback.answer("Капча уже обработана или истекла", show_alert=True)
         return
 
     if success:

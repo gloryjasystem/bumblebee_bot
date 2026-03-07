@@ -896,7 +896,8 @@ async def _handle_chat_member(bot: Bot, child_bot_id: int, event: ChatMemberUpda
     # Получаем настройки площадки
     chat_settings = await db.fetchrow(
         """
-        SELECT owner_id, welcome_text, farewell_text, captcha_type,
+        SELECT owner_id, welcome_text, farewell_text,
+               captcha_type, captcha_text, captcha_timer_min, captcha_emoji_set,
                join_limit_enabled, join_limit_punishment,
                join_limit_period_min, join_limit_count
         FROM bot_chats
@@ -933,6 +934,63 @@ async def _handle_chat_member(bot: Bot, child_bot_id: int, event: ChatMemberUpda
         country_code = LANG_TO_COUNTRY.get(
             (user.language_code or "").split("-")[0].lower()
         )
+
+        captcha_type = (chat_settings.get("captcha_type") or "off")
+
+        # ── Капча для открытой группы (join via regular link) ──
+        # При chat_join_request капча уже обрабатывается в _handle_join_request.
+        # Здесь — только для chat_member (обычная ссылка без заявки).
+        if captcha_type != "off":
+            from handlers.captcha import send_captcha_group, _kicked_for_captcha, _passed_captcha_group
+            key = (chat_id, user.id)
+            # Пользователь уже может быть в _passed_captcha_group, если вернулся
+            # по одноразовой ссылке после прохождения капчи — пропускаем повторную капчу
+            if key in _passed_captcha_group:
+                _passed_captcha_group.discard(key)
+                logger.info(f"[GROUP CAPTCHA] User={user.id} passed captcha, skipping re-captcha")
+                # fall through — регистрируем пользователя и отправляем приветствие
+            else:
+                # Kick the user: ban → immediate unban
+                _kicked_for_captcha.add(key)
+                try:
+                    await bot.ban_chat_member(chat_id, user.id)
+                    await bot.unban_chat_member(chat_id, user.id, only_if_banned=True)
+                    logger.info(f"[GROUP CAPTCHA] Kicked user={user.id} from chat={chat_id} for captcha")
+                except Exception as kick_err:
+                    _kicked_for_captcha.discard(key)
+                    logger.warning(f"[GROUP CAPTCHA] Could not kick user={user.id}: {kick_err}")
+                    return
+
+                # Создаём одноразовую инвайт-ссылку
+                try:
+                    from datetime import datetime, timedelta
+                    timer_min = int(chat_settings.get("captcha_timer_min") or 1)
+                    expire_ts = int((datetime.utcnow() + timedelta(minutes=timer_min + 1)).timestamp())
+                    invite = await bot.create_chat_invite_link(
+                        chat_id,
+                        member_limit=1,
+                        expire_date=expire_ts,
+                        name="captcha",
+                    )
+                    one_time_link = invite.invite_link
+                    logger.info(f"[GROUP CAPTCHA] Created one-time link={one_time_link} for user={user.id}")
+                except Exception as inv_err:
+                    logger.warning(f"[GROUP CAPTCHA] Could not create invite link: {inv_err}")
+                    return
+
+                settings_for_captcha = {
+                    "captcha_type":      captcha_type,
+                    "captcha_text":      chat_settings.get("captcha_text"),
+                    "captcha_timer_min": chat_settings.get("captcha_timer_min") or 1,
+                    "captcha_emoji_set": chat_settings.get("captcha_emoji_set"),
+                    "welcome_text":      chat_settings.get("welcome_text"),
+                    "owner_id":          owner_id,
+                }
+                await send_captcha_group(
+                    bot, chat_id, event.chat.title or str(chat_id),
+                    user, settings_for_captcha, one_time_link,
+                )
+                return  # дальнейшая регистрация — после прохождения капчи
 
         # Ищем ссылку по invite_link из события
         link_id = None
@@ -1009,14 +1067,21 @@ async def _handle_chat_member(bot: Bot, child_bot_id: int, event: ChatMemberUpda
 
         # Приветственное сообщение — отправляем только если капча выключена.
         # Если капча включена — приветствие отправляет captcha.py после нажатия кнопки.
-        captcha_type = chat_settings.get("captcha_type") or "off"
         welcome = chat_settings.get("welcome_text")
         logger.info(f"[WELCOME] user={user.id} captcha={captcha_type} welcome_text={repr(welcome)[:60]}")
         if welcome and captcha_type == "off":
             await _try_send_dm(bot, user.id, welcome)
-
     # ── Пользователь вышел/забанен ────────────────────────────
     elif new_status in ("left", "kicked") and old_status == "member":
+        key = (chat_id, user.id)
+
+        # Если это мы сами кикнули пользователя для капчи — пропускаем 'left'-событие
+        from handlers.captcha import _kicked_for_captcha
+        if key in _kicked_for_captcha:
+            _kicked_for_captcha.discard(key)
+            logger.info(f"[CAPTCHA KICK] Skip left-event for captcha-kicked user={user.id} chat={chat_id}")
+            return
+
         # Обновляем счётчик отписок для ссылки (через joined_via_link_id)
         await db.execute(
             """

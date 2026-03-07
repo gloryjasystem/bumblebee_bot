@@ -2255,10 +2255,11 @@ async def on_bs_base(callback: CallbackQuery, platform_user: dict | None):
         f"👥 Пользователей в базе: {total:,}\n"
         f"⛔️ Заблокированных: {blocked:,}",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="✏️ Изменить базу",    callback_data=f"bs_base_edit:{child_bot_id}")],
-            [InlineKeyboardButton(text="📤 Экспорт базы",     callback_data=f"bs_base_export_menu:{child_bot_id}")],
-            [InlineKeyboardButton(text="⛔️ ЧС пользователей", callback_data=f"bs_blacklist:{child_bot_id}")],
-            [InlineKeyboardButton(text="◀️ Назад",            callback_data=f"bs_settings:{child_bot_id}")],
+            [InlineKeyboardButton(text="✏️ Изменить базу",          callback_data=f"bs_base_edit:{child_bot_id}")],
+            [InlineKeyboardButton(text="🔄 Синхронизировать участников", callback_data=f"bs_sync:{child_bot_id}")],
+            [InlineKeyboardButton(text="📤 Экспорт базы",             callback_data=f"bs_base_export_menu:{child_bot_id}")],
+            [InlineKeyboardButton(text="⛔️ ЧС пользователей",         callback_data=f"bs_blacklist:{child_bot_id}")],
+            [InlineKeyboardButton(text="◀️ Назад",                    callback_data=f"bs_settings:{child_bot_id}")],
         ]),
     )
     await callback.answer()
@@ -2605,6 +2606,172 @@ async def on_bs_blacklist(callback: CallbackQuery, platform_user: dict | None):
         ]),
     )
     await callback.answer()
+
+
+# ── Синхронизация участников ──────────────────────────────────
+@router.callback_query(F.data.startswith("bs_sync:"))
+async def on_bs_sync(callback: CallbackQuery, bot: Bot,
+                     platform_user: dict | None):
+    """
+    Синхронизирует участников всех площадок дочернего бота:
+    1) getChatAdministrators — добавляем всех админов в bot_users
+    2) getChatMember для каждого уже известного user_id — обновляем is_active
+    """
+    if not platform_user:
+        return
+    child_bot_id = int(callback.data.split(":")[1])
+    owner_id = platform_user["user_id"]
+
+    await callback.answer("⏳ Синхронизация...")
+    await callback.message.edit_text(
+        "🔄 <b>Синхронизация участников...</b>\n\n"
+        "⏳ Загружаю данные из Telegram, подождите.",
+        parse_mode="HTML",
+    )
+
+    # Получаем токен дочернего бота
+    bot_row = await db.fetchrow(
+        "SELECT token_encrypted FROM child_bots WHERE id=$1 AND owner_id=$2",
+        child_bot_id, owner_id,
+    )
+    if not bot_row:
+        await callback.message.edit_text(
+            "❌ Бот не найден.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="◀️ Назад", callback_data=f"bs_base:{child_bot_id}")]
+            ]),
+        )
+        return
+
+    import asyncio
+    from aiogram import Bot as AioBot
+    from services.security import decrypt_token
+    child_bot_instance = AioBot(token=decrypt_token(bot_row["token_encrypted"]))
+
+    chats = await db.fetch(
+        "SELECT chat_id, chat_title FROM bot_chats "
+        "WHERE child_bot_id=$1 AND owner_id=$2 AND is_active=true",
+        child_bot_id, owner_id,
+    )
+
+    added_total   = 0
+    updated_total = 0
+    left_total    = 0
+    errors_total  = 0
+    chat_results  = []
+
+    try:
+        for chat_row in chats:
+            chat_id    = chat_row["chat_id"]
+            chat_title = chat_row["chat_title"] or str(chat_id)
+            added_chat = updated_chat = left_chat = 0
+
+            # ── 1. getChatAdministrators → добавляем в bot_users ──
+            try:
+                admins = await child_bot_instance.get_chat_administrators(chat_id)
+                for member in admins:
+                    u = member.user
+                    if u.is_bot:
+                        continue
+                    existing = await db.fetchrow(
+                        "SELECT id, is_active FROM bot_users "
+                        "WHERE owner_id=$1 AND chat_id=$2 AND user_id=$3",
+                        owner_id, chat_id, u.id,
+                    )
+                    if existing:
+                        if not existing["is_active"]:
+                            await db.execute(
+                                "UPDATE bot_users SET is_active=true, left_at=NULL, "
+                                "username=$4, first_name=$5 "
+                                "WHERE owner_id=$1 AND chat_id=$2 AND user_id=$3",
+                                owner_id, chat_id, u.id,
+                                u.username or "", u.first_name or "",
+                            )
+                            updated_chat += 1
+                    else:
+                        await db.execute(
+                            """INSERT INTO bot_users
+                               (owner_id, chat_id, user_id, username, first_name,
+                                is_active, bot_activated, joined_at)
+                               VALUES ($1,$2,$3,$4,$5,true,false,now())
+                               ON CONFLICT (owner_id, chat_id, user_id)
+                               DO UPDATE SET is_active=true, left_at=NULL,
+                                   username=EXCLUDED.username,
+                                   first_name=EXCLUDED.first_name""",
+                            owner_id, chat_id, u.id,
+                            u.username or "", u.first_name or "",
+                        )
+                        added_chat += 1
+            except Exception as e:
+                logger.warning(f"[SYNC] getChatAdministrators failed for {chat_id}: {e}")
+                errors_total += 1
+
+            # ── 2. Проверяем каждого известного user_id через getChatMember ──
+            known_users = await db.fetch(
+                "SELECT user_id, username, first_name FROM bot_users "
+                "WHERE owner_id=$1 AND chat_id=$2 AND is_active=true AND user_id IS NOT NULL",
+                owner_id, chat_id,
+            )
+            for ku in known_users:
+                try:
+                    member = await child_bot_instance.get_chat_member(chat_id, ku["user_id"])
+                    status = member.status
+                    if status in ("left", "kicked", "banned"):
+                        await db.execute(
+                            "UPDATE bot_users SET is_active=false, left_at=now() "
+                            "WHERE owner_id=$1 AND chat_id=$2 AND user_id=$3",
+                            owner_id, chat_id, ku["user_id"],
+                        )
+                        left_chat += 1
+                    else:
+                        # Обновляем имя/username если изменились
+                        new_username  = member.user.username or ""
+                        new_firstname = member.user.first_name or ""
+                        if new_username != (ku["username"] or "") or new_firstname != (ku["first_name"] or ""):
+                            await db.execute(
+                                "UPDATE bot_users SET username=$4, first_name=$5 "
+                                "WHERE owner_id=$1 AND chat_id=$2 AND user_id=$3",
+                                owner_id, chat_id, ku["user_id"],
+                                new_username, new_firstname,
+                            )
+                            updated_chat += 1
+                except Exception:
+                    # Пользователь недоступен или ошибка — пропускаем
+                    pass
+                await asyncio.sleep(0.05)  # ~20 req/s, не превысить лимиты
+
+            added_total   += added_chat
+            updated_total += updated_chat
+            left_total    += left_chat
+            chat_results.append(
+                f"• <b>{chat_title[:30]}</b>: +{added_chat} добавлено, "
+                f"{updated_chat} обновлено, {left_chat} покинули"
+            )
+
+    finally:
+        await child_bot_instance.session.close()
+
+    # Итоговый счётчик
+    total_now = await db.fetchval(
+        """SELECT COUNT(*) FROM bot_users bu
+           JOIN bot_chats bc ON bu.chat_id=bc.chat_id AND bu.owner_id=bc.owner_id
+           WHERE bc.child_bot_id=$1 AND bc.owner_id=$2 AND bu.is_active=true""",
+        child_bot_id, owner_id,
+    ) or 0
+
+    detail = "\n".join(chat_results) if chat_results else "Нет площадок"
+    await callback.message.edit_text(
+        "✅ <b>Синхронизация завершена!</b>\n\n"
+        f"{detail}\n\n"
+        f"📊 Итого: +{added_total} добавлено, "
+        f"{updated_total} обновлено, {left_total} помечено как покинувшие\n"
+        f"👥 Активных в базе: <b>{total_now:,}</b>",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="◀️ Назад к базе",
+                                  callback_data=f"bs_base:{child_bot_id}")],
+        ]),
+    )
 
 
 # ── Экспорт базы ЧС ───────────────────────────────────────────

@@ -147,47 +147,53 @@ async def on_bot_settings(callback: CallbackQuery, platform_user: dict | None):
            WHERE bc.child_bot_id=$1 AND bc.owner_id=$2 AND jr.status='pending'""",
         child_bot_id, owner_id,
     ) or 0
-    # Статистика капчи
-    captcha_total_today = await db.fetchval(
-        """SELECT COUNT(*) FROM captcha_events ce
-           JOIN bot_chats bc ON ce.chat_id=bc.chat_id AND ce.owner_id=bc.owner_id
-           WHERE bc.child_bot_id=$1 AND ce.owner_id=$2
-             AND ce.created_at::date=$3""",
-        child_bot_id, owner_id, today,
-    ) or 0
-    captcha_passed_today = await db.fetchval(
-        """SELECT COUNT(*) FROM captcha_events ce
-           JOIN bot_chats bc ON ce.chat_id=bc.chat_id AND ce.owner_id=bc.owner_id
-           WHERE bc.child_bot_id=$1 AND ce.owner_id=$2
-             AND ce.created_at::date=$3 AND ce.passed=true""",
-        child_bot_id, owner_id, today,
-    ) or 0
-    captcha_total_yest = await db.fetchval(
-        """SELECT COUNT(*) FROM captcha_events ce
-           JOIN bot_chats bc ON ce.chat_id=bc.chat_id AND ce.owner_id=bc.owner_id
-           WHERE bc.child_bot_id=$1 AND ce.owner_id=$2
-             AND ce.created_at::date=$3""",
-        child_bot_id, owner_id, yesterday,
-    ) or 0
-    captcha_passed_yest = await db.fetchval(
-        """SELECT COUNT(*) FROM captcha_events ce
-           JOIN bot_chats bc ON ce.chat_id=bc.chat_id AND ce.owner_id=bc.owner_id
-           WHERE bc.child_bot_id=$1 AND ce.owner_id=$2
-             AND ce.created_at::date=$3 AND ce.passed=true""",
-        child_bot_id, owner_id, yesterday,
-    ) or 0
-    captcha_total_all = await db.fetchval(
-        """SELECT COUNT(*) FROM captcha_events ce
-           JOIN bot_chats bc ON ce.chat_id=bc.chat_id AND ce.owner_id=bc.owner_id
-           WHERE bc.child_bot_id=$1 AND ce.owner_id=$2""",
-        child_bot_id, owner_id,
-    ) or 0
-    captcha_passed_all = await db.fetchval(
-        """SELECT COUNT(*) FROM captcha_events ce
-           JOIN bot_chats bc ON ce.chat_id=bc.chat_id AND ce.owner_id=bc.owner_id
-           WHERE bc.child_bot_id=$1 AND ce.owner_id=$2 AND ce.passed=true""",
-        child_bot_id, owner_id,
-    ) or 0
+    # Статистика капчи (с защитой от ошибок, если таблица ещё не создана)
+    captcha_total_today = captcha_passed_today = 0
+    captcha_total_yest  = captcha_passed_yest  = 0
+    captcha_total_all   = captcha_passed_all   = 0
+    try:
+        captcha_total_today = await db.fetchval(
+            """SELECT COUNT(*) FROM captcha_events ce
+               JOIN bot_chats bc ON ce.chat_id=bc.chat_id AND ce.owner_id=bc.owner_id
+               WHERE bc.child_bot_id=$1 AND ce.owner_id=$2
+                 AND ce.created_at::date=$3""",
+            child_bot_id, owner_id, today,
+        ) or 0
+        captcha_passed_today = await db.fetchval(
+            """SELECT COUNT(*) FROM captcha_events ce
+               JOIN bot_chats bc ON ce.chat_id=bc.chat_id AND ce.owner_id=bc.owner_id
+               WHERE bc.child_bot_id=$1 AND ce.owner_id=$2
+                 AND ce.created_at::date=$3 AND ce.passed=true""",
+            child_bot_id, owner_id, today,
+        ) or 0
+        captcha_total_yest = await db.fetchval(
+            """SELECT COUNT(*) FROM captcha_events ce
+               JOIN bot_chats bc ON ce.chat_id=bc.chat_id AND ce.owner_id=bc.owner_id
+               WHERE bc.child_bot_id=$1 AND ce.owner_id=$2
+                 AND ce.created_at::date=$3""",
+            child_bot_id, owner_id, yesterday,
+        ) or 0
+        captcha_passed_yest = await db.fetchval(
+            """SELECT COUNT(*) FROM captcha_events ce
+               JOIN bot_chats bc ON ce.chat_id=bc.chat_id AND ce.owner_id=bc.owner_id
+               WHERE bc.child_bot_id=$1 AND ce.owner_id=$2
+                 AND ce.created_at::date=$3 AND ce.passed=true""",
+            child_bot_id, owner_id, yesterday,
+        ) or 0
+        captcha_total_all = await db.fetchval(
+            """SELECT COUNT(*) FROM captcha_events ce
+               JOIN bot_chats bc ON ce.chat_id=bc.chat_id AND ce.owner_id=bc.owner_id
+               WHERE bc.child_bot_id=$1 AND ce.owner_id=$2""",
+            child_bot_id, owner_id,
+        ) or 0
+        captcha_passed_all = await db.fetchval(
+            """SELECT COUNT(*) FROM captcha_events ce
+               JOIN bot_chats bc ON ce.chat_id=bc.chat_id AND ce.owner_id=bc.owner_id
+               WHERE bc.child_bot_id=$1 AND ce.owner_id=$2 AND ce.passed=true""",
+            child_bot_id, owner_id,
+        ) or 0
+    except Exception as e:
+        logger.debug(f"captcha_events query failed (bot_settings): {e}")
 
     def _pct(passed, total):
         return f"{round(passed/total*100)}%" if total > 0 else "0%"
@@ -716,31 +722,37 @@ async def _show_channel_detail(callback: CallbackQuery, platform_user: dict, ch_
         "SELECT COUNT(*) FROM join_requests WHERE owner_id=$1 AND chat_id=$2::bigint AND status='pending'",
         owner_id, chat_id,
     ) or 0
-    # Статистика капчи (уровень площадки)
-    captcha_total_today = await db.fetchval(
-        "SELECT COUNT(*) FROM captcha_events WHERE owner_id=$1 AND chat_id=$2::bigint AND created_at::date=$3",
-        owner_id, chat_id, today,
-    ) or 0
-    captcha_passed_today = await db.fetchval(
-        "SELECT COUNT(*) FROM captcha_events WHERE owner_id=$1 AND chat_id=$2::bigint AND created_at::date=$3 AND passed=true",
-        owner_id, chat_id, today,
-    ) or 0
-    captcha_total_yest = await db.fetchval(
-        "SELECT COUNT(*) FROM captcha_events WHERE owner_id=$1 AND chat_id=$2::bigint AND created_at::date=$3",
-        owner_id, chat_id, yesterday,
-    ) or 0
-    captcha_passed_yest = await db.fetchval(
-        "SELECT COUNT(*) FROM captcha_events WHERE owner_id=$1 AND chat_id=$2::bigint AND created_at::date=$3 AND passed=true",
-        owner_id, chat_id, yesterday,
-    ) or 0
-    captcha_total_all = await db.fetchval(
-        "SELECT COUNT(*) FROM captcha_events WHERE owner_id=$1 AND chat_id=$2::bigint",
-        owner_id, chat_id,
-    ) or 0
-    captcha_passed_all = await db.fetchval(
-        "SELECT COUNT(*) FROM captcha_events WHERE owner_id=$1 AND chat_id=$2::bigint AND passed=true",
-        owner_id, chat_id,
-    ) or 0
+    # Статистика капчи (с защитой от ошибок, если таблица ещё не создана)
+    captcha_total_today = captcha_passed_today = 0
+    captcha_total_yest  = captcha_passed_yest  = 0
+    captcha_total_all   = captcha_passed_all   = 0
+    try:
+        captcha_total_today = await db.fetchval(
+            "SELECT COUNT(*) FROM captcha_events WHERE owner_id=$1 AND chat_id=$2::bigint AND created_at::date=$3",
+            owner_id, chat_id, today,
+        ) or 0
+        captcha_passed_today = await db.fetchval(
+            "SELECT COUNT(*) FROM captcha_events WHERE owner_id=$1 AND chat_id=$2::bigint AND created_at::date=$3 AND passed=true",
+            owner_id, chat_id, today,
+        ) or 0
+        captcha_total_yest = await db.fetchval(
+            "SELECT COUNT(*) FROM captcha_events WHERE owner_id=$1 AND chat_id=$2::bigint AND created_at::date=$3",
+            owner_id, chat_id, yesterday,
+        ) or 0
+        captcha_passed_yest = await db.fetchval(
+            "SELECT COUNT(*) FROM captcha_events WHERE owner_id=$1 AND chat_id=$2::bigint AND created_at::date=$3 AND passed=true",
+            owner_id, chat_id, yesterday,
+        ) or 0
+        captcha_total_all = await db.fetchval(
+            "SELECT COUNT(*) FROM captcha_events WHERE owner_id=$1 AND chat_id=$2::bigint",
+            owner_id, chat_id,
+        ) or 0
+        captcha_passed_all = await db.fetchval(
+            "SELECT COUNT(*) FROM captcha_events WHERE owner_id=$1 AND chat_id=$2::bigint AND passed=true",
+            owner_id, chat_id,
+        ) or 0
+    except Exception as e:
+        logger.debug(f"captcha_events query failed (channel_detail): {e}")
 
     def _pct(passed, total):
         return f"{round(passed/total*100)}%" if total > 0 else "0%"

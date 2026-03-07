@@ -70,7 +70,7 @@ async def send_captcha(bot: Bot, event: ChatJoinRequest, settings_row: dict):
         ]])
 
     # ── Рандомная капча ────────────────────────────────────────
-    else:
+    elif captcha_type == "random":
         emoji_set_raw = settings_row.get("captcha_emoji_set") or "🍕🍔🌭🌮"
         # Разбиваем строку на отдельные эмодзи (каждый эмодзи = 1-2 символа Unicode)
         emojis = _split_emojis(emoji_set_raw)
@@ -95,6 +95,12 @@ async def send_captcha(bot: Bot, event: ChatJoinRequest, settings_row: dict):
                 callback_data=f"captcha_rnd:{event.chat.id}:{user.id}:{e}",
             ) for e in options
         ]])
+
+    else:
+        # Неизвестный тип капчи — безопасный fallback: не отправляем, заявка в очередь
+        logger.warning(f"[CAPTCHA] Unknown captcha_type={settings_row.get('captcha_type')!r} for chat {event.chat.id} — skipping")
+        _pending.pop(key, None)
+        return
 
     try:
         msg = await bot.send_message(
@@ -182,6 +188,15 @@ async def _approve_user(
             from handlers.join_requests import _register_user, _send_welcome
             await _register_user(settings_row["owner_id"], chat_id, callback.from_user)
 
+            # Записываем событие капчи (успех)
+            try:
+                await db.execute(
+                    "INSERT INTO captcha_events (owner_id, chat_id, user_id, passed) VALUES ($1,$2,$3,true)",
+                    settings_row["owner_id"], chat_id, callback.from_user.id,
+                )
+            except Exception as ex:
+                logger.debug(f"captcha_events insert failed: {ex}")
+
             # Трекинг статистики ссылки-приглашения (event — ChatJoinRequest с invite_link)
             inv_url = event.invite_link.invite_link if getattr(event, "invite_link", None) and event.invite_link else None
             # Fallback: берём из сохранённого при получении join_request
@@ -217,16 +232,29 @@ async def _approve_user(
         await callback.answer("✅ Отлично!")
 
     else:
-        # Неверный ответ
+        # Неверный ответ — записываем событие (провал)
         try:
             await event.decline()
         except Exception:
             pass
+        # Записываем событие капчи (провал)
+        settings_row = await db.fetchrow(
+            "SELECT owner_id FROM bot_chats WHERE chat_id=$1::bigint AND is_active=true", chat_id
+        )
+        if settings_row:
+            try:
+                await db.execute(
+                    "INSERT INTO captcha_events (owner_id, chat_id, user_id, passed) VALUES ($1,$2,$3,false)",
+                    settings_row["owner_id"], chat_id, callback.from_user.id,
+                )
+            except Exception as ex:
+                logger.debug(f"captcha_events insert failed: {ex}")
         await callback.message.edit_text(
             "❌ Неверный ответ. Заявка отклонена.\n"
             "Вы можете подать заявку повторно."
         )
         await callback.answer("❌ Неверно!", show_alert=True)
+
 
 
 async def _captcha_timeout(

@@ -587,8 +587,8 @@ async def _handle_my_chat_member(
         # Сохраняем в bot_chats
         await db.execute(
             """
-            INSERT INTO bot_chats (owner_id, child_bot_id, chat_id, chat_title, chat_type, is_active)
-            VALUES ($1, $2, $3, $4, $5, true)
+            INSERT INTO bot_chats (owner_id, child_bot_id, chat_id, chat_title, chat_type, is_active, captcha_type)
+            VALUES ($1, $2, $3, $4, $5, true, 'off')
             ON CONFLICT (owner_id, chat_id)
             DO UPDATE SET chat_title=EXCLUDED.chat_title,
                           child_bot_id=EXCLUDED.child_bot_id,
@@ -597,6 +597,7 @@ async def _handle_my_chat_member(
             owner_id, child_bot_id, chat.id,
             chat.title or f"chat_{chat.id}", chat_type,
         )
+
 
         # Уведомляем владельца через главный бот
         if _main_bot:

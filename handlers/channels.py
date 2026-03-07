@@ -147,45 +147,90 @@ async def on_bot_settings(callback: CallbackQuery, platform_user: dict | None):
            WHERE bc.child_bot_id=$1 AND bc.owner_id=$2 AND jr.status='pending'""",
         child_bot_id, owner_id,
     ) or 0
-    active_users = await db.fetchval(
-        """SELECT COUNT(DISTINCT bu.user_id) FROM bot_users bu
-           JOIN bot_chats bc ON bu.chat_id=bc.chat_id AND bu.owner_id=bc.owner_id
-           WHERE bc.child_bot_id=$1 AND bc.owner_id=$2 AND bu.is_active=true AND bu.bot_activated=true""",
+    # Статистика капчи
+    captcha_total_today = await db.fetchval(
+        """SELECT COUNT(*) FROM captcha_events ce
+           JOIN bot_chats bc ON ce.chat_id=bc.chat_id AND ce.owner_id=bc.owner_id
+           WHERE bc.child_bot_id=$1 AND ce.owner_id=$2
+             AND ce.created_at::date=$3""",
+        child_bot_id, owner_id, today,
+    ) or 0
+    captcha_passed_today = await db.fetchval(
+        """SELECT COUNT(*) FROM captcha_events ce
+           JOIN bot_chats bc ON ce.chat_id=bc.chat_id AND ce.owner_id=bc.owner_id
+           WHERE bc.child_bot_id=$1 AND ce.owner_id=$2
+             AND ce.created_at::date=$3 AND ce.passed=true""",
+        child_bot_id, owner_id, today,
+    ) or 0
+    captcha_total_yest = await db.fetchval(
+        """SELECT COUNT(*) FROM captcha_events ce
+           JOIN bot_chats bc ON ce.chat_id=bc.chat_id AND ce.owner_id=bc.owner_id
+           WHERE bc.child_bot_id=$1 AND ce.owner_id=$2
+             AND ce.created_at::date=$3""",
+        child_bot_id, owner_id, yesterday,
+    ) or 0
+    captcha_passed_yest = await db.fetchval(
+        """SELECT COUNT(*) FROM captcha_events ce
+           JOIN bot_chats bc ON ce.chat_id=bc.chat_id AND ce.owner_id=bc.owner_id
+           WHERE bc.child_bot_id=$1 AND ce.owner_id=$2
+             AND ce.created_at::date=$3 AND ce.passed=true""",
+        child_bot_id, owner_id, yesterday,
+    ) or 0
+    captcha_total_all = await db.fetchval(
+        """SELECT COUNT(*) FROM captcha_events ce
+           JOIN bot_chats bc ON ce.chat_id=bc.chat_id AND ce.owner_id=bc.owner_id
+           WHERE bc.child_bot_id=$1 AND ce.owner_id=$2""",
         child_bot_id, owner_id,
     ) or 0
-    not_started = max(total_users - active_users, 0)
-    left_users = await db.fetchval(
-        """SELECT COUNT(DISTINCT bu.user_id) FROM bot_users bu
-           JOIN bot_chats bc ON bu.chat_id=bc.chat_id AND bu.owner_id=bc.owner_id
-           WHERE bc.child_bot_id=$1 AND bc.owner_id=$2 AND bu.is_active=false AND bu.left_at IS NOT NULL""",
+    captcha_passed_all = await db.fetchval(
+        """SELECT COUNT(*) FROM captcha_events ce
+           JOIN bot_chats bc ON ce.chat_id=bc.chat_id AND ce.owner_id=bc.owner_id
+           WHERE bc.child_bot_id=$1 AND ce.owner_id=$2 AND ce.passed=true""",
         child_bot_id, owner_id,
     ) or 0
-    premium_users = await db.fetchval(
+
+    def _pct(passed, total):
+        return f"{round(passed/total*100)}%" if total > 0 else "0%"
+
+    # Живые / Мёртвые
+    alive_users = await db.fetchval(
         """SELECT COUNT(DISTINCT bu.user_id) FROM bot_users bu
            JOIN bot_chats bc ON bu.chat_id=bc.chat_id AND bu.owner_id=bc.owner_id
-           WHERE bc.child_bot_id=$1 AND bc.owner_id=$2 AND bu.is_premium=true""",
+           WHERE bc.child_bot_id=$1 AND bc.owner_id=$2 AND bu.is_active=true
+             AND bu.user_id IS NOT NULL""",
         child_bot_id, owner_id,
     ) or 0
-    conversion = round(active_users / total_users * 100) if total_users > 0 else 0
+    dead_users  = await db.fetchval(
+        """SELECT COUNT(DISTINCT bu.user_id) FROM bot_users bu
+           JOIN bot_chats bc ON bu.chat_id=bc.chat_id AND bu.owner_id=bc.owner_id
+           WHERE bc.child_bot_id=$1 AND bc.owner_id=$2 AND bu.is_active=false
+             AND bu.user_id IS NOT NULL""",
+        child_bot_id, owner_id,
+    ) or 0
 
     username = bot["bot_username"]
+    captcha_block = ""
+    if captcha_total_all > 0:
+        captcha_block = (
+            f"\n<u>\U0001f512 Решений капч</u>\n"
+            f"├ Сегодня ≈ {captcha_passed_today} | {_pct(captcha_passed_today, captcha_total_today)}\n"
+            f"├ Вчера ≈ {captcha_passed_yest} | {_pct(captcha_passed_yest, captcha_total_yest)}\n"
+            f"└ Всего ≈ {captcha_passed_all} | {_pct(captcha_passed_all, captcha_total_all)}"
+        )
     text = (
         f"🤖 Бот: @{username}\n\n"
-        f"<u>👥 Пользователей</u>\n"
+        f"<u>\U0001f465 Пользователей</u>\n"
         f"├ Сегодня ≈ {today_users}\n"
         f"├ Вчера ≈ {yesterday_users}\n"
         f"├ Всего ≈ {total_users}\n"
-        f"├ Заявок в очереди ≈ {pending}\n"
-        f"├ 🟢 Активны в боте ≈ {active_users}\n"
-        f"└ ⚪ Не запустили бота ≈ {not_started}\n\n"
-        f"<u>💬 Сообщений</u>\n"
+        f"└ Заявок в очереди ≈ {pending}"
+        f"{captcha_block}\n\n"
+        f"<u>\U0001f4ac Сообщений</u>\n"
         f"├ Сегодня ≈ 0\n"
         f"├ Вчера ≈ 0\n"
-        f"└ Всего ≈ 0\n\n"
-        f"<u>📊 Аналитика</u>\n"
-        f"├ 📈 Конверсия бота: {conversion}%\n"
-        f"├ 🚪 Отписались: {left_users}\n"
-        f"└ ⭐ Telegram Premium: {premium_users}"
+        f"├ Всего ≈ 0\n"
+        f"🟢 Живые ≈ {alive_users}\n"
+        f"🔴 Мёртвые ≈ {dead_users}"
     )
 
     keyboard = [
@@ -671,39 +716,67 @@ async def _show_channel_detail(callback: CallbackQuery, platform_user: dict, ch_
         "SELECT COUNT(*) FROM join_requests WHERE owner_id=$1 AND chat_id=$2::bigint AND status='pending'",
         owner_id, chat_id,
     ) or 0
-    active_users = await db.fetchval(
+    # Статистика капчи (уровень площадки)
+    captcha_total_today = await db.fetchval(
+        "SELECT COUNT(*) FROM captcha_events WHERE owner_id=$1 AND chat_id=$2::bigint AND created_at::date=$3",
+        owner_id, chat_id, today,
+    ) or 0
+    captcha_passed_today = await db.fetchval(
+        "SELECT COUNT(*) FROM captcha_events WHERE owner_id=$1 AND chat_id=$2::bigint AND created_at::date=$3 AND passed=true",
+        owner_id, chat_id, today,
+    ) or 0
+    captcha_total_yest = await db.fetchval(
+        "SELECT COUNT(*) FROM captcha_events WHERE owner_id=$1 AND chat_id=$2::bigint AND created_at::date=$3",
+        owner_id, chat_id, yesterday,
+    ) or 0
+    captcha_passed_yest = await db.fetchval(
+        "SELECT COUNT(*) FROM captcha_events WHERE owner_id=$1 AND chat_id=$2::bigint AND created_at::date=$3 AND passed=true",
+        owner_id, chat_id, yesterday,
+    ) or 0
+    captcha_total_all = await db.fetchval(
+        "SELECT COUNT(*) FROM captcha_events WHERE owner_id=$1 AND chat_id=$2::bigint",
+        owner_id, chat_id,
+    ) or 0
+    captcha_passed_all = await db.fetchval(
+        "SELECT COUNT(*) FROM captcha_events WHERE owner_id=$1 AND chat_id=$2::bigint AND passed=true",
+        owner_id, chat_id,
+    ) or 0
+
+    def _pct(passed, total):
+        return f"{round(passed/total*100)}%" if total > 0 else "0%"
+
+    alive_users = await db.fetchval(
         "SELECT COUNT(*) FROM bot_users WHERE owner_id=$1 AND chat_id=$2::bigint AND is_active=true AND bot_activated=true",
         owner_id, chat_id,
     ) or 0
-    not_started = max(total_users - active_users, 0)
-    left_users = await db.fetchval(
-        "SELECT COUNT(*) FROM bot_users WHERE owner_id=$1 AND chat_id=$2::bigint AND is_active=false AND left_at IS NOT NULL",
+    dead_users = await db.fetchval(
+        "SELECT COUNT(*) FROM bot_users WHERE owner_id=$1 AND chat_id=$2::bigint AND is_active=false",
         owner_id, chat_id,
     ) or 0
-    premium_users = await db.fetchval(
-        "SELECT COUNT(*) FROM bot_users WHERE owner_id=$1 AND chat_id=$2::bigint AND is_premium=true",
-        owner_id, chat_id,
-    ) or 0
-    conversion = round(active_users / total_users * 100) if total_users > 0 else 0
 
     # ── Формируем текст ───────────────────────────────────────
+    captcha_block = ""
+    if captcha_total_all > 0:
+        captcha_block = (
+            f"\n<u>\U0001f512 Решений капч</u>\n"
+            f"├ Сегодня ≈ {captcha_passed_today} | {_pct(captcha_passed_today, captcha_total_today)}\n"
+            f"├ Вчера ≈ {captcha_passed_yest} | {_pct(captcha_passed_yest, captcha_total_yest)}\n"
+            f"└ Всего ≈ {captcha_passed_all} | {_pct(captcha_passed_all, captcha_total_all)}"
+        )
     text = (
         f"🤖 Бот: @{ch['bot_username']}\n\n"
-        f"<u>👥 Пользователей</u>\n"
+        f"<u>\U0001f465 Пользователей</u>\n"
         f"├ Сегодня ≈ {today_users}\n"
         f"├ Вчера ≈ {yesterday_users}\n"
         f"├ Всего ≈ {total_users}\n"
-        f"├ Заявок в очереди ≈ {pending_requests}\n"
-        f"├ 🟢 Активны в боте ≈ {active_users}\n"
-        f"└ ⚪ Не запустили бота ≈ {not_started}\n\n"
-        f"<u>💬 Сообщений</u>\n"
+        f"└ Заявок в очереди ≈ {pending_requests}"
+        f"{captcha_block}\n\n"
+        f"<u>\U0001f4ac Сообщений</u>\n"
         f"├ Сегодня ≈ 0\n"
         f"├ Вчера ≈ 0\n"
-        f"└ Всего ≈ 0\n\n"
-        f"<u>📊 Аналитика</u>\n"
-        f"├ 📈 Конверсия бота: {conversion}%\n"
-        f"├ 🚪 Отписались: {left_users}\n"
-        f"└ ⭐ Telegram Premium: {premium_users}"
+        f"├ Всего ≈ 0\n"
+        f"🟢 Живые ≈ {alive_users}\n"
+        f"🔴 Мёртвые ≈ {dead_users}"
     )
 
     ch_id_b = ch["id"]

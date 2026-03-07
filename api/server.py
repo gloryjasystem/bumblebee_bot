@@ -102,6 +102,22 @@ def create_app(bot: Bot, dp: Dispatcher) -> FastAPI:
                     UNIQUE (owner_id, chat_id, keyword)
                 )
             """)
+            # Таблица событий капчи
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS captcha_events (
+                    id         BIGSERIAL PRIMARY KEY,
+                    owner_id   BIGINT  NOT NULL,
+                    chat_id    BIGINT  NOT NULL,
+                    user_id    BIGINT  NOT NULL,
+                    passed     BOOLEAN NOT NULL DEFAULT false,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                )
+            """)
+            await conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_captcha_events_lookup "
+                "ON captcha_events (owner_id, chat_id, created_at)"
+            )
+
         logger.info("DB schema applied")
 
 

@@ -346,7 +346,11 @@ def _kb_draft(m: dict) -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="🗓 Запланировать", callback_data=f"mailing_schedule:{m['chat_id']}:{mid}"),
             InlineKeyboardButton(text="➡ Запустить",      callback_data=f"mailing_run:{m['chat_id']}:{mid}"),
         ],
-        [InlineKeyboardButton(text="◀️ Назад", callback_data=f"ch_mailing:{m['chat_id']}")],
+        # Кнопка «Назад»: если chat_id=None — рассылка на уровне бота → возвращаем на bs_mailing
+        [InlineKeyboardButton(
+            text="◀️ Назад",
+            callback_data=(f"bs_mailing:{m['child_bot_id']}" if not m.get('chat_id') else f"ch_mailing:{m['chat_id']}"),
+        )],
     ])
 
 
@@ -440,10 +444,11 @@ async def on_mailing_bot_start(callback: CallbackQuery, state: FSMContext,
     owner_id = platform_user["user_id"]
 
     # Количество уникальных получателей по всем площадкам бота
+    # bot_activated убран: считаем всех активных подписчиков (is_active=true)
     count = await db.fetchval(
         "SELECT COUNT(DISTINCT bu.user_id) FROM bot_users bu "
         "JOIN bot_chats bc ON bu.chat_id=bc.chat_id AND bu.owner_id=bc.owner_id "
-        "WHERE bc.child_bot_id=$1 AND bc.owner_id=$2 AND bu.is_active=true AND bu.bot_activated=true",
+        "WHERE bc.child_bot_id=$1 AND bc.owner_id=$2 AND bu.is_active=true",
         child_bot_id, owner_id,
     ) or 0
 

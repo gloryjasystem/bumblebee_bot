@@ -262,11 +262,16 @@ async def on_feedback_lang(callback: CallbackQuery, platform_user: dict | None):
 async def handle_feedback_message(
     message: Message, bot: Bot, owner_id: int, chat_id: int,
     child_bot_id: int | None = None,
+    child_bot_instance: Bot | None = None,   # дочерний бот — основной канал уведомлений
 ):
     """
     Вызывается из child_bot_runner при входящем личном сообщении.
     Проверяет feedback_enabled на уровне площадки (bot_chats) ИЛИ бота (child_bots).
-    Пересылает сообщение владельцу (или всем администраторам) через copy_message.
+    Пересылает сообщение владельцу (или всем администраторам).
+
+    Логика отправки:
+      1) child_bot_instance (дочерний бот) — primary
+      2) bot (основной Bumblebee) — fallback, если admin не запустил /start дочернему
     """
     settings = await db.fetchrow(
         "SELECT * FROM bot_chats WHERE owner_id=$1 AND chat_id=$2",
@@ -306,7 +311,7 @@ async def handle_feedback_message(
         f"От: {name} ({username})"
     )
 
-    # Кнопка «Ответить» — передаём child_bot_id, user_id И owner_id (для аутентификации)
+    # Кнопка «Ответить» — callback будет обработан дочерним ботом
     reply_kb = None
     if child_bot_id and user_id:
         reply_kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -324,29 +329,58 @@ async def handle_feedback_message(
         )
         recipients += [a["user_id"] for a in admins]
 
+    # Определяем «основного» отправителя: дочерний бот (предпочтительно) или main_bot (fallback)
+    primary_bot = child_bot_instance if child_bot_instance else bot
+
     for recipient_id in set(recipients):
-        try:
-            if message.text:
-                # Текстовое сообщение: объединяем уведомление + текст в одно сообщение
-                full_text = f"{caption}\n\n{message.text}"
-                await bot.send_message(recipient_id, full_text, parse_mode="HTML", reply_markup=reply_kb)
-            else:
-                # Медиа: подставляем напись с кнопкой прямо в caption
-                extra = ("\n\n" + message.caption) if message.caption else ""
-                await message.copy_to(
-                    recipient_id,
-                    caption=caption + extra,
-                    parse_mode="HTML",
-                    reply_markup=reply_kb,
-                )
-        except Exception as e:
-            logger.debug(f"Feedback forward failed to {recipient_id}: {e}")
-            # У стикеров нет caption — шлём уведомление отдельно
+        sent = False
+        # ── Попытка 1: через дочернего бота ──────────────────────
+        if child_bot_instance:
             try:
-                await bot.send_message(recipient_id, caption, parse_mode="HTML", reply_markup=reply_kb)
-                await message.copy_to(recipient_id)
-            except Exception as e2:
-                logger.debug(f"Feedback fallback also failed to {recipient_id}: {e2}")
+                if message.text:
+                    full_text = f"{caption}\n\n{message.text}"
+                    await child_bot_instance.send_message(recipient_id, full_text, parse_mode="HTML", reply_markup=reply_kb)
+                else:
+                    extra = ("\n\n" + message.caption) if message.caption else ""
+                    await message.copy_to(
+                        recipient_id,
+                        caption=caption + extra,
+                        parse_mode="HTML",
+                        reply_markup=reply_kb,
+                    )
+                sent = True
+            except Exception as e:
+                logger.debug(f"[FEEDBACK] child_bot send to {recipient_id} failed: {e} — trying sticker fallback")
+                # Стикеры не поддерживают caption — шлём уведомление + медиа отдельно
+                try:
+                    await child_bot_instance.send_message(recipient_id, caption, parse_mode="HTML", reply_markup=reply_kb)
+                    await message.copy_to(recipient_id)
+                    sent = True
+                except Exception as e2:
+                    logger.debug(f"[FEEDBACK] child_bot sticker fallback also failed to {recipient_id}: {e2}")
+
+        # ── Попытка 2 (fallback): через основной бот ─────────────
+        if not sent:
+            logger.info(f"[FEEDBACK] Falling back to main_bot for recipient {recipient_id}")
+            try:
+                if message.text:
+                    full_text = f"{caption}\n\n{message.text}"
+                    await bot.send_message(recipient_id, full_text, parse_mode="HTML", reply_markup=reply_kb)
+                else:
+                    extra = ("\n\n" + message.caption) if message.caption else ""
+                    await message.copy_to(
+                        recipient_id,
+                        caption=caption + extra,
+                        parse_mode="HTML",
+                        reply_markup=reply_kb,
+                    )
+            except Exception as e:
+                logger.debug(f"[FEEDBACK] main_bot fallback also failed to {recipient_id}: {e}")
+                try:
+                    await bot.send_message(recipient_id, caption, parse_mode="HTML", reply_markup=reply_kb)
+                    await message.copy_to(recipient_id)
+                except Exception as e2:
+                    logger.debug(f"[FEEDBACK] main_bot sticker fallback failed to {recipient_id}: {e2}")
 
 
 # ── Обработка кнопки «Ответить» ────────────────────────────────

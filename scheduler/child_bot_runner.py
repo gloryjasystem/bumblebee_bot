@@ -23,6 +23,10 @@ logger = logging.getLogger(__name__)
 _running_bots: Dict[int, asyncio.Task] = {}  # child_bot_id → Task
 _main_bot: Bot = None   # Bumblebee management bot для уведомлений
 
+# Состояния ожидания ответа администратора: (child_bot_id, admin_id) → dict
+# Храним в памяти: при редеплое теряется, но это допустимо — admin просто нажмёт повторно.
+_reply_states: Dict[tuple, dict] = {}
+
 
 async def _try_send_dm(child_bot: Bot, user_id: int, text: str,
                        parse_mode: str = "HTML", show_typing: bool = False) -> bool:
@@ -213,6 +217,10 @@ async def _handle_child_update(
         elif update.chat_join_request:
             await _handle_join_request(bot, child_bot_id, update.chat_join_request)
 
+        # ── Колбэк кнопки «Ответить» (обратная связь) ──────────
+        elif update.callback_query and (update.callback_query.data or "").startswith("fb_reply:"):
+            await _handle_fb_reply_callback(bot, child_bot_id, update.callback_query)
+
         # ── Колбэк от кнопки капчи ────────────────────────────
         elif update.callback_query:
             await _handle_captcha_callback(bot, update.callback_query)
@@ -233,6 +241,83 @@ async def _handle_child_update(
 
     except Exception as e:
         logger.error(f"Child bot @{bot_username} update error: {e}")
+
+
+async def _handle_fb_reply_callback(bot: Bot, child_bot_id: int, callback):
+    """
+    Администратор нажал «Ответить» прямо в дочернем боте.
+    Сохраняем состояние в _reply_states и просим написать ответ.
+    """
+    try:
+        parts = (callback.data or "").split(":")
+        # формат: fb_reply:{child_bot_id}:{user_id}:{owner_id}
+        if len(parts) < 4:
+            await callback.answer("⚠️ Устаревшая кнопка.", show_alert=True)
+            return
+
+        target_user_id = int(parts[2])
+        owner_id       = int(parts[3])
+        admin_id       = callback.from_user.id
+
+        # Проверяем права: владелец или активный член команды
+        if admin_id != owner_id:
+            is_allowed = await db.fetchval(
+                "SELECT 1 FROM team_members WHERE user_id=$1 AND owner_id=$2 AND is_active=true",
+                admin_id, owner_id,
+            )
+            if not is_allowed:
+                await callback.answer("❌ Нет доступа к этому действию.", show_alert=True)
+                return
+
+        # Извлекаем имя из текста уведомления (строка «От: Имя (@username)»)
+        target_name, target_username = "пользователю", ""
+        if callback.message and callback.message.text:
+            for line in callback.message.text.splitlines():
+                if line.startswith("От:"):
+                    raw = line.replace("От:", "").strip()
+                    if " (" in raw:
+                        target_name     = raw.split(" (")[0].strip()
+                        target_username = raw.split(" (")[1].rstrip(")")
+                    else:
+                        target_name = raw
+                    break
+
+        # Сохраняем состояние ожидания ответа
+        _reply_states[(child_bot_id, admin_id)] = {
+            "target_user_id":      target_user_id,
+            "target_name":         target_name,
+            "target_username":     target_username,
+            "notification_msg_id": callback.message.message_id if callback.message else None,
+        }
+
+        # Редактируем уведомление — убираем кнопку, показываем статус «ожидание»
+        try:
+            await callback.message.edit_text(
+                f"✉️ <b>Ответ на обратную связь</b>\n"
+                f"От: {target_name} ({target_username})\n\n"
+                f"⏳ <i>Ожидаем ответ...</i>",
+                parse_mode="HTML",
+            )
+        except Exception as edit_err:
+            logger.debug(f"[FB_REPLY CB] Could not edit notification: {edit_err}")
+
+        name_display = f"{target_name} ({target_username})" if target_username else target_name
+        await bot.send_message(
+            admin_id,
+            f"✉️ <b>Напишите ответ для {name_display}:</b>\n\n"
+            f"Следующее сообщение, которое вы напишете в этот бот, будет отправлено пользователю.\n"
+            f"Для отмены — напишите /cancel",
+            parse_mode="HTML",
+        )
+        await callback.answer(f"✉️ Напишите ответ для {target_name} 👇")
+        logger.info(f"[FB_REPLY CB] admin={admin_id} ready to reply to user={target_user_id} via bot={child_bot_id}")
+
+    except Exception as e:
+        logger.error(f"[FB_REPLY CB] Error: {e}", exc_info=True)
+        try:
+            await callback.answer(f"⚠️ Ошибка: {e}", show_alert=True)
+        except Exception:
+            pass
 
 
 async def _handle_captcha_callback(bot: Bot, callback):
@@ -328,10 +413,10 @@ async def _delete_later(bot: Bot, chat_id: int, message_id: int, delay_min: int)
 async def _handle_message(bot: Bot, child_bot_id: int, owner_id: int, message):
     """
     Обрабатывает сообщения пользователя в личку дочернего бота.
-    /start → устанавливает bot_activated=true. Работает в обоих порядках:
-      - Если юзер уже в канале → UPDATE существующей записи
-      - Если юзер ещё не в канале → INSERT с bot_activated=true (is_active=false)
-        При вступлении в канал ON CONFLICT DO UPDATE не трогает bot_activated.
+    Порядок обработки:
+      1) Если отправитель — администратор в состоянии ожидания ответа → отправляем ответ пользователю
+      2) /start → устанавливает bot_activated=true
+      3) Всё остальное → обратная связь (пересылаем владельцу через дочернего бота)
     """
     user = message.from_user
     if not user or user.is_bot:
@@ -339,6 +424,77 @@ async def _handle_message(bot: Bot, child_bot_id: int, owner_id: int, message):
 
     text = message.text or ""
 
+    # ── 1. Перехват: администратор в состоянии ожидания ответа ──
+    state_key = (child_bot_id, user.id)
+    if state_key in _reply_states:
+        state = _reply_states.pop(state_key)  # изъять и очистить состояние
+
+        # /cancel — отмена ответа
+        if text.strip() == "/cancel":
+            await bot.send_message(user.id, "❌ Ответ отменён.")
+            return
+
+        target_user_id  = state["target_user_id"]
+        target_name     = state.get("target_name", "пользователю")
+        target_username = state.get("target_username", "")
+        notification_id = state.get("notification_msg_id")
+        name_display    = f"{target_name} ({target_username})" if target_username else target_name
+
+        try:
+            # Отправляем ответ пользователю через тот же дочерний бот
+            if message.text:
+                await bot.send_message(target_user_id, message.text)
+            elif message.photo:
+                await bot.send_photo(target_user_id, message.photo[-1].file_id,
+                                     caption=message.caption)
+            elif message.video:
+                await bot.send_video(target_user_id, message.video.file_id,
+                                     caption=message.caption)
+            elif message.document:
+                await bot.send_document(target_user_id, message.document.file_id,
+                                        caption=message.caption)
+            elif message.voice:
+                await bot.send_voice(target_user_id, message.voice.file_id)
+            elif message.audio:
+                await bot.send_audio(target_user_id, message.audio.file_id,
+                                     caption=message.caption)
+            elif message.sticker:
+                await bot.send_sticker(target_user_id, message.sticker.file_id)
+            elif message.video_note:
+                await bot.send_video_note(target_user_id, message.video_note.file_id)
+            else:
+                await bot.send_message(user.id, "⚠️ Такой тип сообщения не поддерживается.")
+                return
+
+            # Уведомляем администратора об успешной отправке
+            await bot.send_message(
+                user.id,
+                f"✅ Ответ успешно отправлен пользователю <b>{name_display}</b>.",
+                parse_mode="HTML",
+            )
+            # Обновляем уведомление «Ожидаем ответ...» → «Ответ отправлен»
+            if notification_id:
+                try:
+                    await bot.edit_message_text(
+                        f"✅ <b>Ответ отправлен</b>\n"
+                        f"Пользователь {name_display} получил ваш ответ.",
+                        chat_id=user.id,
+                        message_id=notification_id,
+                        parse_mode="HTML",
+                    )
+                except Exception:
+                    pass
+            logger.info(f"[FEEDBACK REPLY via child] Sent to user {target_user_id} via bot {child_bot_id}")
+        except Exception as e:
+            await bot.send_message(
+                user.id,
+                f"⚠️ Не удалось отправить ответ: {e}\n\n"
+                "Убедитесь что пользователь нажал /start этому боту.",
+            )
+            logger.warning(f"[FEEDBACK REPLY via child] Failed to send to {target_user_id}: {e}")
+        return  # ← завершаем обработку, это был ответ от администратора
+
+    # ── 2. /start → регистрация bot_activated ───────────────────
     if text.startswith("/start"):
         # UPSERT: создаём/обновляем запись по каждому каналу этого бота
         chats = await db.fetch(
@@ -372,9 +528,8 @@ async def _handle_message(bot: Bot, child_bot_id: int, owner_id: int, message):
             logger.debug(f"[START] send reply failed for {user.id}: {e}")
 
     else:
-        # Обычное сообщение (не /start) → обратная связь
-        # Ищем все активные площадки этого дочернего бота с включённым feedback.
-        # JOIN с bot_users убран намеренно: feedback должен работать даже если
+        # ── 3. Обычное сообщение → обратная связь ───────────────
+        # JOIN с bot_users убран намеренно: feedback работает даже если
         # пользователь ещё не нажимал /start и нет записи в bot_users.
         chats = await db.fetch(
             """
@@ -406,11 +561,17 @@ async def _handle_message(bot: Bot, child_bot_id: int, owner_id: int, message):
                     logger.debug(f"[FEEDBACK] Skipping: user {user.id} is a team member")
                     continue
                 sent_owners.add(oid)
-                await handle_feedback_message(message, _main_bot, oid, ch["chat_id"], child_bot_id)
+                # child_bot_instance=bot → уведомления идут через дочернего бота, не через основной
+                await handle_feedback_message(
+                    message, _main_bot, oid, ch["chat_id"], child_bot_id,
+                    child_bot_instance=bot,
+                )
             if sent_owners:
                 logger.info(f"[FEEDBACK] Forwarded msg from user {user.id} to {len(sent_owners)} owner(s)")
         else:
             logger.debug(f"[FEEDBACK] No feedback-enabled chats for user {user.id}")
+
+
 
 
 async def _handle_my_chat_member(

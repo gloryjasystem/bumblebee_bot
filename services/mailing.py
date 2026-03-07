@@ -86,11 +86,13 @@ def _substitute_vars(text: str, user: dict) -> str:
 async def run_mailing(mailing_id: int, bot: Bot,
                       progress_callback=None):
     """
-    Запускает рассылку для mailing_id через основной Bumblebee бот.
+    Запускает рассылку для mailing_id через дочерний бот (child bot).
+    Fallback на основной бот если токен дочернего не найден.
     progress_callback(mailing_id, sent, total, errors, status) вызывается
     каждые 5 сек и по завершении для обновления экрана прогресса.
     """
     import time
+    from services.security import decrypt_token
     mailing = await db.fetchrow("SELECT * FROM mailings WHERE id=$1", mailing_id)
     if not mailing or mailing["status"] != "pending":
         return
@@ -113,6 +115,23 @@ async def run_mailing(mailing_id: int, bot: Bot,
         if row:
             child_bot_id = row["child_bot_id"]
         logger.info(f"[MAILING {mailing_id}] resolved child_bot_id={child_bot_id} from chat_id")
+
+    # ── Получаем токен дочернего бота для отправки ──────────────
+    send_bot = bot   # fallback на основной
+    child_bot_instance = None
+    if child_bot_id:
+        bot_row = await db.fetchrow(
+            "SELECT token_encrypted FROM child_bots WHERE id=$1",
+            child_bot_id,
+        )
+        if bot_row and bot_row.get("token_encrypted"):
+            try:
+                child_bot_instance = Bot(token=decrypt_token(bot_row["token_encrypted"]))
+                send_bot = child_bot_instance
+                logger.info(f"[MAILING {mailing_id}] using child bot id={child_bot_id} for sending")
+            except Exception as e:
+                logger.warning(f"[MAILING {mailing_id}] failed to init child bot: {e}, falling back to main bot")
+
 
     # ── Получатели ──────────────────────────────────────────────
     if chat_id:
@@ -191,7 +210,7 @@ async def run_mailing(mailing_id: int, bot: Bot,
         user_dict["_chat_title"] = chat_title
 
         try:
-            await _send_message(bot, rec["user_id"], mailing, kb, user_dict)
+            await _send_message(send_bot, rec["user_id"], mailing, kb, user_dict)
             sent += 1
             await db.execute("UPDATE mailings SET sent_count=$1 WHERE id=$2", sent, mailing_id)
         except TelegramForbiddenError:
@@ -204,7 +223,7 @@ async def run_mailing(mailing_id: int, bot: Bot,
             logger.warning(f"Mailing {mailing_id}: rate limit {e.retry_after}s")
             await asyncio.sleep(e.retry_after)
             try:
-                await _send_message(bot, rec["user_id"], mailing, kb, user_dict)
+                await _send_message(send_bot, rec["user_id"], mailing, kb, user_dict)
                 sent += 1
             except Exception:
                 errors += 1
@@ -232,6 +251,13 @@ async def run_mailing(mailing_id: int, bot: Bot,
     )
     _active_mailings.pop(mailing_id, None)
     logger.info(f"Mailing {mailing_id} done: {sent}/{total}, errors={errors}")
+
+    # Закрываем сессию дочернего бота если использовали его
+    if child_bot_instance:
+        try:
+            await child_bot_instance.session.close()
+        except Exception:
+            pass
 
     # Финальный колбэк
     if progress_callback:

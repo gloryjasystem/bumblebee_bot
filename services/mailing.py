@@ -111,7 +111,7 @@ async def run_mailing(mailing_id: int, bot: Bot,
             """SELECT bu.user_id, bu.username, bu.first_name, bu.last_name
                FROM bot_users bu
                WHERE bu.owner_id=$1 AND bu.chat_id=$2
-                 AND bu.is_active=true
+                 AND bu.user_id IS NOT NULL
                ORDER BY bu.joined_at""",
             owner_id, chat_id,
         )
@@ -126,7 +126,7 @@ async def run_mailing(mailing_id: int, bot: Bot,
                                 AND bu.owner_id = bc.owner_id
                WHERE bc.child_bot_id = $1
                  AND bu.owner_id = $2
-                 AND bu.is_active = true
+                 AND bu.user_id IS NOT NULL
                ORDER BY bu.user_id, bu.joined_at""",
             child_bot_id, owner_id,
         )

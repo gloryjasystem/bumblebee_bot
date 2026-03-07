@@ -444,11 +444,11 @@ async def on_mailing_bot_start(callback: CallbackQuery, state: FSMContext,
     owner_id = platform_user["user_id"]
 
     # Количество уникальных получателей по всем площадкам бота
-    # bot_activated убран: считаем всех активных подписчиков (is_active=true)
+    # is_active убран: считаем всех у кого есть user_id (IS NOT NULL)
     count = await db.fetchval(
         "SELECT COUNT(DISTINCT bu.user_id) FROM bot_users bu "
         "JOIN bot_chats bc ON bu.chat_id=bc.chat_id AND bu.owner_id=bc.owner_id "
-        "WHERE bc.child_bot_id=$1 AND bc.owner_id=$2 AND bu.is_active=true",
+        "WHERE bc.child_bot_id=$1 AND bc.owner_id=$2 AND bu.user_id IS NOT NULL",
         child_bot_id, owner_id,
     ) or 0
 
@@ -589,7 +589,7 @@ async def on_mailing_start(callback: CallbackQuery, state: FSMContext, platform_
 
     count = await db.fetchval(
         "SELECT COUNT(*) FROM bot_users WHERE owner_id=$1 AND chat_id=$2 "
-        "AND is_active=true AND bot_activated=true",
+        "AND user_id IS NOT NULL",
         platform_user["user_id"], chat_id,
     ) or 0
 

@@ -123,7 +123,7 @@ async def run_mailing(mailing_id: int, bot: Bot,
         chat_title = ch_row["chat_title"] if ch_row else ""
 
         recipients = await db.fetch(
-            """SELECT bu.user_id, bu.username, bu.first_name, bu.last_name
+            """SELECT bu.user_id, bu.username, bu.first_name
                FROM bot_users bu
                WHERE bu.owner_id=$1 AND bu.chat_id=$2
                  AND bu.user_id IS NOT NULL
@@ -136,7 +136,7 @@ async def run_mailing(mailing_id: int, bot: Bot,
         chat_title = ""
         recipients = await db.fetch(
             """SELECT DISTINCT ON (bu.user_id)
-                      bu.user_id, bu.username, bu.first_name, bu.last_name
+                      bu.user_id, bu.username, bu.first_name
                FROM bot_users bu
                JOIN bot_chats bc ON bu.chat_id = bc.chat_id
                                 AND bu.owner_id = bc.owner_id
@@ -152,7 +152,7 @@ async def run_mailing(mailing_id: int, bot: Bot,
         chat_title = ""
         recipients = await db.fetch(
             """SELECT DISTINCT ON (bu.user_id)
-                      bu.user_id, bu.username, bu.first_name, bu.last_name
+                      bu.user_id, bu.username, bu.first_name
                FROM bot_users bu
                WHERE bu.owner_id=$1 AND bu.user_id IS NOT NULL
                ORDER BY bu.user_id, bu.joined_at""",

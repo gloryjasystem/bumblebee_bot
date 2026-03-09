@@ -288,8 +288,18 @@ async def _approve_user(
         group_data = _pending_group.pop(key, None)
         _expected.pop(key, None)
         if group_data:
+            owner_id = group_data.get("owner_id")
             if success:
                 _passed_captcha_group.add(key)
+                # Записываем событие капчи (успех, групповой режим)
+                if owner_id:
+                    try:
+                        await db.execute(
+                            "INSERT INTO captcha_events (owner_id, chat_id, user_id, passed) VALUES ($1,$2,$3,true)",
+                            owner_id, chat_id, user_id,
+                        )
+                    except Exception as ex:
+                        logger.debug(f"captcha_events insert failed (group success): {ex}")
                 # Приветственное, если есть
                 welcome = group_data.get("welcome_text")
                 if welcome:
@@ -312,6 +322,15 @@ async def _approve_user(
                     await callback.message.edit_text("✅ Капча пройдена! Добро пожаловать.")
                 await callback.answer("✅ Отлично!")
             else:
+                # Записываем событие капчи (провал, групповой режим)
+                if owner_id:
+                    try:
+                        await db.execute(
+                            "INSERT INTO captcha_events (owner_id, chat_id, user_id, passed) VALUES ($1,$2,$3,false)",
+                            owner_id, chat_id, user_id,
+                        )
+                    except Exception as ex:
+                        logger.debug(f"captcha_events insert failed (group fail): {ex}")
                 await callback.message.edit_text(
                     "❌ Неверный ответ.\n"
                     "Для вступления запросите доступ снова."

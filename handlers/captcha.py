@@ -385,9 +385,15 @@ async def _approve_user(
                 except Exception as e:
                     logger.warning(f"[LINK TRACK] failed: {e}")
 
-            # Приветствие теперь отправляется в _handle_chat_member (child_bot_runner)
-            # при фактическом вступлении пользователя — это надёжнее, т.к. у бота
-            # всегда есть DM-права в момент первого контакта через заявку.
+            # Приветствие отправляем сразу после event.approve(), пока DM-права
+            # от ChatJoinRequest ещё активны — позже они истекают.
+            welcome = settings_row.get("welcome_text")
+            if welcome:
+                from scheduler.child_bot_runner import _try_send_dm
+                await _try_send_dm(
+                    bot, callback.from_user.id, welcome,
+                    show_typing=bool(settings_row.get("typing_action")),
+                )
 
             if settings_row.get("captcha_delete"):
                 try:

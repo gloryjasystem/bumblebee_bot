@@ -61,15 +61,17 @@ async def on_join_request(event: ChatJoinRequest, bot: Bot):
         return
 
     # 2. Языковой фильтр
-    if user.language_code:
+    # Нормализуем language_code: 'ru-RU' → 'ru', 'en-US' → 'en'
+    user_lang = (user.language_code or "").split("-")[0].lower()
+    if user_lang:
         lang_blocked = await db.fetchrow(
             "SELECT 1 FROM language_filters WHERE owner_id=$1 AND chat_id=$2 AND language_code=$3",
-            owner_id, event.chat.id, user.language_code,
+            owner_id, event.chat.id, user_lang,
         )
         if lang_blocked:
             await event.decline()
             await _log_action(owner_id, event.chat.id, "reject_lang", user.id,
-                              {"lang": user.language_code})
+                              {"lang": user_lang})
             return
 
     # 3. RTL-фильтр

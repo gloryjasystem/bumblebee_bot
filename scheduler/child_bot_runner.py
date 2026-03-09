@@ -768,18 +768,20 @@ async def _handle_join_request(bot: Bot, child_bot_id: int, event: ChatJoinReque
 
     # ── ЗАЩИТНЫЕ ФИЛЬТРЫ (применяются до капчи/авто-принятия) ───
     # 1. Языковой фильтр
-    if user.language_code:
+    # Нормализуем language_code: 'ru-RU' → 'ru', 'en-US' → 'en'
+    user_lang = (user.language_code or "").split("-")[0].lower()
+    if user_lang:
         lang_blocked = await db.fetchrow(
             "SELECT 1 FROM language_filters "
             "WHERE owner_id=$1 AND chat_id=$2::bigint AND language_code=$3",
-            owner_id, chat_id, user.language_code,
+            owner_id, chat_id, user_lang,
         )
         if lang_blocked:
             try:
                 await event.decline()
             except Exception:
                 pass
-            logger.info(f"[FILTER-LANG] Declined {user.id} lang={user.language_code}")
+            logger.info(f"[FILTER-LANG] Declined {user.id} lang={user_lang}")
             return
 
     # 2. RTL-символы в имени
@@ -950,6 +952,24 @@ async def _handle_chat_member(bot: Bot, child_bot_id: int, event: ChatMemberUpda
         captcha_type = (chat_settings.get("captcha_type") or "off")
         # Капча по обычной ссылке не применяется — пользователь пропускается.
         # Капча работает только через join request (см. _handle_join_request).
+
+        # ── Языковой фильтр (применяется и для групп с обычными ссылками) ──
+        # Нормализуем language_code: 'ru-RU' → 'ru', 'en-US' → 'en'
+        user_lang = (user.language_code or "").split("-")[0].lower()
+        if user_lang:
+            lang_blocked = await db.fetchrow(
+                "SELECT 1 FROM language_filters "
+                "WHERE owner_id=$1 AND chat_id=$2::bigint AND language_code=$3",
+                owner_id, chat_id, user_lang,
+            )
+            if lang_blocked:
+                try:
+                    await bot.ban_chat_member(chat_id, user.id)
+                    await bot.unban_chat_member(chat_id, user.id, only_if_banned=True)
+                except Exception as _e:
+                    logger.warning(f"[FILTER-LANG-GROUP] kick failed for user={user.id}: {_e}")
+                logger.info(f"[FILTER-LANG-GROUP] Kicked user={user.id} lang={user_lang} from chat={chat_id}")
+                return
 
 
         # Ищем ссылку по invite_link из события

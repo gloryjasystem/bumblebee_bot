@@ -203,11 +203,14 @@ async def send_captcha_group(
             _captcha_timeout_group(bot, chat_id, user.id, timer_min, msg.message_id)
         )
         logger.info(f"[GROUP CAPTCHA] Sent to user={user.id} chat={chat_id} type={captcha_type}")
+        return True
     except Exception as e:
-        # Пользователь не открыл бота — не можем отправить DM. Просто убираем pending.
+        # Пользователь не открыл бота — не можем отправить DM.
+        # Убираем pending, вызывающий код должен разбанить пользователя.
         logger.warning(f"[GROUP CAPTCHA] Cannot send DM to user={user.id}: {e}")
         _pending_group.pop(key, None)
         _expected.pop(key, None)
+        return False
 
 
 async def _captcha_timeout_group(

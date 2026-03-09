@@ -218,7 +218,7 @@ async def on_bot_settings(callback: CallbackQuery, platform_user: dict | None):
     captcha_block = ""
     if captcha_total_all > 0:
         captcha_block = (
-            f"\n<u>\U0001f512 Решений капч</u>\n"
+            f"\n\n<u>\U0001f512 Решений капч</u>\n"
             f"├ Сегодня ≈ {captcha_passed_today} | {_pct(captcha_passed_today, captcha_total_today)}\n"
             f"├ Вчера ≈ {captcha_passed_yest} | {_pct(captcha_passed_yest, captcha_total_yest)}\n"
             f"└ Всего ≈ {captcha_passed_all} | {_pct(captcha_passed_all, captcha_total_all)}"
@@ -770,7 +770,7 @@ async def _show_channel_detail(callback: CallbackQuery, platform_user: dict, ch_
     captcha_block = ""
     if captcha_total_all > 0:
         captcha_block = (
-            f"\n<u>\U0001f512 Решений капч</u>\n"
+            f"\n\n<u>\U0001f512 Решений капч</u>\n"
             f"├ Сегодня ≈ {captcha_passed_today} | {_pct(captcha_passed_today, captcha_total_today)}\n"
             f"├ Вчера ≈ {captcha_passed_yest} | {_pct(captcha_passed_yest, captcha_total_yest)}\n"
             f"└ Всего ≈ {captcha_passed_all} | {_pct(captcha_passed_all, captcha_total_all)}"

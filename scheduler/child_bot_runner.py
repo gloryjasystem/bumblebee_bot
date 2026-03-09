@@ -936,75 +936,9 @@ async def _handle_chat_member(bot: Bot, child_bot_id: int, event: ChatMemberUpda
         )
 
         captcha_type = (chat_settings.get("captcha_type") or "off")
+        # Капча по обычной ссылке не применяется — пользователь пропускается.
+        # Капча работает только через join request (см. _handle_join_request).
 
-        # ── Капча для открытой группы (join via regular link) ──
-        # При chat_join_request капча уже обрабатывается в _handle_join_request.
-        # Здесь — только для chat_member (обычная ссылка без заявки).
-        if captcha_type != "off":
-            from handlers.captcha import send_captcha_group, _kicked_for_captcha, _passed_captcha_group
-            key = (chat_id, user.id)
-            # Пользователь уже может быть в _passed_captcha_group, если вернулся
-            # по одноразовой ссылке после прохождения капчи — пропускаем повторную капчу
-            if key in _passed_captcha_group:
-                _passed_captcha_group.discard(key)
-                logger.info(f"[GROUP CAPTCHA] User={user.id} passed captcha, skipping re-captcha")
-                # fall through — регистрируем пользователя и отправляем приветствие
-            else:
-                # Kick the user: ban → immediate unban (разделены, чтобы unban не пропал при ошибке ban)
-                _kicked_for_captcha.add(key)
-                try:
-                    await bot.ban_chat_member(chat_id, user.id)
-                except Exception as ban_err:
-                    _kicked_for_captcha.discard(key)
-                    logger.warning(f"[GROUP CAPTCHA] Could not ban user={user.id}: {ban_err}")
-                    return
-                # Небольшая пауза чтобы Telegram успел применить бан перед разбаном
-                await asyncio.sleep(0.5)
-                try:
-                    await bot.unban_chat_member(chat_id, user.id, only_if_banned=True)
-                    logger.info(f"[GROUP CAPTCHA] Kicked user={user.id} from chat={chat_id} for captcha")
-                except Exception as unban_err:
-                    # Unban упал — попробуем ещё раз через 1 секунду
-                    logger.warning(f"[GROUP CAPTCHA] unban failed (retry): {unban_err}")
-                    await asyncio.sleep(1.0)
-                    try:
-                        await bot.unban_chat_member(chat_id, user.id, only_if_banned=True)
-                        logger.info(f"[GROUP CAPTCHA] Kicked (retry ok) user={user.id} chat={chat_id}")
-                    except Exception as unban_err2:
-                        logger.error(f"[GROUP CAPTCHA] unban retry failed user={user.id}: {unban_err2}")
-                        _kicked_for_captcha.discard(key)
-                        return
-
-                # Создаём одноразовую инвайт-ссылку
-                try:
-                    from datetime import datetime, timedelta
-                    timer_min = int(chat_settings.get("captcha_timer_min") or 1)
-                    expire_ts = int((datetime.utcnow() + timedelta(minutes=timer_min + 1)).timestamp())
-                    invite = await bot.create_chat_invite_link(
-                        chat_id,
-                        member_limit=1,
-                        expire_date=expire_ts,
-                        name="captcha",
-                    )
-                    one_time_link = invite.invite_link
-                    logger.info(f"[GROUP CAPTCHA] Created one-time link={one_time_link} for user={user.id}")
-                except Exception as inv_err:
-                    logger.warning(f"[GROUP CAPTCHA] Could not create invite link: {inv_err}")
-                    return
-
-                settings_for_captcha = {
-                    "captcha_type":      captcha_type,
-                    "captcha_text":      chat_settings.get("captcha_text"),
-                    "captcha_timer_min": chat_settings.get("captcha_timer_min") or 1,
-                    "captcha_emoji_set": chat_settings.get("captcha_emoji_set"),
-                    "welcome_text":      chat_settings.get("welcome_text"),
-                    "owner_id":          owner_id,
-                }
-                await send_captcha_group(
-                    bot, chat_id, event.chat.title or str(chat_id),
-                    user, settings_for_captcha, one_time_link,
-                )
-                return  # дальнейшая регистрация — после прохождения капчи
 
         # Ищем ссылку по invite_link из события
         link_id = None

@@ -171,12 +171,17 @@ async def on_member_update(event: ChatMemberUpdated, bot: Bot):
             """,
             owner_id, event.chat.id, user.id,
         )
-        # Прощание — отправляем всегда (право писать дано Telegram через chat_join_request)
+        # Прощание — отправляем если пользователь когда-либо запускал бота
         if settings_row.get("farewell_text"):
+            farewell_text = settings_row["farewell_text"].replace(
+                "{name}", user.first_name or "Пользователь"
+            ).replace(
+                "{channel}", settings_row.get("chat_title", "")
+            )
             try:
-                await bot.send_message(user.id, settings_row["farewell_text"])
-            except Exception:
-                pass
+                await bot.send_message(user.id, farewell_text, parse_mode="HTML")
+            except Exception as e:
+                logger.debug(f"[FAREWELL] Failed to send to user {user.id}: {e}")
 
 
 async def _save_pending(owner_id: int, chat_id: int, user):

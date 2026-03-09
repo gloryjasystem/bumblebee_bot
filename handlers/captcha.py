@@ -303,18 +303,15 @@ async def _approve_user(
                         )
                     except Exception as ex:
                         logger.debug(f"captcha_events insert failed (group success): {ex}")
-                # Приветственное, если есть
-                welcome = group_data.get("welcome_text")
-                if welcome:
-                    try:
-                        await bot.send_message(user_id, welcome, parse_mode="HTML")
-                    except Exception:
-                        pass
+                # Приветствие НЕ отправляем здесь — пользователь ещё не вступил.
+                # Оно будет отправлено в _handle_chat_member (child_bot_runner.py)
+                # сразу после того как пользователь кликнет one_time_link и реально войдёт.
+                # _passed_captcha_group — флаг, по которому _handle_chat_member это определит.
                 # Одноразовая ссылка для вступления
                 one_time_link = group_data.get("one_time_link")
                 if one_time_link:
                     await callback.message.edit_text(
-                        "✅ Капча пройдена! Нажмите, чтобы войти:"
+                        "✅ Капча пройдена! Нажмите кнопку ниже, чтобы войти:"
                     )
                     await bot.send_message(
                         user_id,
@@ -324,6 +321,7 @@ async def _approve_user(
                 else:
                     await callback.message.edit_text("✅ Капча пройдена! Добро пожаловать.")
                 await callback.answer("✅ Отлично!")
+                logger.info(f"[GROUP CAPTCHA] Passed: user={user_id} chat={chat_id} — welcome deferred to on-join event")
             else:
                 # Записываем событие капчи (провал, групповой режим)
                 if owner_id:
@@ -398,9 +396,11 @@ async def _approve_user(
             if settings_row.get("captcha_delete"):
                 try:
                     await callback.message.delete()
-                    return
                 except Exception:
                     pass
+                # Всегда отвечаем на callback — иначе Telegram показывает «часики» на кнопке
+                await callback.answer("✅ Отлично!")
+                return
 
         await callback.message.edit_text("✅ Капча пройдена! Добро пожаловать.")
         await callback.answer("✅ Отлично!")

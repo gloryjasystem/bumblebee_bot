@@ -1025,12 +1025,24 @@ async def _handle_chat_member(bot: Bot, child_bot_id: int, event: ChatMemberUpda
             chat_username=event.chat.username or "",
         )
 
-        # Приветственное — только если капча выключена.
-        # Если капча включена — приветствие отправляет captcha.py сразу после event.approve().
+        # Приветственное — два случая:
+        # 1. Капча выключена → отправляем всем вступившим.
+        # 2. Капча включена в групповом режиме → пользователь уже прошёл капчу
+        #    (флаг _passed_captcha_group) и теперь реально вступил по one_time_link.
+        #    В канальном режиме (ChatJoinRequest) приветствие уже отправлено в captcha.py.
         welcome = chat_settings.get("welcome_text")
         logger.info(f"[WELCOME] user={user.id} captcha={captcha_type} welcome_text={repr(welcome)[:60]}")
-        if welcome and captcha_type == "off":
-            await _try_send_dm(bot, user.id, welcome)
+        if welcome:
+            from handlers.captcha import _passed_captcha_group
+            captcha_key = (chat_id, user.id)
+            passed_group_captcha = captcha_key in _passed_captcha_group
+            if passed_group_captcha:
+                # Потребляем флаг сразу, чтобы не отправить приветствие дважды
+                _passed_captcha_group.discard(captcha_key)
+                logger.info(f"[WELCOME] group captcha passed — sending welcome to user={user.id}")
+                await _try_send_dm(bot, user.id, welcome)
+            elif captcha_type == "off":
+                await _try_send_dm(bot, user.id, welcome)
     # ── Пользователь вышел/забанен ────────────────────────────
     elif new_status in ("left", "kicked") and old_status == "member":
         key = (chat_id, user.id)

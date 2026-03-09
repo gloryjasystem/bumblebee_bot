@@ -950,16 +950,30 @@ async def _handle_chat_member(bot: Bot, child_bot_id: int, event: ChatMemberUpda
                 logger.info(f"[GROUP CAPTCHA] User={user.id} passed captcha, skipping re-captcha")
                 # fall through — регистрируем пользователя и отправляем приветствие
             else:
-                # Kick the user: ban → immediate unban
+                # Kick the user: ban → immediate unban (разделены, чтобы unban не пропал при ошибке ban)
                 _kicked_for_captcha.add(key)
                 try:
                     await bot.ban_chat_member(chat_id, user.id)
+                except Exception as ban_err:
+                    _kicked_for_captcha.discard(key)
+                    logger.warning(f"[GROUP CAPTCHA] Could not ban user={user.id}: {ban_err}")
+                    return
+                # Небольшая пауза чтобы Telegram успел применить бан перед разбаном
+                await asyncio.sleep(0.5)
+                try:
                     await bot.unban_chat_member(chat_id, user.id, only_if_banned=True)
                     logger.info(f"[GROUP CAPTCHA] Kicked user={user.id} from chat={chat_id} for captcha")
-                except Exception as kick_err:
-                    _kicked_for_captcha.discard(key)
-                    logger.warning(f"[GROUP CAPTCHA] Could not kick user={user.id}: {kick_err}")
-                    return
+                except Exception as unban_err:
+                    # Unban упал — попробуем ещё раз через 1 секунду
+                    logger.warning(f"[GROUP CAPTCHA] unban failed (retry): {unban_err}")
+                    await asyncio.sleep(1.0)
+                    try:
+                        await bot.unban_chat_member(chat_id, user.id, only_if_banned=True)
+                        logger.info(f"[GROUP CAPTCHA] Kicked (retry ok) user={user.id} chat={chat_id}")
+                    except Exception as unban_err2:
+                        logger.error(f"[GROUP CAPTCHA] unban retry failed user={user.id}: {unban_err2}")
+                        _kicked_for_captcha.discard(key)
+                        return
 
                 # Создаём одноразовую инвайт-ссылку
                 try:

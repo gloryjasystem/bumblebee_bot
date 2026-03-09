@@ -31,6 +31,7 @@ _reply_states: Dict[tuple, dict] = {}
 async def _try_send_dm(child_bot: Bot, user_id: int, text: str,
                        parse_mode: str = "HTML", show_typing: bool = False) -> bool:
     """Отправляет сообщение пользователю в личку через дочернего бота.
+    При неудаче — пробует через главного бота (_main_bot).
     Возвращает True если отправлено.
     """
     try:
@@ -45,8 +46,19 @@ async def _try_send_dm(child_bot: Bot, user_id: int, text: str,
         return True
     except Exception as e:
         logger.warning(f"[DM] child_bot failed for user {user_id}: {e}")
-    logger.warning(f"[DM] Не удалось отправить DM user {user_id} — пользователь не запустил дочернего бота")
+
+    # Fallback: пробуем через главного бота
+    if _main_bot:
+        try:
+            await _main_bot.send_message(user_id, text, parse_mode=parse_mode)
+            logger.info(f"[DM] Sent via main_bot (fallback) to user {user_id} ✅")
+            return True
+        except Exception as e2:
+            logger.warning(f"[DM] main_bot fallback also failed for user {user_id}: {e2}")
+
+    logger.warning(f"[DM] Не удалось отправить DM user {user_id} — пользователь не запустил ни одного бота")
     return False
+
 
 
 async def _track_invite_link(invite_link_url: str, user) -> int | None:

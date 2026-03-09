@@ -1025,11 +1025,12 @@ async def _handle_chat_member(bot: Bot, child_bot_id: int, event: ChatMemberUpda
             chat_username=event.chat.username or "",
         )
 
-        # Приветственное сообщение — отправляем только если капча выключена.
-        # Если капча включена — приветствие отправляет captcha.py после нажатия кнопки.
+        # Приветственное сообщение — отправляем всегда при вступлении.
+        # Для join request + капча: _approve_user мог не доставить (если бот не начат) —
+        # _handle_chat_member является надёжным fallback'ом.
         welcome = chat_settings.get("welcome_text")
         logger.info(f"[WELCOME] user={user.id} captcha={captcha_type} welcome_text={repr(welcome)[:60]}")
-        if welcome and captcha_type == "off":
+        if welcome:
             await _try_send_dm(bot, user.id, welcome)
     # ── Пользователь вышел/забанен ────────────────────────────
     elif new_status in ("left", "kicked") and old_status == "member":

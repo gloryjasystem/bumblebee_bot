@@ -441,6 +441,7 @@ async def on_fb_reply(callback: CallbackQuery, state: FSMContext):
             target_name=target_name,
             target_username=target_username,
             notification_msg_id=callback.message.message_id,
+            owner_id=owner_id,
         )
         logger.info(f"[FB_REPLY] clicker={clicker_id} set reply state for user={target_user_id} via bot={child_bot_id}")
 
@@ -484,6 +485,7 @@ async def on_feedback_reply_text(message: Message, state: FSMContext):
     target_username  = data.get("target_username", "")
     prompt_msg_id    = data.get("prompt_msg_id")     # ID промпт-сообщения
     notification_msg_id = data.get("notification_msg_id")  # ID уведомления наверху
+    owner_id_fb      = data.get("owner_id", 0)
     await state.clear()
 
     if not child_bot_id or not target_user_id:
@@ -502,32 +504,69 @@ async def on_feedback_reply_text(message: Message, state: FSMContext):
     token = decrypt_token(row["token_encrypted"])
     child_bot = Bot(token=token)
     name_display = f"{target_name} ({target_username})" if target_username else target_name
+
     try:
-        # Отправляем через дочернего бота напрямую (не copy_to, т.k. он игнорирует bot=)
+        # Отправляем через дочернего бота с заголовком
+        header = "💬 <b>Ответ от поддержки</b>\n\n"
+        hint_text = (
+            "↩️ <b>Чтобы ответить:</b>\n\n"
+            "📱 <b>Телефон</b> — свайпните влево по сообщению выше\n"
+            "👆 Или зажмите его → «Ответить»\n"
+            "🖥 <b>ПК</b> — правой кнопкой мыши → «Ответить»"
+        )
+        sent_msg = None
         if message.text:
-            await child_bot.send_message(target_user_id, message.text, entities=message.entities)
+            sent_msg = await child_bot.send_message(
+                target_user_id,
+                header + message.text,
+                parse_mode="HTML",
+            )
         elif message.photo:
-            await child_bot.send_photo(target_user_id, message.photo[-1].file_id,
-                                       caption=message.caption, caption_entities=message.caption_entities)
+            sent_msg = await child_bot.send_photo(
+                target_user_id, message.photo[-1].file_id,
+                caption=(header + (message.caption or "")),
+                parse_mode="HTML",
+            )
         elif message.video:
-            await child_bot.send_video(target_user_id, message.video.file_id,
-                                       caption=message.caption, caption_entities=message.caption_entities)
+            sent_msg = await child_bot.send_video(
+                target_user_id, message.video.file_id,
+                caption=(header + (message.caption or "")),
+                parse_mode="HTML",
+            )
         elif message.document:
-            await child_bot.send_document(target_user_id, message.document.file_id,
-                                          caption=message.caption, caption_entities=message.caption_entities)
+            sent_msg = await child_bot.send_document(
+                target_user_id, message.document.file_id,
+                caption=(header + (message.caption or "")),
+                parse_mode="HTML",
+            )
         elif message.voice:
-            await child_bot.send_voice(target_user_id, message.voice.file_id,
-                                       caption=message.caption)
+            sent_msg = await child_bot.send_voice(target_user_id, message.voice.file_id)
         elif message.audio:
-            await child_bot.send_audio(target_user_id, message.audio.file_id,
-                                       caption=message.caption)
+            sent_msg = await child_bot.send_audio(
+                target_user_id, message.audio.file_id,
+                caption=(header + (message.caption or "")),
+                parse_mode="HTML",
+            )
         elif message.sticker:
-            await child_bot.send_sticker(target_user_id, message.sticker.file_id)
+            await child_bot.send_message(target_user_id, header.strip(), parse_mode="HTML")
+            sent_msg = await child_bot.send_sticker(target_user_id, message.sticker.file_id)
         elif message.video_note:
-            await child_bot.send_video_note(target_user_id, message.video_note.file_id)
+            sent_msg = await child_bot.send_video_note(target_user_id, message.video_note.file_id)
         else:
             await message.answer("⚠️ Такой тип сообщения не поддерживается. Отправьте текст, фото или голосовое.")
             return
+
+        # Подсказка как ответить — отправляем как цитату сообщения админа
+        if sent_msg:
+            try:
+                await child_bot.send_message(
+                    target_user_id,
+                    hint_text,
+                    parse_mode="HTML",
+                    reply_to_message_id=sent_msg.message_id,
+                )
+            except Exception:
+                pass
 
         logger.info(f"[FEEDBACK REPLY] Sent reply to user {target_user_id} via bot {child_bot_id}")
 

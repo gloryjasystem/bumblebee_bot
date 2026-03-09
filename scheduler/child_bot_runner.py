@@ -436,6 +436,7 @@ async def _handle_message(bot: Bot, child_bot_id: int, owner_id: int, message):
 
     text = message.text or ""
 
+
     # ── 1. Перехват: администратор в состоянии ожидания ответа ──
     state_key = (child_bot_id, user.id)
     if state_key in _reply_states:
@@ -451,32 +452,80 @@ async def _handle_message(bot: Bot, child_bot_id: int, owner_id: int, message):
         target_username = state.get("target_username", "")
         notification_id = state.get("notification_msg_id")
         name_display    = f"{target_name} ({target_username})" if target_username else target_name
+        admin_user_id   = user.id
+
+        # Кнопка «✉️ Ответить» для пользователя (чтобы он тоже мог ответить)
+        from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+        user_reply_kb = InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(
+                text="✉️ Ответить",
+                callback_data=f"ufb_reply:{child_bot_id}:{admin_user_id}:{owner_id}",
+            )
+        ]])
 
         try:
-            # Отправляем ответ пользователю через тот же дочерний бот
+            # Отправляем ответ пользователю через тот же дочерний бот с заголовком
+            header = "💬 <b>Ответ от поддержки</b>\n\n"
+            # Текст подсказки для пользователя «как ответить»
+            hint_text = (
+                "↩️ <b>Чтобы ответить:</b>\n\n"
+                "📱 <b>Телефон</b> — свайпните влево по сообщению выше\n"
+                "👆 Или зажмите его → «Ответить»\n"
+                "🖥 <b>ПК</b> — правой кнопкой мыши → «Ответить»"
+            )
+            sent_msg = None
             if message.text:
-                await bot.send_message(target_user_id, message.text)
+                sent_msg = await bot.send_message(
+                    target_user_id,
+                    header + message.text,
+                    parse_mode="HTML",
+                )
             elif message.photo:
-                await bot.send_photo(target_user_id, message.photo[-1].file_id,
-                                     caption=message.caption)
+                sent_msg = await bot.send_photo(
+                    target_user_id, message.photo[-1].file_id,
+                    caption=(header + (message.caption or "")),
+                    parse_mode="HTML",
+                )
             elif message.video:
-                await bot.send_video(target_user_id, message.video.file_id,
-                                     caption=message.caption)
+                sent_msg = await bot.send_video(
+                    target_user_id, message.video.file_id,
+                    caption=(header + (message.caption or "")),
+                    parse_mode="HTML",
+                )
             elif message.document:
-                await bot.send_document(target_user_id, message.document.file_id,
-                                        caption=message.caption)
+                sent_msg = await bot.send_document(
+                    target_user_id, message.document.file_id,
+                    caption=(header + (message.caption or "")),
+                    parse_mode="HTML",
+                )
             elif message.voice:
-                await bot.send_voice(target_user_id, message.voice.file_id)
+                sent_msg = await bot.send_voice(target_user_id, message.voice.file_id)
             elif message.audio:
-                await bot.send_audio(target_user_id, message.audio.file_id,
-                                     caption=message.caption)
+                sent_msg = await bot.send_audio(
+                    target_user_id, message.audio.file_id,
+                    caption=(header + (message.caption or "")),
+                    parse_mode="HTML",
+                )
             elif message.sticker:
-                await bot.send_sticker(target_user_id, message.sticker.file_id)
+                await bot.send_message(target_user_id, header.strip(), parse_mode="HTML")
+                sent_msg = await bot.send_sticker(target_user_id, message.sticker.file_id)
             elif message.video_note:
-                await bot.send_video_note(target_user_id, message.video_note.file_id)
+                sent_msg = await bot.send_video_note(target_user_id, message.video_note.file_id)
             else:
                 await bot.send_message(user.id, "⚠️ Такой тип сообщения не поддерживается.")
                 return
+
+            # Подсказка как ответить — отправляем как цитату сообщения админа
+            if sent_msg:
+                try:
+                    await bot.send_message(
+                        target_user_id,
+                        hint_text,
+                        parse_mode="HTML",
+                        reply_to_message_id=sent_msg.message_id,
+                    )
+                except Exception:
+                    pass
 
             # Уведомляем администратора об успешной отправке
             await bot.send_message(
@@ -484,7 +533,7 @@ async def _handle_message(bot: Bot, child_bot_id: int, owner_id: int, message):
                 f"✅ Ответ успешно отправлен пользователю <b>{name_display}</b>.",
                 parse_mode="HTML",
             )
-            # Обновляем уведомление «Ожидаем ответ...» → «Ответ отправлен»
+            # Обновляем уведомление «Ожидаем ответ» → «Ответ отправлен»
             if notification_id:
                 try:
                     await bot.edit_message_text(

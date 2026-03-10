@@ -803,6 +803,11 @@ async def on_ml_view_draft(callback: CallbackQuery, platform_user: dict | None):
     if not m:
         await callback.answer("Черновик не найден", show_alert=True)
         return
+    # Удаляем текущее сообщение (экран URL-кнопок или список) перед восстановлением эхо
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
     await _show_draft(callback, dict(m))
 
 
@@ -863,6 +868,7 @@ async def on_ml_toggle(callback: CallbackQuery, platform_user: dict | None):
 # ══════════════════════════════════════════════════════════════
 
 _URL_BUTTONS_HELP = (
+    "🔗 Отправьте кнопки, которые будут добавлены к сообщению.\n\n"
     "🔗 <b>URL-кнопки</b>\n\n"
     "<b>Одна кнопка в ряду:</b>\n"
     "<blockquote>Кнопка 1 — ссылка\n"
@@ -873,8 +879,8 @@ _URL_BUTTONS_HELP = (
     "<b>*** Другие виды кнопок</b>\n\n"
     "<b>WebApp кнопки:</b>\n"
     "<blockquote>Кнопка 1 — ссылка (webapp)</blockquote>\n\n"
-    "<b>Цвет кнопок:</b> выберите ниже 👇\n\n"
-    "ⓘ Нажмите на пример, чтобы скопировать."
+    "Цвет кнопок: 🟦 🟩 🟥\n\n"
+    "ⓘ Нажмите, чтобы скопировать."
 )
 
 _EXAMPLES = [
@@ -895,30 +901,23 @@ async def on_ml_url_buttons(callback: CallbackQuery, state: FSMContext, platform
         await callback.answer("Черновик не найден", show_alert=True)
         return
 
-    color = m.get("button_color") or "blue"
-    color_buttons = [
-        InlineKeyboardButton(text="🟦" + (" ✅" if color == "blue"  else ""), callback_data=f"ml_color:{mid}:blue"),
-        InlineKeyboardButton(text="🟩" + (" ✅" if color == "green" else ""), callback_data=f"ml_color:{mid}:green"),
-        InlineKeyboardButton(text="🟥" + (" ✅" if color == "red"   else ""), callback_data=f"ml_color:{mid}:red"),
-    ]
-
     existing = m.get("url_buttons_raw") or ""
     now_text = f"\n\n✅ <b>Текущие кнопки:</b>\n<code>{existing}</code>" if existing else ""
 
-    buttons = [
-        [InlineKeyboardButton(text="📋 Одна: Кнопка — ссылка",              callback_data="ml_example:0")],
-        [InlineKeyboardButton(text="📋 Две в ряду: Кнопка | Кнопка",        callback_data="ml_example:1")],
-        [InlineKeyboardButton(text="📋 WebApp: Кнопка — ссылка (webapp)",   callback_data="ml_example:2")],
-        color_buttons,
-        [InlineKeyboardButton(text="✏️ Ввести кнопки", callback_data=f"ml_input_buttons:{mid}")],
-        [InlineKeyboardButton(text="🗑 Очистить кнопки", callback_data=f"ml_clear_buttons:{mid}")],
-        [InlineKeyboardButton(text="◀️ Назад", callback_data=f"ml_view_draft:{mid}:")],
-    ]
+    # Удаляем эхо + текущее меню черновика
+    await _delete_draft_echo(callback.bot, mid)
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
 
-    await callback.message.edit_text(
+    # Отправляем экран URL-кнопок как новое сообщение (+ только кнопка Назад)
+    await callback.message.answer(
         _URL_BUTTONS_HELP + now_text,
         parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="◀️ Назад", callback_data=f"ml_view_draft:{mid}:")],
+        ]),
     )
     await callback.answer()
 

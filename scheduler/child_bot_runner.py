@@ -335,7 +335,8 @@ async def _handle_fb_reply_callback(bot: Bot, child_bot_id: int, callback):
 async def _handle_captcha_callback(bot: Bot, callback):
     """Обрабатывает нажатие кнопки капчи в дочернем боте."""
     data = callback.data or ""
-    if data.startswith("captcha_ok:") or data.startswith("captcha:") or data.startswith("captcha_rnd:"):
+    if (data.startswith("captcha_ok:") or data.startswith("captcha:") or data.startswith("captcha_rnd:")
+            or data.startswith("fbr_more:") or data.startswith("fbr_cancel:")):
         from handlers.captcha import on_captcha_simple_passed, on_captcha_random_press, on_captcha_passed
         try:
             if data.startswith("captcha_ok:"):

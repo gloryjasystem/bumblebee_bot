@@ -716,6 +716,14 @@ async def on_mailing_text(message: Message, state: FSMContext):
     owner_id     = data.get("owner_id")
     child_bot_id = data.get("child_bot_id")  # set for bot-level mailing
 
+    logger.info(
+        f"[mailing_text] from={message.from_user.id} "
+        f"chat_id={chat_id} child_bot_id={child_bot_id} owner_id={owner_id} "
+        f"has_text={bool(message.text)} has_caption={bool(message.caption)} "
+        f"has_photo={bool(message.photo)} has_video={bool(message.video)} "
+        f"has_document={bool(message.document)}"
+    )
+
     text = ""
     media_file_id = None
     media_type = None
@@ -735,60 +743,75 @@ async def on_mailing_text(message: Message, state: FSMContext):
         media_file_id = message.document.file_id
         media_type = "document"
 
+    logger.info(f"[mailing_text] media_type={media_type} text_len={len(text)} media_file_id={'set' if media_file_id else 'None'}")
+
     if not text and not media_file_id:
         await message.answer("⚠️ Пожалуйста, отправьте текст или медиа.")
         return
 
     # Создаём черновик
-    if child_bot_id and not chat_id:
-        # Bot-level: рассылка по всем пользователям бота (chat_id=NULL)
-        mailing_id = await db.fetchval(
-            """INSERT INTO mailings
-               (owner_id, child_bot_id, chat_id, text, media_file_id, media_type,
-                notify_users, protect_content, pin_message, delete_after_send,
-                disable_preview, url_buttons_raw, button_color, media_below)
-               VALUES ($1,$2,NULL,$3,$4,$5, true,false,false,false, false,NULL,'blue',true)
-               RETURNING id""",
-            owner_id, child_bot_id, text, media_file_id, media_type,
-        )
-    else:
-        # Channel-level: рассылка по пользователям одного канала
-        mailing_id = await db.fetchval(
-            """INSERT INTO mailings
-               (owner_id, chat_id, text, media_file_id, media_type,
-                notify_users, protect_content, pin_message, delete_after_send,
-                disable_preview, url_buttons_raw, button_color, media_below)
-               VALUES ($1,$2,$3,$4,$5, true,false,false,false, false,NULL,'blue',true)
-               RETURNING id""",
-            owner_id, chat_id, text, media_file_id, media_type,
-        )
+    try:
+        if child_bot_id and not chat_id:
+            mailing_id = await db.fetchval(
+                """INSERT INTO mailings
+                   (owner_id, child_bot_id, chat_id, text, media_file_id, media_type,
+                    notify_users, protect_content, pin_message, delete_after_send,
+                    disable_preview, url_buttons_raw, button_color, media_below)
+                   VALUES ($1,$2,NULL,$3,$4,$5, true,false,false,false, false,NULL,'blue',true)
+                   RETURNING id""",
+                owner_id, child_bot_id, text, media_file_id, media_type,
+            )
+        else:
+            mailing_id = await db.fetchval(
+                """INSERT INTO mailings
+                   (owner_id, chat_id, text, media_file_id, media_type,
+                    notify_users, protect_content, pin_message, delete_after_send,
+                    disable_preview, url_buttons_raw, button_color, media_below)
+                   VALUES ($1,$2,$3,$4,$5, true,false,false,false, false,NULL,'blue',true)
+                   RETURNING id""",
+                owner_id, chat_id, text, media_file_id, media_type,
+            )
+    except Exception as e:
+        logger.error(f"[mailing_text] DB insert failed: {e}")
+        await message.answer("❌ Ошибка при создании черновика.")
+        return
+
+    logger.info(f"[mailing_text] mailing_id={mailing_id}")
     await state.clear()
 
-    # Получаем только что созданный черновик
     m = await db.fetchrow("SELECT * FROM mailings WHERE id=$1", mailing_id)
 
     # ── Эхо: предпросмотр сообщения (без кнопок)
     sent_echo = None
-    if media_file_id:
-        send_fn = {
-            "photo": message.answer_photo,
-            "video": message.answer_video,
-            "document": message.answer_document,
-        }.get(media_type, message.answer_photo)
-        sent_echo = await send_fn(media_file_id, caption=text[:1000] or None, parse_mode="HTML")
-    elif text:
-        sent_echo = await message.answer(text[:1200], parse_mode="HTML")
+    try:
+        if media_file_id:
+            send_fn = {
+                "photo": message.answer_photo,
+                "video": message.answer_video,
+                "document": message.answer_document,
+            }.get(media_type, message.answer_photo)
+            sent_echo = await send_fn(media_file_id, caption=text[:1000] or None, parse_mode="HTML")
+        elif text:
+            sent_echo = await message.answer(text[:1200], parse_mode="HTML")
+        logger.info(f"[mailing_text] echo sent: msg_id={sent_echo.message_id if sent_echo else None}")
+    except Exception as e:
+        logger.error(f"[mailing_text] echo send failed: {e}")
 
     # Сохраняем echo message_id для последующего редактирования/удаления
     if sent_echo:
         _draft_echo_ids[mailing_id] = (sent_echo.message_id, message.chat.id)
 
     # ── Меню управления
-    await message.answer(
-        _draft_settings_text(dict(m)),
-        parse_mode="HTML",
-        reply_markup=_kb_draft(dict(m)),
-    )
+    try:
+        await message.answer(
+            _draft_settings_text(dict(m)),
+            parse_mode="HTML",
+            reply_markup=_kb_draft(dict(m)),
+        )
+        logger.info(f"[mailing_text] menu sent OK")
+    except Exception as e:
+        logger.error(f"[mailing_text] menu send failed: {e}")
+
 
 
 

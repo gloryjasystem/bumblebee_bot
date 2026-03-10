@@ -230,27 +230,25 @@ async def on_mass_mailing_text(message: Message, state: FSMContext):
 
     # Показываем настройки первого черновика (остальные создаются идентично)
     m = await db.fetchrow("SELECT * FROM mailings WHERE id=$1", mailing_ids[0])
-    settings_text = _draft_settings_text(dict(m))
-    bots_note = f"\n\n📣 Рассылка будет отправлена по <b>{len(selected)} ботам</b>"
+    bots_note = f"\n📣 Рассылка будет отправлена по <b>{len(selected)} ботам</b>"
 
+    # ── Эхо: предпросмотр сообщения
     if media_file_id:
         send_fn = {
             "photo": message.answer_photo,
             "video": message.answer_video,
             "document": message.answer_document,
         }.get(media_type, message.answer_photo)
-        await send_fn(
-            media_file_id,
-            caption=(text[:900] if text else "") + settings_text + bots_note,
-            parse_mode="HTML",
-            reply_markup=_kb_draft(dict(m)),
-        )
-    else:
-        await message.answer(
-            (text[:1100] if text else "") + settings_text + bots_note,
-            parse_mode="HTML",
-            reply_markup=_kb_draft(dict(m)),
-        )
+        await send_fn(media_file_id, caption=text[:1000] or None, parse_mode="HTML")
+    elif text:
+        await message.answer(text[:1200], parse_mode="HTML")
+
+    # ── Меню управления
+    await message.answer(
+        _draft_settings_text(dict(m)) + bots_note,
+        parse_mode="HTML",
+        reply_markup=_kb_draft(dict(m)),
+    )
 
 
 @router.callback_query(F.data == "ml_mass_scheduled")
@@ -367,38 +365,50 @@ def _draft_settings_text(m: dict) -> str:
 
 
 async def _show_draft(callback: CallbackQuery, m: dict):
-    """Показывает Экран 4: превью сообщения + блок настроек."""
-    text  = m.get("text") or ""
-    media = m.get("media_file_id")
-    media_type = m.get("media_type")
-    settings_text = _draft_settings_text(m)
+    """Показывает Экран 4: эхо сообщения сверху + меню управления снизу."""
+    text        = m.get("text") or ""
+    media       = m.get("media_file_id")
+    media_type  = m.get("media_type")
+    media_below = bool(m.get("media_below", False))
 
-    if media:
-        # Если есть медиа — отправляем новое сообщение с медиа, а текущее редактируем
-        caption = (text[:1000] if text else "") + settings_text
-        try:
-            await callback.message.delete()
-        except Exception:
-            pass
-        send_fn = {
-            "photo": callback.message.answer_photo,
-            "video": callback.message.answer_video,
-            "document": callback.message.answer_document,
-        }.get(media_type, callback.message.answer_photo)
-        await send_fn(
-            media,
-            caption=caption,
-            parse_mode="HTML",
-            reply_markup=_kb_draft(m),
-        )
+    # Удаляем текущее сообщение перед рендером
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
+
+    # ── Эхо: точный предпросмотр того, что получит пользователь ──
+    _send_fn_map = {
+        "photo":    callback.message.answer_photo,
+        "video":    callback.message.answer_video,
+        "document": callback.message.answer_document,
+    }
+
+    if media and media_below:
+        # Медиа снизу: сначала текст, потом медиа
+        if text:
+            await callback.message.answer(text, parse_mode="HTML")
+        send_fn = _send_fn_map.get(media_type, callback.message.answer_photo)
+        await send_fn(media)
+
+    elif media:
+        # Медиа сверху: фото/видео с caption'ом
+        send_fn = _send_fn_map.get(media_type, callback.message.answer_photo)
+        await send_fn(media, caption=text or None, parse_mode="HTML")
+
     else:
-        preview = (text[:1200] if text else "—") + settings_text
-        await callback.message.edit_text(
-            preview,
-            parse_mode="HTML",
-            reply_markup=_kb_draft(m),
-        )
+        # Только текст
+        if text:
+            await callback.message.answer(text, parse_mode="HTML")
+
+    # ── Меню управления (настройки + кнопки) ───────────────────
+    await callback.message.answer(
+        _draft_settings_text(m),
+        parse_mode="HTML",
+        reply_markup=_kb_draft(m),
+    )
     await callback.answer()
+
 
 
 # ══════════════════════════════════════════════════════════════
@@ -673,28 +683,24 @@ async def on_mailing_text(message: Message, state: FSMContext):
     # Получаем только что созданный черновик
     m = await db.fetchrow("SELECT * FROM mailings WHERE id=$1", mailing_id)
 
-    # Показываем Экран 4
-    settings_text = _draft_settings_text(dict(m))
-    preview_head  = (text[:1200] if text else "") + settings_text
-
+    # ── Эхо: предпросмотр сообщения (без кнопок)
     if media_file_id:
         send_fn = {
             "photo": message.answer_photo,
             "video": message.answer_video,
             "document": message.answer_document,
         }.get(media_type, message.answer_photo)
-        await send_fn(
-            media_file_id,
-            caption=(text[:1000] if text else "") + settings_text,
-            parse_mode="HTML",
-            reply_markup=_kb_draft(dict(m)),
-        )
-    else:
-        await message.answer(
-            preview_head,
-            parse_mode="HTML",
-            reply_markup=_kb_draft(dict(m)),
-        )
+        await send_fn(media_file_id, caption=text[:1000] or None, parse_mode="HTML")
+    elif text:
+        await message.answer(text[:1200], parse_mode="HTML")
+
+    # ── Меню управления
+    await message.answer(
+        _draft_settings_text(dict(m)),
+        parse_mode="HTML",
+        reply_markup=_kb_draft(dict(m)),
+    )
+
 
 
 # ══════════════════════════════════════════════════════════════

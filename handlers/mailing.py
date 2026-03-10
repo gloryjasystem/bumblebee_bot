@@ -202,8 +202,7 @@ async def on_mass_mailing_text(message: Message, state: FSMContext):
         media_type = "video"
     elif message.document:
         media_file_id = message.document.file_id
-        mime = (message.document.mime_type or "").lower()
-        media_type = "photo" if mime.startswith("image/") else "document"
+        media_type = "document"
 
     if not text and not media_file_id:
         await message.answer("⚠️ Отправьте текст или медиа.")
@@ -734,12 +733,7 @@ async def on_mailing_text(message: Message, state: FSMContext):
         media_type = "video"
     elif message.document:
         media_file_id = message.document.file_id
-        # Если документ является изображением — обрабатываем как фото
-        mime = (message.document.mime_type or "").lower()
-        if mime.startswith("image/"):
-            media_type = "photo"
-        else:
-            media_type = "document"
+        media_type = "document"
 
     if not text and not media_file_id:
         await message.answer("⚠️ Пожалуйста, отправьте текст или медиа.")

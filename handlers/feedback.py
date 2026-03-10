@@ -570,7 +570,7 @@ async def on_feedback_reply_text(message: Message, state: FSMContext):
 
         logger.info(f"[FEEDBACK REPLY] Sent reply to user {target_user_id} via bot {child_bot_id}")
 
-        # Редактируем «рабочее» сообщение обратно в «успех + Написать ещё»
+        # Удаляем промпт-сообщение, отправляем успех ниже отправленного
         work_msg_id = data.get("work_msg_id")
         more_kb = InlineKeyboardMarkup(inline_keyboard=[[
             InlineKeyboardButton(
@@ -579,34 +579,13 @@ async def on_feedback_reply_text(message: Message, state: FSMContext):
             )
         ]])
         success_text = f"✅ Ответ успешно отправлен пользователю <b>{name_display}</b>."
-        if work_msg_id:
-            # Редактируем рабочее сообщение (fbr_more-поток)
+        del_msg_id = work_msg_id or prompt_msg_id
+        if del_msg_id:
             try:
-                await message.bot.edit_message_text(
-                    success_text,
-                    chat_id=message.chat.id,
-                    message_id=work_msg_id,
-                    parse_mode="HTML",
-                    reply_markup=more_kb,
-                )
-            except Exception as edit_err:
-                logger.debug(f"[FEEDBACK REPLY] Could not edit work_msg: {edit_err}")
-                await message.answer(success_text, parse_mode="HTML", reply_markup=more_kb)
-        elif prompt_msg_id:
-            # Редактируем промпт-сообщение (первый ответ через FSM)
-            try:
-                await message.bot.edit_message_text(
-                    success_text,
-                    chat_id=message.chat.id,
-                    message_id=prompt_msg_id,
-                    parse_mode="HTML",
-                    reply_markup=more_kb,
-                )
-            except Exception as edit_err:
-                logger.debug(f"[FEEDBACK REPLY] Could not edit prompt msg: {edit_err}")
-                await message.answer(success_text, parse_mode="HTML", reply_markup=more_kb)
-        else:
-            await message.answer(success_text, parse_mode="HTML", reply_markup=more_kb)
+                await message.bot.delete_message(chat_id=message.chat.id, message_id=del_msg_id)
+            except Exception:
+                pass
+        await message.answer(success_text, parse_mode="HTML", reply_markup=more_kb)
 
         # Обновляем верхнее уведомление — "Ожидаем ответ" → "Ответ отправлен"
         if notification_msg_id:

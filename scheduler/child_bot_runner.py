@@ -619,7 +619,7 @@ async def _handle_message(bot: Bot, child_bot_id: int, owner_id: int, message):
                 except Exception:
                     pass
 
-            # Редактируем «рабочее» сообщение обратно в «успех + Написать ещё»
+            # Удаляем промпт-сообщение и отправляем успех ниже отправленного сообщения
             from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
             more_kb = InlineKeyboardMarkup(inline_keyboard=[[
                 InlineKeyboardButton(
@@ -629,27 +629,15 @@ async def _handle_message(bot: Bot, child_bot_id: int, owner_id: int, message):
             ]])
             if work_msg_id:
                 try:
-                    await bot.edit_message_text(
-                        f"✅ Ответ успешно отправлен пользователю <b>{name_display}</b>.",
-                        chat_id=user.id,
-                        message_id=work_msg_id,
-                        parse_mode="HTML",
-                        reply_markup=more_kb,
-                    )
+                    await bot.delete_message(chat_id=user.id, message_id=work_msg_id)
                 except Exception:
-                    await bot.send_message(
-                        user.id,
-                        f"✅ Ответ успешно отправлен пользователю <b>{name_display}</b>.",
-                        parse_mode="HTML",
-                        reply_markup=more_kb,
-                    )
-            else:
-                await bot.send_message(
-                    user.id,
-                    f"✅ Ответ успешно отправлен пользователю <b>{name_display}</b>.",
-                    parse_mode="HTML",
-                    reply_markup=more_kb,
-                )
+                    pass
+            await bot.send_message(
+                user.id,
+                f"✅ Ответ успешно отправлен пользователю <b>{name_display}</b>.",
+                parse_mode="HTML",
+                reply_markup=more_kb,
+            )
             # Обновляем уведомление «Ожидаем ответ» → «Ответ отправлен»
             if notification_id:
                 try:

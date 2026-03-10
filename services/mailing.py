@@ -296,27 +296,22 @@ async def _send_message(
     )
 
     if media_id and media_below:
-        # Медиа снизу: сначала текст, потом медиа с кнопками
-        if text:
-            from aiogram.types import LinkPreviewOptions
-            await bot.send_message(
-                user_id, text,
-                parse_mode="HTML",
-                link_preview_options=LinkPreviewOptions(is_disabled=True),
-                protect_content=protect,
-                disable_notification=not notify,
-            )
-        # Медиа без caption, но с кнопками
-        media_common = dict(protect_content=protect, disable_notification=not notify, reply_markup=kb)
+        # ⬇ — одно сообщение: текст сверху, медиа снизу
+        send_kwargs = dict(
+            caption=text or None,
+            parse_mode="HTML",
+            show_caption_above_media=True,
+            **common,
+        )
         if media_type == "photo":
-            await bot.send_photo(user_id, media_id, **media_common)
+            await bot.send_photo(user_id, media_id, has_spoiler=False, **send_kwargs)
         elif media_type == "video":
-            await bot.send_video(user_id, media_id, **media_common)
+            await bot.send_video(user_id, media_id, **send_kwargs)
         elif media_type == "document":
-            await bot.send_document(user_id, media_id, **media_common)
+            await bot.send_document(user_id, media_id, **send_kwargs)
 
     elif media_id:
-        # Медиа сверху: текст идёт caption'ом (текущее поведение)
+        # ⬆ — стандарт: медиа сверху, текст caption'ом снизу
         if media_type == "photo":
             await bot.send_photo(
                 user_id, media_id,
@@ -335,7 +330,6 @@ async def _send_message(
             )
 
     else:
-        # Только текст
         from aiogram.types import LinkPreviewOptions
         await bot.send_message(
             user_id, text,
@@ -343,6 +337,7 @@ async def _send_message(
             link_preview_options=LinkPreviewOptions(is_disabled=no_prev),
             **common,
         )
+
 
 
 

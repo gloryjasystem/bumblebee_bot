@@ -320,7 +320,7 @@ def _kb_draft(m: dict) -> InlineKeyboardMarkup:
     """Клавиатура настроек черновика (Экран 4)."""
     mid = m["id"]
     _below       = bool(m.get("media_below", False))
-    media_icon   = f"📎 Медиа: {'⬇ снизу' if _below else '⬆ сверху'}"
+    media_icon   = f"📎 Медиа: {'⬇' if _below else '⬆'}"
     preview_icon = "👁 Превью: да" if not m.get("disable_preview") else "👁 Превью: нет"
     notify_icon  = f"🔔 Уведомить: {_yn(m.get('notify_users', True))}"
     protect_icon = f"🔒 Защитить: {_yn(m.get('protect_content', False))}"
@@ -364,44 +364,61 @@ def _draft_settings_text(m: dict) -> str:
     )
 
 
+# Кэш echo-сообщений черновика: mailing_id -> (echo_msg_id, tg_chat_id)
+_draft_echo_ids: dict[int, tuple[int, int]] = {}
+
+
 async def _show_draft(callback: CallbackQuery, m: dict):
     """Показывает Экран 4: эхо сообщения сверху + меню управления снизу."""
+    mid         = m["id"]
     text        = m.get("text") or ""
     media       = m.get("media_file_id")
     media_type  = m.get("media_type")
     media_below = bool(m.get("media_below", False))
+    tg_chat_id  = callback.message.chat.id
 
-    # Удаляем текущее сообщение перед рендером
+    # Удаляем предыдущее эхо-сообщение (если есть) и текущее меню
+    prev_echo = _draft_echo_ids.pop(mid, None)
+    if prev_echo:
+        try:
+            await callback.bot.delete_message(prev_echo[1], prev_echo[0])
+        except Exception:
+            pass
     try:
         await callback.message.delete()
     except Exception:
         pass
 
-    # ── Эхо: точный предпросмотр того, что получит пользователь ──
+    # ── Эхо: точный предпросмотр того, что получит пользователь ──────
     _send_fn_map = {
         "photo":    callback.message.answer_photo,
         "video":    callback.message.answer_video,
         "document": callback.message.answer_document,
     }
+    sent_echo = None
 
     if media and media_below:
-        # Медиа снизу: сначала текст, потом медиа
-        if text:
-            await callback.message.answer(text, parse_mode="HTML")
+        # ⬇ — одно сообщение: текст сверху, фото/видео снизу
         send_fn = _send_fn_map.get(media_type, callback.message.answer_photo)
-        await send_fn(media)
-
+        sent_echo = await send_fn(
+            media,
+            caption=text or None,
+            parse_mode="HTML",
+            show_caption_above_media=True,
+        )
     elif media:
-        # Медиа сверху: фото/видео с caption'ом
+        # ⬆ — стандарт: фото/видео сверху, текст капшоном снизу
         send_fn = _send_fn_map.get(media_type, callback.message.answer_photo)
-        await send_fn(media, caption=text or None, parse_mode="HTML")
-
+        sent_echo = await send_fn(media, caption=text or None, parse_mode="HTML")
     else:
-        # Только текст
         if text:
-            await callback.message.answer(text, parse_mode="HTML")
+            sent_echo = await callback.message.answer(text, parse_mode="HTML")
 
-    # ── Меню управления (настройки + кнопки) ───────────────────
+    # Сохраняем echo message_id для будущего удаления
+    if sent_echo:
+        _draft_echo_ids[mid] = (sent_echo.message_id, tg_chat_id)
+
+    # ── Меню управления (настройки + кнопки) ───────────
     await callback.message.answer(
         _draft_settings_text(m),
         parse_mode="HTML",

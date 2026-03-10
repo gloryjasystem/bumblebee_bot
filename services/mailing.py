@@ -280,6 +280,7 @@ async def _send_message(
     raw_text   = mailing.get("text") or ""
     media_id   = mailing.get("media_file_id")
     media_type = mailing.get("media_type")
+    media_below = bool(mailing.get("media_below", False))
 
     # Подстановка переменных
     text = _substitute_vars(raw_text, user_dict) if raw_text else ""
@@ -294,23 +295,47 @@ async def _send_message(
         disable_notification=not notify,
     )
 
-    if media_type == "photo":
-        await bot.send_photo(
-            user_id, media_id,
-            caption=text, parse_mode="HTML",
-            has_spoiler=False, **common,
-        )
-    elif media_type == "video":
-        await bot.send_video(
-            user_id, media_id,
-            caption=text, parse_mode="HTML", **common,
-        )
-    elif media_type == "document":
-        await bot.send_document(
-            user_id, media_id,
-            caption=text, parse_mode="HTML", **common,
-        )
+    if media_id and media_below:
+        # Медиа снизу: сначала текст, потом медиа с кнопками
+        if text:
+            from aiogram.types import LinkPreviewOptions
+            await bot.send_message(
+                user_id, text,
+                parse_mode="HTML",
+                link_preview_options=LinkPreviewOptions(is_disabled=True),
+                protect_content=protect,
+                disable_notification=not notify,
+            )
+        # Медиа без caption, но с кнопками
+        media_common = dict(protect_content=protect, disable_notification=not notify, reply_markup=kb)
+        if media_type == "photo":
+            await bot.send_photo(user_id, media_id, **media_common)
+        elif media_type == "video":
+            await bot.send_video(user_id, media_id, **media_common)
+        elif media_type == "document":
+            await bot.send_document(user_id, media_id, **media_common)
+
+    elif media_id:
+        # Медиа сверху: текст идёт caption'ом (текущее поведение)
+        if media_type == "photo":
+            await bot.send_photo(
+                user_id, media_id,
+                caption=text, parse_mode="HTML",
+                has_spoiler=False, **common,
+            )
+        elif media_type == "video":
+            await bot.send_video(
+                user_id, media_id,
+                caption=text, parse_mode="HTML", **common,
+            )
+        elif media_type == "document":
+            await bot.send_document(
+                user_id, media_id,
+                caption=text, parse_mode="HTML", **common,
+            )
+
     else:
+        # Только текст
         from aiogram.types import LinkPreviewOptions
         await bot.send_message(
             user_id, text,
@@ -318,6 +343,7 @@ async def _send_message(
             link_preview_options=LinkPreviewOptions(is_disabled=no_prev),
             **common,
         )
+
 
 
 # ── Runtime controls ─────────────────────────────────────────

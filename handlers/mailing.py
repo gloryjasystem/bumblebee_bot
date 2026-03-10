@@ -321,7 +321,8 @@ def _resolve_vars(text: str, user: dict | None = None, chat_title: str = "") -> 
 def _kb_draft(m: dict) -> InlineKeyboardMarkup:
     """Клавиатура настроек черновика (Экран 4)."""
     mid = m["id"]
-    media_icon   = "📎 Медиа: ✅" if m.get("media_file_id") else "📎 Медиа: ⬇"
+    _below       = bool(m.get("media_below", False))
+    media_icon   = f"📎 Медиа: {'⬇ снизу' if _below else '⬆ сверху'}"
     preview_icon = "👁 Превью: да" if not m.get("disable_preview") else "👁 Превью: нет"
     notify_icon  = f"🔔 Уведомить: {_yn(m.get('notify_users', True))}"
     protect_icon = f"🔒 Защитить: {_yn(m.get('protect_content', False))}"
@@ -745,8 +746,14 @@ async def on_ml_toggle(callback: CallbackQuery, platform_user: dict | None):
         return
 
     if setting == "media":
-        # Нельзя удалить медиа через UI — сообщаем пользователю
-        await callback.answer("Чтобы сменить медиа — создайте новую рассылку.", show_alert=True)
+        new_val = not bool(m.get("media_below", False))
+        await db.execute(
+            "UPDATE mailings SET media_below=$1 WHERE id=$2 AND owner_id=$3",
+            new_val, mid, owner_id,
+        )
+        m = await db.fetchrow("SELECT * FROM mailings WHERE id=$1", mid)
+        await callback.answer()
+        await _show_draft(callback, dict(m))
         return
 
     col, default = _TOGGLE_MAP[setting]

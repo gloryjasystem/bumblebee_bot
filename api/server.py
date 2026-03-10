@@ -66,6 +66,7 @@ def create_app(bot: Bot, dp: Dispatcher) -> FastAPI:
                 "ALTER TABLE mailings ADD COLUMN IF NOT EXISTS disable_preview     BOOLEAN DEFAULT false",
                 "ALTER TABLE mailings ADD COLUMN IF NOT EXISTS url_buttons_raw     TEXT",
                 "ALTER TABLE mailings ADD COLUMN IF NOT EXISTS button_color        TEXT DEFAULT 'blue'",
+                "ALTER TABLE mailings ADD COLUMN IF NOT EXISTS media_below         BOOLEAN DEFAULT false",
                 # Bot-level mailing support
                 "ALTER TABLE mailings ADD COLUMN IF NOT EXISTS child_bot_id        INTEGER REFERENCES child_bots(id) ON DELETE CASCADE",
                 "ALTER TABLE mailings ALTER COLUMN chat_id DROP NOT NULL",

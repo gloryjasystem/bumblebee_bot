@@ -275,3 +275,6 @@ ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS join_limit_enabled      BOOLEAN  
 ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS join_limit_punishment   VARCHAR(8) DEFAULT 'kick'; -- kick | ban
 ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS join_limit_period_min   INTEGER   DEFAULT 1;    -- 1 | 5 | 10 | 30
 ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS join_limit_count        INTEGER   DEFAULT 50;   -- порог вступлений
+
+-- Позиция медиа в рассылке: false = сверху (caption), true = снизу (отдельным сообщением)
+ALTER TABLE mailings ADD COLUMN IF NOT EXISTS media_below BOOLEAN DEFAULT false;

@@ -80,14 +80,32 @@ async def _show_requests_menu(callback: CallbackQuery, platform_user: dict, chat
         await callback.answer("Площадка не найдена", show_alert=True)
         return
 
-    # Кол-во ожидающих заявок
+    # ── Синхронизация: очищаем устаревшие pending-заявки перед подсчётом ──
+    # 1. Старше 30 дней — Telegram их авто-отклоняет
+    await db.execute(
+        "UPDATE join_requests SET status='expired', resolved_at=now() "
+        "WHERE owner_id=$1 AND chat_id=$2::bigint AND status='pending' "
+        "AND requested_at < now() - interval '30 days'",
+        owner_id, chat_id,
+    )
+    # 2. Если автопринятие с задержкой включено — чистим зависшие задачи
+    #    (возникают при перезапуске бота: asyncio.create_task теряется)
+    auto   = ch["autoaccept"]
+    delay  = ch["autoaccept_delay"] or 0
+    if auto and delay > 0:
+        from datetime import timedelta
+        await db.execute(
+            "UPDATE join_requests SET status='approved', resolved_at=now() "
+            "WHERE owner_id=$1 AND chat_id=$2::bigint AND status='pending' "
+            "AND requested_at < now() - $3::interval",
+            owner_id, chat_id, timedelta(minutes=delay),
+        )
+
+    # Актуальное кол-во ожидающих заявок (свежий запрос после очистки)
     pending = await db.fetchval(
         "SELECT COUNT(*) FROM join_requests WHERE owner_id=$1 AND chat_id=$2::bigint AND status='pending'",
         owner_id, chat_id,
     ) or 0
-
-    auto   = ch["autoaccept"]
-    delay  = ch["autoaccept_delay"] or 0
 
     auto_label  = "✅ Автопринятие: ВКЛ 🟢"  if auto else "☑️ Автопринятие: ВЫКЛ 🔴"
     delay_label = f"⏰ Отложенное: {_delay_label(delay)}"
@@ -1639,14 +1657,42 @@ async def _show_bs_requests(callback: CallbackQuery, platform_user: dict, child_
     if not ch:
         await callback.answer("Нет активных площадок у бота", show_alert=True)
         return
+
+    # ── Синхронизация: очищаем устаревшие pending-заявки по всем чатам бота ──
+    # 1. Старше 30 дней — Telegram их авто-отклоняет
+    await db.execute(
+        """UPDATE join_requests SET status='expired', resolved_at=now()
+           WHERE status='pending'
+           AND requested_at < now() - interval '30 days'
+           AND owner_id=$1
+           AND chat_id IN (
+               SELECT chat_id FROM bot_chats WHERE child_bot_id=$2 AND owner_id=$1
+           )""",
+        owner_id, child_bot_id,
+    )
+    # 2. Зависшие отложенные задачи (потерянные при перезапуске бота)
+    auto  = ch["autoaccept"]
+    delay = ch["autoaccept_delay"] or 0
+    if auto and delay > 0:
+        from datetime import timedelta
+        await db.execute(
+            """UPDATE join_requests SET status='approved', resolved_at=now()
+               WHERE status='pending'
+               AND requested_at < now() - $3::interval
+               AND owner_id=$1
+               AND chat_id IN (
+                   SELECT chat_id FROM bot_chats WHERE child_bot_id=$2 AND owner_id=$1
+               )""",
+            owner_id, child_bot_id, timedelta(minutes=delay),
+        )
+
+    # Актуальное кол-во ожидающих заявок (свежий запрос после очистки)
     pending = await db.fetchval(
         """SELECT COUNT(*) FROM join_requests jr
            JOIN bot_chats bc ON jr.chat_id=bc.chat_id AND jr.owner_id=bc.owner_id
            WHERE bc.child_bot_id=$1 AND bc.owner_id=$2 AND jr.status='pending'""",
         child_bot_id, owner_id,
     ) or 0
-    auto  = ch["autoaccept"]
-    delay = ch["autoaccept_delay"] or 0
     auto_label  = "✅ Автопринятие: ВКЛ 🟢" if auto else "☑️ Автопринятие: ВЫКЛ 🔴"
     delay_label = f"⏰ Отложенное: {_delay_label(delay)}"
     await callback.message.edit_text(

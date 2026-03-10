@@ -619,7 +619,7 @@ async def _handle_message(bot: Bot, child_bot_id: int, owner_id: int, message):
                 except Exception:
                     pass
 
-            # Удаляем промпт-сообщение и отправляем успех ниже отправленного сообщения
+            # 1. Редактируем промпт-сообщение — простое подтверждение без кнопки
             from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
             more_kb = InlineKeyboardMarkup(inline_keyboard=[[
                 InlineKeyboardButton(
@@ -629,9 +629,15 @@ async def _handle_message(bot: Bot, child_bot_id: int, owner_id: int, message):
             ]])
             if work_msg_id:
                 try:
-                    await bot.delete_message(chat_id=user.id, message_id=work_msg_id)
+                    await bot.edit_message_text(
+                        f"✅ Ответ отправлен\n\nПользователь <b>{name_display}</b> получил ваш ответ.",
+                        chat_id=user.id,
+                        message_id=work_msg_id,
+                        parse_mode="HTML",
+                    )
                 except Exception:
                     pass
+            # 2. Новое сообщение с кнопкой — под отправленным сообщением бота
             await bot.send_message(
                 user.id,
                 f"✅ Ответ успешно отправлен пользователю <b>{name_display}</b>.",

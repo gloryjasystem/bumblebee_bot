@@ -570,7 +570,7 @@ async def on_feedback_reply_text(message: Message, state: FSMContext):
 
         logger.info(f"[FEEDBACK REPLY] Sent reply to user {target_user_id} via bot {child_bot_id}")
 
-        # Удаляем промпт-сообщение, отправляем успех ниже отправленного
+        # 1. Редактируем промпт-сообщение — простое подтверждение без кнопки
         work_msg_id = data.get("work_msg_id")
         more_kb = InlineKeyboardMarkup(inline_keyboard=[[
             InlineKeyboardButton(
@@ -582,9 +582,15 @@ async def on_feedback_reply_text(message: Message, state: FSMContext):
         del_msg_id = work_msg_id or prompt_msg_id
         if del_msg_id:
             try:
-                await message.bot.delete_message(chat_id=message.chat.id, message_id=del_msg_id)
+                await message.bot.edit_message_text(
+                    f"✅ Ответ отправлен\n\nПользователь <b>{name_display}</b> получил ваш ответ.",
+                    chat_id=message.chat.id,
+                    message_id=del_msg_id,
+                    parse_mode="HTML",
+                )
             except Exception:
                 pass
+        # 2. Новое сообщение с кнопкой — под отправленным сообщением
         await message.answer(success_text, parse_mode="HTML", reply_markup=more_kb)
 
         # Обновляем верхнее уведомление — "Ожидаем ответ" → "Ответ отправлен"

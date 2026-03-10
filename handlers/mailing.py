@@ -217,8 +217,8 @@ async def on_mass_mailing_text(message: Message, state: FSMContext):
             """INSERT INTO mailings
                (owner_id, child_bot_id, chat_id, text, media_file_id, media_type,
                 notify_users, protect_content, pin_message, delete_after_send,
-                disable_preview, url_buttons_raw, button_color)
-               VALUES ($1,$2,NULL,$3,$4,$5, true,false,false,false, false,NULL,'blue')
+                disable_preview, url_buttons_raw, button_color, media_below)
+               VALUES ($1,$2,NULL,$3,$4,$5, true,false,false,false, false,NULL,'blue',true)
                RETURNING id""",
             owner_id, bot_id, text, media_file_id, media_type,
         )
@@ -679,8 +679,8 @@ async def on_mailing_text(message: Message, state: FSMContext):
             """INSERT INTO mailings
                (owner_id, child_bot_id, chat_id, text, media_file_id, media_type,
                 notify_users, protect_content, pin_message, delete_after_send,
-                disable_preview, url_buttons_raw, button_color)
-               VALUES ($1,$2,NULL,$3,$4,$5, true,false,false,false, false,NULL,'blue')
+                disable_preview, url_buttons_raw, button_color, media_below)
+               VALUES ($1,$2,NULL,$3,$4,$5, true,false,false,false, false,NULL,'blue',true)
                RETURNING id""",
             owner_id, child_bot_id, text, media_file_id, media_type,
         )
@@ -690,8 +690,8 @@ async def on_mailing_text(message: Message, state: FSMContext):
             """INSERT INTO mailings
                (owner_id, chat_id, text, media_file_id, media_type,
                 notify_users, protect_content, pin_message, delete_after_send,
-                disable_preview, url_buttons_raw, button_color)
-               VALUES ($1,$2,$3,$4,$5, true,false,false,false, false,NULL,'blue')
+                disable_preview, url_buttons_raw, button_color, media_below)
+               VALUES ($1,$2,$3,$4,$5, true,false,false,false, false,NULL,'blue',true)
                RETURNING id""",
             owner_id, chat_id, text, media_file_id, media_type,
         )

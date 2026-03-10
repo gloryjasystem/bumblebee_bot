@@ -570,7 +570,13 @@ async def on_feedback_reply_text(message: Message, state: FSMContext):
 
         logger.info(f"[FEEDBACK REPLY] Sent reply to user {target_user_id} via bot {child_bot_id}")
 
-        # Редактируем промпт-сообщение — показываем успех
+        # Редактируем промпт-сообщение — показываем успех + кнопка «Написать ещё»
+        more_kb = InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(
+                text="💬 Написать ещё",
+                callback_data=f"fbr_more:{child_bot_id}:{target_user_id}:{owner_id_fb}",
+            )
+        ]])
         if prompt_msg_id:
             try:
                 await message.bot.edit_message_text(
@@ -578,12 +584,14 @@ async def on_feedback_reply_text(message: Message, state: FSMContext):
                     chat_id=message.chat.id,
                     message_id=prompt_msg_id,
                     parse_mode="HTML",
+                    reply_markup=more_kb,
                 )
             except Exception as edit_err:
                 logger.debug(f"[FEEDBACK REPLY] Could not edit prompt msg: {edit_err}")
                 await message.answer(
                     f"✅ Ответ успешно отправлен <b>{name_display}</b>.",
                     parse_mode="HTML",
+                    reply_markup=more_kb,
                 )
 
         # Обновляем верхнее уведомление — "Ожидаем ответ" → "Ответ отправлен"
@@ -607,3 +615,51 @@ async def on_feedback_reply_text(message: Message, state: FSMContext):
         logger.warning(f"[FEEDBACK REPLY] Failed: {e}")
     finally:
         await child_bot.session.close()
+
+
+@router.callback_query(F.data.startswith("fbr_more:"))
+async def on_fbr_more(callback: CallbackQuery, state: FSMContext):
+    """Администратор нажал «Написать ещё» — возвращаем в режим ожидания ответа (main-bot путь)."""
+    parts          = callback.data.split(":")
+    child_bot_id   = int(parts[1])
+    target_user_id = int(parts[2])
+    owner_id_fb    = int(parts[3])
+
+    # Убираем кнопку
+    try:
+        await callback.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+
+    # Ищем имя пользователя в БД
+    row = await db.fetchrow(
+        "SELECT first_name, username FROM bot_users WHERE user_id=$1 LIMIT 1",
+        target_user_id,
+    )
+    if row:
+        target_name     = row["first_name"] or "Пользователь"
+        target_username = f"@{row['username']}" if row["username"] else ""
+    else:
+        target_name, target_username = "Пользователь", ""
+    name_display = f"{target_name} ({target_username})" if target_username else target_name
+
+    # Промпт
+    prompt_msg = await callback.message.answer(
+        f"✍️ <b>Напишите следующее сообщение для {name_display}:</b>\n\n"
+        "Для отмены нажмите /cancel",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="❌ Отмена", callback_data="fb_cancel_reply"),
+        ]]),
+    )
+    await state.set_state(FeedbackFSM.waiting_for_reply)
+    await state.update_data(
+        child_bot_id=child_bot_id,
+        target_user_id=target_user_id,
+        target_name=target_name,
+        target_username=row["username"] if row and row["username"] else "",
+        notification_msg_id=None,
+        owner_id=owner_id_fb,
+        prompt_msg_id=prompt_msg.message_id,
+    )
+    await callback.answer("✍️ Напишите следующее 👇")

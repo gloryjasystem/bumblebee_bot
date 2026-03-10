@@ -344,6 +344,36 @@ async def _handle_captcha_callback(bot: Bot, callback):
                 await on_captcha_random_press(callback, bot)
             elif data.startswith("captcha:"):
                 await on_captcha_passed(callback, bot)
+            elif data.startswith("fbr_more:"):
+                # Админ нажал «Написать ещё» — возвращаем в режим ожидания ответа
+                parts = data.split(":")
+                fb_child_bot_id   = int(parts[1])
+                fb_target_user_id = int(parts[2])
+                fb_owner_id       = int(parts[3])
+                admin_id          = callback.from_user.id
+                # Убираем кнопку из предыдущего сообщения
+                try:
+                    await callback.message.edit_reply_markup(reply_markup=None)
+                except Exception:
+                    pass
+                # Ставим админа в режим ожидания ответа
+                _reply_states[(fb_child_bot_id, admin_id)] = {
+                    "target_user_id":  fb_target_user_id,
+                    "target_name":     "пользователю",
+                    "target_username": "",
+                    "notification_msg_id": None,
+                }
+                from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+                await bot.send_message(
+                    admin_id,
+                    "✍️ <b>Напишите следующее сообщение</b> — оно будет отправлено пользователю.\n\n"
+                    "Для отмены напишите /cancel",
+                    parse_mode="HTML",
+                    reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                        InlineKeyboardButton(text="❌ Отмена", callback_data="fb_cancel_reply"),
+                    ]]),
+                )
+                await callback.answer("✍️ Напишите следующее 👇")
         except Exception as e:
             logger.error(f"Captcha callback error: {e}")
             try:
@@ -527,11 +557,19 @@ async def _handle_message(bot: Bot, child_bot_id: int, owner_id: int, message):
                 except Exception:
                     pass
 
-            # Уведомляем администратора об успешной отправке
+            # Уведомляем администратора об успешной отправке с кнопкой «Написать ещё»
+            from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+            more_kb = InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(
+                    text="💬 Написать ещё",
+                    callback_data=f"fbr_more:{child_bot_id}:{target_user_id}:{owner_id}",
+                )
+            ]])
             await bot.send_message(
                 user.id,
                 f"✅ Ответ успешно отправлен пользователю <b>{name_display}</b>.",
                 parse_mode="HTML",
+                reply_markup=more_kb,
             )
             # Обновляем уведомление «Ожидаем ответ» → «Ответ отправлен»
             if notification_id:

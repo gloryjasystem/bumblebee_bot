@@ -98,7 +98,7 @@ async def on_bot_settings(callback: CallbackQuery, platform_user: dict | None):
     if not platform_user:
         return
     child_bot_id = int(callback.data.split(":")[1])
-    owner_id = platform_user["user_id"]
+    user_id = platform_user["user_id"]
 
     # Разрешаем доступ владельцу ИЛИ активному admin
     bot = await db.fetchrow(
@@ -112,12 +112,14 @@ async def on_bot_settings(callback: CallbackQuery, platform_user: dict | None):
             )
         )
         """,
-        child_bot_id, owner_id,
+        child_bot_id, user_id,
     )
     if not bot:
         await callback.answer("Бот не найден", show_alert=True)
         return
-    is_owner = bot["owner_id"] == owner_id
+    is_owner = bot["owner_id"] == user_id
+    # Все запросы к БД идут через реального владельца бота
+    owner_id = bot["owner_id"]
 
     from datetime import date, timedelta
     today     = date.today()
@@ -239,6 +241,7 @@ async def on_bot_settings(callback: CallbackQuery, platform_user: dict | None):
         f"🔴 Мёртвые ≈ {dead_users}"
     )
 
+    # Для admin — только рабочие кнопки (как на скриншоте), без Управления и Удалить
     keyboard = [
         [InlineKeyboardButton(text="✅ Обработка заявок",  callback_data=f"bs_requests:{child_bot_id}")],
         [
@@ -249,13 +252,12 @@ async def on_bot_settings(callback: CallbackQuery, platform_user: dict | None):
             InlineKeyboardButton(text="🔗 Ссылки",         callback_data=f"bs_links:{child_bot_id}"),
             InlineKeyboardButton(text="📍 Площадки",       callback_data=f"bot_chats_list:{child_bot_id}"),
         ],
-        [
-            InlineKeyboardButton(text="🛡 Защита",         callback_data=f"bs_protection:{child_bot_id}"),
-            InlineKeyboardButton(text="⚙️ Управление",     callback_data=f"bs_settings:{child_bot_id}"),
-        ],
+        [InlineKeyboardButton(text="🛡 Защита",            callback_data=f"bs_protection:{child_bot_id}")],
         [InlineKeyboardButton(text="📣 Обратная связь",    callback_data=f"bs_feedback:{child_bot_id}")],
     ]
     if is_owner:
+        # Только владелец видит Управление и Удалить бот
+        keyboard.insert(4, [InlineKeyboardButton(text="⚙️ Управление", callback_data=f"bs_settings:{child_bot_id}")])
         keyboard.append([InlineKeyboardButton(text="🗑 Удалить бот", callback_data=f"bot_delete:{child_bot_id}")])
     keyboard.append([InlineKeyboardButton(text="◀️ Назад", callback_data="menu:channels")])
     await callback.message.edit_text(
@@ -273,7 +275,11 @@ async def on_bot_chats_list(callback: CallbackQuery, platform_user: dict | None)
     if not platform_user:
         return
     child_bot_id = int(callback.data.split(":")[1])
-    owner_id = platform_user["user_id"]
+    from handlers.channel_settings import resolve_owner_id
+    owner_id = await resolve_owner_id(platform_user["user_id"], child_bot_id)
+    if owner_id is None:
+        await callback.answer("Нет доступа", show_alert=True)
+        return
 
     bot = await db.fetchrow(
         "SELECT bot_username, verify_only FROM child_bots WHERE id=$1 AND owner_id=$2",

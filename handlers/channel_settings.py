@@ -1642,6 +1642,22 @@ async def on_ch_tz_set(callback: CallbackQuery, platform_user: dict | None):
 # ██ БОТ-УРОВЕНЬ: bs_* handlers (применяют к ВСЕМ каналам бота)
 # ══════════════════════════════════════════════════════════════
 
+async def resolve_owner_id(user_id: int, child_bot_id: int) -> int | None:
+    """Возвращает owner_id бота для user_id (владелец или admin через team_members)."""
+    row = await db.fetchrow(
+        """SELECT cb.owner_id FROM child_bots cb
+           WHERE cb.id=$1 AND (
+               cb.owner_id=$2
+               OR EXISTS (
+                   SELECT 1 FROM team_members tm
+                   WHERE tm.child_bot_id=cb.id AND tm.user_id=$2 AND tm.is_active=true
+               )
+           )""",
+        child_bot_id, user_id,
+    )
+    return row["owner_id"] if row else None
+
+
 async def _get_bot_first_chat(owner_id: int, child_bot_id: int):
     """Возвращает первый активный bot_chats для чтения текущих настроек."""
     return await db.fetchrow(
@@ -1652,7 +1668,10 @@ async def _get_bot_first_chat(owner_id: int, child_bot_id: int):
 
 # ── Обработка заявок ─────────────────────────────────────────
 async def _show_bs_requests(callback: CallbackQuery, platform_user: dict, child_bot_id: int):
-    owner_id = platform_user["user_id"]
+    owner_id = await resolve_owner_id(platform_user["user_id"], child_bot_id)
+    if owner_id is None:
+        await callback.answer("Нет доступа", show_alert=True)
+        return
     ch = await _get_bot_first_chat(owner_id, child_bot_id)
     if not ch:
         await callback.answer("Нет активных площадок у бота", show_alert=True)
@@ -1724,7 +1743,10 @@ async def on_bs_req_auto(callback: CallbackQuery, platform_user: dict | None):
     if not platform_user:
         return
     child_bot_id = int(callback.data.split(":")[1])
-    owner_id = platform_user["user_id"]
+    owner_id = await resolve_owner_id(platform_user["user_id"], child_bot_id)
+    if owner_id is None:
+        await callback.answer("Нет доступа", show_alert=True)
+        return
     ch = await _get_bot_first_chat(owner_id, child_bot_id)
     if not ch:
         return
@@ -1742,7 +1764,10 @@ async def on_bs_req_delay(callback: CallbackQuery, platform_user: dict | None):
     if not platform_user:
         return
     child_bot_id = int(callback.data.split(":")[1])
-    owner_id = platform_user["user_id"]
+    owner_id = await resolve_owner_id(platform_user["user_id"], child_bot_id)
+    if owner_id is None:
+        await callback.answer("Нет доступа", show_alert=True)
+        return
     ch = await _get_bot_first_chat(owner_id, child_bot_id)
     current = ch["autoaccept_delay"] or 0 if ch else 0
     new_delay = _next_delay(current)
@@ -1759,7 +1784,10 @@ async def on_bs_req_accept_all(callback: CallbackQuery, bot: Bot, platform_user:
     if not platform_user:
         return
     child_bot_id = int(callback.data.split(":")[1])
-    owner_id = platform_user["user_id"]
+    owner_id = await resolve_owner_id(platform_user["user_id"], child_bot_id)
+    if owner_id is None:
+        await callback.answer("Нет доступа", show_alert=True)
+        return
     from aiogram import Bot as AioBot
     from services.security import decrypt_token
     bot_row = await db.fetchrow(
@@ -1824,7 +1852,10 @@ async def on_bs_req_decline_all(callback: CallbackQuery, bot: Bot, platform_user
     if not platform_user:
         return
     child_bot_id = int(callback.data.split(":")[1])
-    owner_id = platform_user["user_id"]
+    owner_id = await resolve_owner_id(platform_user["user_id"], child_bot_id)
+    if owner_id is None:
+        await callback.answer("Нет доступа", show_alert=True)
+        return
     from aiogram import Bot as AioBot
     from services.security import decrypt_token
     bot_row = await db.fetchrow(
@@ -1861,7 +1892,10 @@ async def on_bs_messages(callback: CallbackQuery, platform_user: dict | None):
     if not platform_user:
         return
     child_bot_id = int(callback.data.split(":")[1])
-    owner_id = platform_user["user_id"]
+    owner_id = await resolve_owner_id(platform_user["user_id"], child_bot_id)
+    if owner_id is None:
+        await callback.answer("Нет доступа", show_alert=True)
+        return
     chats = await db.fetch(
         "SELECT chat_id, chat_title FROM bot_chats WHERE child_bot_id=$1 AND owner_id=$2 AND is_active=true",
         child_bot_id, owner_id,
@@ -1886,7 +1920,10 @@ async def on_bs_welcome(callback: CallbackQuery, state: FSMContext, platform_use
     if not platform_user:
         return
     child_bot_id = int(callback.data.split(":")[1])
-    owner_id = platform_user["user_id"]
+    owner_id = await resolve_owner_id(platform_user["user_id"], child_bot_id)
+    if owner_id is None:
+        await callback.answer("Нет доступа", show_alert=True)
+        return
     ch = await _get_bot_first_chat(owner_id, child_bot_id)
     current = f"\n\nТекущий текст:\n<i>{ch['welcome_text'][:200]}</i>" if ch and ch.get("welcome_text") else ""
     await state.set_state(SettingsFSM.waiting_for_welcome_text)
@@ -1908,9 +1945,13 @@ async def on_bs_welcome_del(callback: CallbackQuery, platform_user: dict | None)
     if not platform_user:
         return
     child_bot_id = int(callback.data.split(":")[1])
+    owner_id = await resolve_owner_id(platform_user["user_id"], child_bot_id)
+    if owner_id is None:
+        await callback.answer("Нет доступа", show_alert=True)
+        return
     await db.execute(
         "UPDATE bot_chats SET welcome_text=NULL WHERE child_bot_id=$1 AND owner_id=$2",
-        child_bot_id, platform_user["user_id"])
+        child_bot_id, owner_id)
     await callback.answer("✅ Приветствие удалено")
     callback.data = f"bs_messages:{child_bot_id}"
     await on_bs_messages(callback, platform_user)
@@ -1921,7 +1962,10 @@ async def on_bs_farewell(callback: CallbackQuery, state: FSMContext, platform_us
     if not platform_user:
         return
     child_bot_id = int(callback.data.split(":")[1])
-    owner_id = platform_user["user_id"]
+    owner_id = await resolve_owner_id(platform_user["user_id"], child_bot_id)
+    if owner_id is None:
+        await callback.answer("Нет доступа", show_alert=True)
+        return
     await state.set_state(SettingsFSM.waiting_for_farewell_text)
     await state.update_data(child_bot_id=child_bot_id, owner_id=owner_id, mode="bot")
     await callback.message.edit_text(
@@ -1940,9 +1984,13 @@ async def on_bs_farewell_del(callback: CallbackQuery, platform_user: dict | None
     if not platform_user:
         return
     child_bot_id = int(callback.data.split(":")[1])
+    owner_id = await resolve_owner_id(platform_user["user_id"], child_bot_id)
+    if owner_id is None:
+        await callback.answer("Нет доступа", show_alert=True)
+        return
     await db.execute(
         "UPDATE bot_chats SET farewell_text=NULL WHERE child_bot_id=$1 AND owner_id=$2",
-        child_bot_id, platform_user["user_id"])
+        child_bot_id, owner_id)
     await callback.answer("✅ Прощание удалено")
     callback.data = f"bs_messages:{child_bot_id}"
     await on_bs_messages(callback, platform_user)
@@ -1950,7 +1998,10 @@ async def on_bs_farewell_del(callback: CallbackQuery, platform_user: dict | None
 
 # ── Защита ────────────────────────────────────────────────────
 async def _show_bs_protection(callback: CallbackQuery, platform_user: dict, child_bot_id: int):
-    owner_id = platform_user["user_id"]
+    owner_id = await resolve_owner_id(platform_user["user_id"], child_bot_id)
+    if owner_id is None:
+        await callback.answer("Нет доступа", show_alert=True)
+        return
     ch = await _get_bot_first_chat(owner_id, child_bot_id)
     if not ch:
         await callback.answer("Нет активных площадок", show_alert=True)
@@ -1988,7 +2039,11 @@ async def on_bs_limits(callback: CallbackQuery, platform_user: dict | None):
     if not platform_user:
         return
     child_bot_id = int(callback.data.split(":")[1])
-    await _show_bs_limits(callback, child_bot_id, platform_user["user_id"])
+    owner_id = await resolve_owner_id(platform_user["user_id"], child_bot_id)
+    if owner_id is None:
+        await callback.answer("Нет доступа", show_alert=True)
+        return
+    await _show_bs_limits(callback, child_bot_id, owner_id)
 
 
 async def _show_bs_limits(callback: CallbackQuery, child_bot_id: int, owner_id: int):
@@ -3527,7 +3582,10 @@ async def on_bs_tz_set(callback: CallbackQuery, platform_user: dict | None):
 # ── Рассылка / Ссылки / Обратная связь — выбор канала ────────
 async def _bs_channel_picker(callback: CallbackQuery, platform_user: dict,
                              child_bot_id: int, section: str, title: str):
-    owner_id = platform_user["user_id"]
+    owner_id = await resolve_owner_id(platform_user["user_id"], child_bot_id)
+    if owner_id is None:
+        await callback.answer("Нет доступа", show_alert=True)
+        return
     chats = await db.fetch(
         "SELECT chat_id, chat_title FROM bot_chats WHERE child_bot_id=$1 AND owner_id=$2 AND is_active=true",
         child_bot_id, owner_id)
@@ -3552,7 +3610,16 @@ async def on_bs_mailing(callback: CallbackQuery, platform_user: dict | None):
     if not platform_user:
         return
     child_bot_id = int(callback.data.split(":")[1])
-    tariff = platform_user["tariff"]
+
+    # Проверяем тариф реального владельца бота (не admin'а)
+    owner_id = await resolve_owner_id(platform_user["user_id"], child_bot_id)
+    if owner_id is None:
+        await callback.answer("Нет доступа", show_alert=True)
+        return
+    owner_row = await db.fetchrow(
+        "SELECT tariff FROM platform_users WHERE user_id=$1", owner_id
+    )
+    tariff = owner_row["tariff"] if owner_row else "free"
     if tariff == "free":
         await callback.answer("Рассылка доступна с тарифа Старт.", show_alert=True)
         return

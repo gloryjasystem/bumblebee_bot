@@ -54,8 +54,16 @@ def _feedback_text() -> str:
 # Бот-уровневый экран (вызывается из bs_feedback без picker-а)
 # ══════════════════════════════════════════════════════════════
 async def show_bot_feedback(callback: CallbackQuery, platform_user: dict, child_bot_id: int):
+    # Ищем бот через реального owner (поддерживаем admin-доступ)
     bot_row = await db.fetchrow(
-        "SELECT * FROM child_bots WHERE id=$1 AND owner_id=$2",
+        """SELECT cb.* FROM child_bots cb
+           WHERE cb.id=$1 AND (
+               cb.owner_id=$2
+               OR EXISTS (
+                   SELECT 1 FROM team_members tm
+                   WHERE tm.child_bot_id=cb.id AND tm.user_id=$2 AND tm.is_active=true
+               )
+           )""",
         child_bot_id, platform_user["user_id"],
     )
     if not bot_row:
@@ -89,14 +97,21 @@ async def on_bsf_toggle(callback: CallbackQuery, platform_user: dict | None):
     if not platform_user:
         return
     bot_id = int(callback.data.split(":")[1])
+    # Ищем через реального owner (admin-доступ)
     row = await db.fetchrow(
-        "SELECT feedback_enabled FROM child_bots WHERE id=$1 AND owner_id=$2",
+        """SELECT cb.feedback_enabled, cb.owner_id FROM child_bots cb
+           WHERE cb.id=$1 AND (
+               cb.owner_id=$2
+               OR EXISTS (SELECT 1 FROM team_members tm
+                          WHERE tm.child_bot_id=cb.id AND tm.user_id=$2 AND tm.is_active=true)
+           )""",
         bot_id, platform_user["user_id"],
     )
     new_val = not (row["feedback_enabled"] if row else False)
+    real_owner = row["owner_id"] if row else platform_user["user_id"]
     await db.execute(
         "UPDATE child_bots SET feedback_enabled=$1 WHERE id=$2 AND owner_id=$3",
-        new_val, bot_id, platform_user["user_id"],
+        new_val, bot_id, real_owner,
     )
     await callback.answer("✅ Включена" if new_val else "❌ Выключена")
     await show_bot_feedback(callback, platform_user, bot_id)
@@ -108,14 +123,20 @@ async def on_bsf_target(callback: CallbackQuery, platform_user: dict | None):
         return
     bot_id = int(callback.data.split(":")[1])
     row = await db.fetchrow(
-        "SELECT feedback_target FROM child_bots WHERE id=$1 AND owner_id=$2",
+        """SELECT cb.feedback_target, cb.owner_id FROM child_bots cb
+           WHERE cb.id=$1 AND (
+               cb.owner_id=$2
+               OR EXISTS (SELECT 1 FROM team_members tm
+                          WHERE tm.child_bot_id=cb.id AND tm.user_id=$2 AND tm.is_active=true)
+           )""",
         bot_id, platform_user["user_id"],
     )
     current = row["feedback_target"] if row else "owner"
     new_target = "all" if current == "owner" else "owner"
+    real_owner = row["owner_id"] if row else platform_user["user_id"]
     await db.execute(
         "UPDATE child_bots SET feedback_target=$1 WHERE id=$2 AND owner_id=$3",
-        new_target, bot_id, platform_user["user_id"],
+        new_target, bot_id, real_owner,
     )
     await callback.answer("→ Всем администраторам" if new_target == "all" else "→ Создателю")
     await show_bot_feedback(callback, platform_user, bot_id)
@@ -128,9 +149,20 @@ async def on_bsf_lang(callback: CallbackQuery, platform_user: dict | None):
     parts  = callback.data.split(":")
     bot_id = int(parts[1])
     lang   = parts[2]
+    # Находим реального owner (admin-доступ)
+    row = await db.fetchrow(
+        """SELECT cb.owner_id FROM child_bots cb
+           WHERE cb.id=$1 AND (
+               cb.owner_id=$2
+               OR EXISTS (SELECT 1 FROM team_members tm
+                          WHERE tm.child_bot_id=cb.id AND tm.user_id=$2 AND tm.is_active=true)
+           )""",
+        bot_id, platform_user["user_id"],
+    )
+    real_owner = row["owner_id"] if row else platform_user["user_id"]
     await db.execute(
         "UPDATE child_bots SET feedback_lang=$1 WHERE id=$2 AND owner_id=$3",
-        lang, bot_id, platform_user["user_id"],
+        lang, bot_id, real_owner,
     )
     await callback.answer(f"Язык: {lang.upper()}")
     await show_bot_feedback(callback, platform_user, bot_id)

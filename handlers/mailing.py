@@ -202,7 +202,8 @@ async def on_mass_mailing_text(message: Message, state: FSMContext):
         media_type = "video"
     elif message.document:
         media_file_id = message.document.file_id
-        media_type = "document"
+        mime = (message.document.mime_type or "").lower()
+        media_type = "photo" if mime.startswith("image/") else "document"
 
     if not text and not media_file_id:
         await message.answer("⚠️ Отправьте текст или медиа.")
@@ -390,6 +391,8 @@ async def _show_draft(callback: CallbackQuery, m: dict):
     media_type  = m.get("media_type")
     media_below = bool(m.get("media_below", False))
     tg_chat_id  = callback.message.chat.id
+    # show_caption_above_media поддерживается только для фото/видео
+    supports_above = media_type in ("photo", "video")
 
     prev_echo = _draft_echo_ids.get(mid)
 
@@ -399,13 +402,15 @@ async def _show_draft(callback: CallbackQuery, m: dict):
         try:
             if media:
                 # Медиа-сообщение — редактируем caption
-                await callback.bot.edit_message_caption(
+                edit_kwargs: dict = dict(
                     chat_id=echo_chat_id,
                     message_id=echo_msg_id,
                     caption=text or None,
                     parse_mode="HTML",
-                    show_caption_above_media=(not media_below),
                 )
+                if supports_above:
+                    edit_kwargs["show_caption_above_media"] = (not media_below)
+                await callback.bot.edit_message_caption(**edit_kwargs)
             else:
                 # Текстовое сообщение — редактируем текст
                 await callback.bot.edit_message_text(
@@ -437,8 +442,8 @@ async def _show_draft(callback: CallbackQuery, m: dict):
     }
     sent_echo = None
 
-    if media and not media_below:
-        # ⬆ — текст сверху, фото/видео снизу
+    if media and not media_below and supports_above:
+        # ⬆ — текст сверху, фото/видео снизу (только для photo/video)
         send_fn = _send_fn_map.get(media_type, callback.message.answer_photo)
         sent_echo = await send_fn(
             media,
@@ -447,7 +452,7 @@ async def _show_draft(callback: CallbackQuery, m: dict):
             show_caption_above_media=True,
         )
     elif media:
-        # ⬇ — стандарт: фото/видео сверху, текст капшоном снизу
+        # ⬇ — стандарт: медиа сверху, текст капшоном снизу
         send_fn = _send_fn_map.get(media_type, callback.message.answer_photo)
         sent_echo = await send_fn(media, caption=text or None, parse_mode="HTML")
     else:
@@ -729,7 +734,12 @@ async def on_mailing_text(message: Message, state: FSMContext):
         media_type = "video"
     elif message.document:
         media_file_id = message.document.file_id
-        media_type = "document"
+        # Если документ является изображением — обрабатываем как фото
+        mime = (message.document.mime_type or "").lower()
+        if mime.startswith("image/"):
+            media_type = "photo"
+        else:
+            media_type = "document"
 
     if not text and not media_file_id:
         await message.answer("⚠️ Пожалуйста, отправьте текст или медиа.")

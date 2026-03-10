@@ -241,25 +241,42 @@ async def on_bot_settings(callback: CallbackQuery, platform_user: dict | None):
         f"🔴 Мёртвые ≈ {dead_users}"
     )
 
-    # Для admin — только рабочие кнопки (как на скриншоте), без Управления и Удалить
-    keyboard = [
-        [InlineKeyboardButton(text="✅ Обработка заявок",  callback_data=f"bs_requests:{child_bot_id}")],
-        [
-            InlineKeyboardButton(text="💬 Сообщения",      callback_data=f"bs_messages:{child_bot_id}"),
-            InlineKeyboardButton(text="📨 Рассылка",       callback_data=f"bs_mailing:{child_bot_id}"),
-        ],
-        [
-            InlineKeyboardButton(text="🔗 Ссылки",         callback_data=f"bs_links:{child_bot_id}"),
-            InlineKeyboardButton(text="📍 Площадки",       callback_data=f"bot_chats_list:{child_bot_id}"),
-        ],
-        [InlineKeyboardButton(text="🛡 Защита",            callback_data=f"bs_protection:{child_bot_id}")],
-        [InlineKeyboardButton(text="📣 Обратная связь",    callback_data=f"bs_feedback:{child_bot_id}")],
-    ]
     if is_owner:
-        # Только владелец видит Управление и Удалить бот
-        keyboard.insert(4, [InlineKeyboardButton(text="⚙️ Управление", callback_data=f"bs_settings:{child_bot_id}")])
-        keyboard.append([InlineKeyboardButton(text="🗑 Удалить бот", callback_data=f"bot_delete:{child_bot_id}")])
-    keyboard.append([InlineKeyboardButton(text="◀️ Назад", callback_data="menu:channels")])
+        # Владелец: Защита + Управление в одной строке, плюс Удалить бот
+        keyboard = [
+            [InlineKeyboardButton(text="✅ Обработка заявок",  callback_data=f"bs_requests:{child_bot_id}")],
+            [
+                InlineKeyboardButton(text="💬 Сообщения",      callback_data=f"bs_messages:{child_bot_id}"),
+                InlineKeyboardButton(text="📨 Рассылка",       callback_data=f"bs_mailing:{child_bot_id}"),
+            ],
+            [
+                InlineKeyboardButton(text="🔗 Ссылки",         callback_data=f"bs_links:{child_bot_id}"),
+                InlineKeyboardButton(text="📍 Площадки",       callback_data=f"bot_chats_list:{child_bot_id}"),
+            ],
+            [
+                InlineKeyboardButton(text="🛡 Защита",         callback_data=f"bs_protection:{child_bot_id}"),
+                InlineKeyboardButton(text="⚙️ Управление",     callback_data=f"bs_settings:{child_bot_id}"),
+            ],
+            [InlineKeyboardButton(text="📣 Обратная связь",    callback_data=f"bs_feedback:{child_bot_id}")],
+            [InlineKeyboardButton(text="🗑 Удалить бот",       callback_data=f"bot_delete:{child_bot_id}")],
+            [InlineKeyboardButton(text="◀️ Назад",             callback_data="menu:channels")],
+        ]
+    else:
+        # Admin: без Управления и Удалить бот, Защита — отдельной строкой
+        keyboard = [
+            [InlineKeyboardButton(text="✅ Обработка заявок",  callback_data=f"bs_requests:{child_bot_id}")],
+            [
+                InlineKeyboardButton(text="💬 Сообщения",      callback_data=f"bs_messages:{child_bot_id}"),
+                InlineKeyboardButton(text="📨 Рассылка",       callback_data=f"bs_mailing:{child_bot_id}"),
+            ],
+            [
+                InlineKeyboardButton(text="🔗 Ссылки",         callback_data=f"bs_links:{child_bot_id}"),
+                InlineKeyboardButton(text="📍 Площадки",       callback_data=f"bot_chats_list:{child_bot_id}"),
+            ],
+            [InlineKeyboardButton(text="🛡 Защита",            callback_data=f"bs_protection:{child_bot_id}")],
+            [InlineKeyboardButton(text="📣 Обратная связь",    callback_data=f"bs_feedback:{child_bot_id}")],
+            [InlineKeyboardButton(text="◀️ Назад",             callback_data="menu:channels")],
+        ]
     await callback.message.edit_text(
         text,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard),

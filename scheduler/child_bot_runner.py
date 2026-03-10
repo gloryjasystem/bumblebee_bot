@@ -345,35 +345,77 @@ async def _handle_captcha_callback(bot: Bot, callback):
             elif data.startswith("captcha:"):
                 await on_captcha_passed(callback, bot)
             elif data.startswith("fbr_more:"):
-                # Админ нажал «Написать ещё» — возвращаем в режим ожидания ответа
-                parts = data.split(":")
+                # Редактируем то же сообщение в «режим ввода»
+                parts             = data.split(":")
                 fb_child_bot_id   = int(parts[1])
                 fb_target_user_id = int(parts[2])
                 fb_owner_id       = int(parts[3])
                 admin_id          = callback.from_user.id
-                # Убираем кнопку из предыдущего сообщения
-                try:
-                    await callback.message.edit_reply_markup(reply_markup=None)
-                except Exception:
-                    pass
-                # Ставим админа в режим ожидания ответа
+                work_msg_id       = callback.message.message_id
+                urow = await db.fetchrow(
+                    "SELECT first_name, username FROM bot_users WHERE user_id=$1 LIMIT 1",
+                    fb_target_user_id,
+                )
+                if urow:
+                    tname  = urow["first_name"] or "Пользователь"
+                    tuname = f"@{urow['username']}" if urow["username"] else ""
+                else:
+                    tname, tuname = "Пользователь", ""
+                ndisplay = f"{tname} ({tuname})" if tuname else tname
                 _reply_states[(fb_child_bot_id, admin_id)] = {
-                    "target_user_id":  fb_target_user_id,
-                    "target_name":     "пользователю",
-                    "target_username": "",
+                    "target_user_id":      fb_target_user_id,
+                    "target_name":         tname,
+                    "target_username":     tuname,
                     "notification_msg_id": None,
+                    "work_msg_id":         work_msg_id,
+                    "owner_id":            fb_owner_id,
                 }
                 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-                await bot.send_message(
-                    admin_id,
-                    "✍️ <b>Напишите следующее сообщение</b> — оно будет отправлено пользователю.\n\n"
-                    "Для отмены напишите /cancel",
+                cancel_kb = InlineKeyboardMarkup(inline_keyboard=[[
+                    InlineKeyboardButton(
+                        text="❌ Отмена",
+                        callback_data=f"fbr_cancel:{fb_child_bot_id}:{fb_target_user_id}:{fb_owner_id}",
+                    )
+                ]])
+                await callback.message.edit_text(
+                    f"✉️ <b>Напишите ответ для {ndisplay}:</b>\n\n"
+                    "Следующее сообщение, которое вы напишете в этот бот, будет отправлено пользователю.\n"
+                    "Для отмены — нажмите кнопку ниже или /cancel",
                     parse_mode="HTML",
-                    reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
-                        InlineKeyboardButton(text="❌ Отмена", callback_data="fb_cancel_reply"),
-                    ]]),
+                    reply_markup=cancel_kb,
                 )
                 await callback.answer("✍️ Напишите следующее 👇")
+            elif data.startswith("fbr_cancel:"):
+                # Редактируем сообщение обратно в «успех»
+                parts             = data.split(":")
+                fb_child_bot_id   = int(parts[1])
+                fb_target_user_id = int(parts[2])
+                fb_owner_id       = int(parts[3])
+                admin_id          = callback.from_user.id
+                _reply_states.pop((fb_child_bot_id, admin_id), None)
+                urow = await db.fetchrow(
+                    "SELECT first_name, username FROM bot_users WHERE user_id=$1 LIMIT 1",
+                    fb_target_user_id,
+                )
+                if urow:
+                    tname  = urow["first_name"] or "Пользователь"
+                    tuname = f"@{urow['username']}" if urow["username"] else ""
+                else:
+                    tname, tuname = "Пользователь", ""
+                ndisplay = f"{tname} ({tuname})" if tuname else tname
+                from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+                more_kb = InlineKeyboardMarkup(inline_keyboard=[[
+                    InlineKeyboardButton(
+                        text="💬 Написать ещё",
+                        callback_data=f"fbr_more:{fb_child_bot_id}:{fb_target_user_id}:{fb_owner_id}",
+                    )
+                ]])
+                await callback.message.edit_text(
+                    f"✅ Ответ успешно отправлен пользователю <b>{ndisplay}</b>.",
+                    parse_mode="HTML",
+                    reply_markup=more_kb,
+                )
+                await callback.answer("❌ Отменено")
         except Exception as e:
             logger.error(f"Captcha callback error: {e}")
             try:
@@ -474,7 +516,32 @@ async def _handle_message(bot: Bot, child_bot_id: int, owner_id: int, message):
 
         # /cancel — отмена ответа
         if text.strip() == "/cancel":
-            await bot.send_message(user.id, "❌ Ответ отменён.")
+            work_msg_id_c  = state.get("work_msg_id")
+            owner_id_c     = state.get("owner_id", 0)
+            tv_user_id     = state["target_user_id"]
+            tname_c        = state.get("target_name", "Пользователь")
+            tuname_c       = state.get("target_username", "")
+            ndisplay_c     = f"{tname_c} ({tuname_c})" if tuname_c else tname_c
+            from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+            more_kb_c = InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(
+                    text="💬 Написать ещё",
+                    callback_data=f"fbr_more:{child_bot_id}:{tv_user_id}:{owner_id_c}",
+                )
+            ]])
+            if work_msg_id_c:
+                try:
+                    await bot.edit_message_text(
+                        f"✅ Ответ успешно отправлен пользователю <b>{ndisplay_c}</b>.",
+                        chat_id=user.id,
+                        message_id=work_msg_id_c,
+                        parse_mode="HTML",
+                        reply_markup=more_kb_c,
+                    )
+                except Exception:
+                    await bot.send_message(user.id, "❌ Ответ отменён.")
+            else:
+                await bot.send_message(user.id, "❌ Ответ отменён.")
             return
 
         target_user_id  = state["target_user_id"]
@@ -484,14 +551,8 @@ async def _handle_message(bot: Bot, child_bot_id: int, owner_id: int, message):
         name_display    = f"{target_name} ({target_username})" if target_username else target_name
         admin_user_id   = user.id
 
-        # Кнопка «✉️ Ответить» для пользователя (чтобы он тоже мог ответить)
-        from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-        user_reply_kb = InlineKeyboardMarkup(inline_keyboard=[[
-            InlineKeyboardButton(
-                text="✉️ Ответить",
-                callback_data=f"ufb_reply:{child_bot_id}:{admin_user_id}:{owner_id}",
-            )
-        ]])
+        work_msg_id   = state.get("work_msg_id")
+        owner_id_4btn = state.get("owner_id", 0)
 
         try:
             # Отправляем ответ пользователю через тот же дочерний бот с заголовком
@@ -557,20 +618,37 @@ async def _handle_message(bot: Bot, child_bot_id: int, owner_id: int, message):
                 except Exception:
                     pass
 
-            # Уведомляем администратора об успешной отправке с кнопкой «Написать ещё»
+            # Редактируем «рабочее» сообщение обратно в «успех + Написать ещё»
             from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
             more_kb = InlineKeyboardMarkup(inline_keyboard=[[
                 InlineKeyboardButton(
                     text="💬 Написать ещё",
-                    callback_data=f"fbr_more:{child_bot_id}:{target_user_id}:{owner_id}",
+                    callback_data=f"fbr_more:{child_bot_id}:{target_user_id}:{owner_id_4btn}",
                 )
             ]])
-            await bot.send_message(
-                user.id,
-                f"✅ Ответ успешно отправлен пользователю <b>{name_display}</b>.",
-                parse_mode="HTML",
-                reply_markup=more_kb,
-            )
+            if work_msg_id:
+                try:
+                    await bot.edit_message_text(
+                        f"✅ Ответ успешно отправлен пользователю <b>{name_display}</b>.",
+                        chat_id=user.id,
+                        message_id=work_msg_id,
+                        parse_mode="HTML",
+                        reply_markup=more_kb,
+                    )
+                except Exception:
+                    await bot.send_message(
+                        user.id,
+                        f"✅ Ответ успешно отправлен пользователю <b>{name_display}</b>.",
+                        parse_mode="HTML",
+                        reply_markup=more_kb,
+                    )
+            else:
+                await bot.send_message(
+                    user.id,
+                    f"✅ Ответ успешно отправлен пользователю <b>{name_display}</b>.",
+                    parse_mode="HTML",
+                    reply_markup=more_kb,
+                )
             # Обновляем уведомление «Ожидаем ответ» → «Ответ отправлен»
             if notification_id:
                 try:

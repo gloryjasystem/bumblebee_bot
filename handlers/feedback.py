@@ -570,17 +570,33 @@ async def on_feedback_reply_text(message: Message, state: FSMContext):
 
         logger.info(f"[FEEDBACK REPLY] Sent reply to user {target_user_id} via bot {child_bot_id}")
 
-        # Редактируем промпт-сообщение — показываем успех + кнопка «Написать ещё»
+        # Редактируем «рабочее» сообщение обратно в «успех + Написать ещё»
+        work_msg_id = data.get("work_msg_id")
         more_kb = InlineKeyboardMarkup(inline_keyboard=[[
             InlineKeyboardButton(
                 text="💬 Написать ещё",
                 callback_data=f"fbr_more:{child_bot_id}:{target_user_id}:{owner_id_fb}",
             )
         ]])
-        if prompt_msg_id:
+        success_text = f"✅ Ответ успешно отправлен пользователю <b>{name_display}</b>."
+        if work_msg_id:
+            # Редактируем рабочее сообщение (fbr_more-поток)
             try:
                 await message.bot.edit_message_text(
-                    f"✅ Ответ успешно отправлен пользователю <b>{name_display}</b>.",
+                    success_text,
+                    chat_id=message.chat.id,
+                    message_id=work_msg_id,
+                    parse_mode="HTML",
+                    reply_markup=more_kb,
+                )
+            except Exception as edit_err:
+                logger.debug(f"[FEEDBACK REPLY] Could not edit work_msg: {edit_err}")
+                await message.answer(success_text, parse_mode="HTML", reply_markup=more_kb)
+        elif prompt_msg_id:
+            # Редактируем промпт-сообщение (первый ответ через FSM)
+            try:
+                await message.bot.edit_message_text(
+                    success_text,
                     chat_id=message.chat.id,
                     message_id=prompt_msg_id,
                     parse_mode="HTML",
@@ -588,11 +604,9 @@ async def on_feedback_reply_text(message: Message, state: FSMContext):
                 )
             except Exception as edit_err:
                 logger.debug(f"[FEEDBACK REPLY] Could not edit prompt msg: {edit_err}")
-                await message.answer(
-                    f"✅ Ответ успешно отправлен <b>{name_display}</b>.",
-                    parse_mode="HTML",
-                    reply_markup=more_kb,
-                )
+                await message.answer(success_text, parse_mode="HTML", reply_markup=more_kb)
+        else:
+            await message.answer(success_text, parse_mode="HTML", reply_markup=more_kb)
 
         # Обновляем верхнее уведомление — "Ожидаем ответ" → "Ответ отправлен"
         if notification_msg_id:
@@ -619,19 +633,13 @@ async def on_feedback_reply_text(message: Message, state: FSMContext):
 
 @router.callback_query(F.data.startswith("fbr_more:"))
 async def on_fbr_more(callback: CallbackQuery, state: FSMContext):
-    """Администратор нажал «Написать ещё» — возвращаем в режим ожидания ответа (main-bot путь)."""
+    """Редактируем сообщение в режим ввода (main-bot путь)."""
     parts          = callback.data.split(":")
     child_bot_id   = int(parts[1])
     target_user_id = int(parts[2])
     owner_id_fb    = int(parts[3])
+    work_msg_id    = callback.message.message_id  # редактируем то же сообщение
 
-    # Убираем кнопку
-    try:
-        await callback.message.edit_reply_markup(reply_markup=None)
-    except Exception:
-        pass
-
-    # Ищем имя пользователя в БД
     row = await db.fetchrow(
         "SELECT first_name, username FROM bot_users WHERE user_id=$1 LIMIT 1",
         target_user_id,
@@ -643,14 +651,19 @@ async def on_fbr_more(callback: CallbackQuery, state: FSMContext):
         target_name, target_username = "Пользователь", ""
     name_display = f"{target_name} ({target_username})" if target_username else target_name
 
-    # Промпт
-    prompt_msg = await callback.message.answer(
-        f"✍️ <b>Напишите следующее сообщение для {name_display}:</b>\n\n"
-        "Для отмены нажмите /cancel",
+    # Редактируем то же сообщение → «режим ввода»
+    cancel_kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(
+            text="❌ Отмена",
+            callback_data=f"fbr_cancel:{child_bot_id}:{target_user_id}:{owner_id_fb}",
+        )
+    ]])
+    await callback.message.edit_text(
+        f"✉️ <b>Напишите ответ для {name_display}:</b>\n\n"
+        "Следующее сообщение, которое вы напишете сюда, будет отправлено пользователю.\n"
+        "Для отмены — нажмите кнопку ниже или /cancel",
         parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
-            InlineKeyboardButton(text="❌ Отмена", callback_data="fb_cancel_reply"),
-        ]]),
+        reply_markup=cancel_kb,
     )
     await state.set_state(FeedbackFSM.waiting_for_reply)
     await state.update_data(
@@ -660,6 +673,38 @@ async def on_fbr_more(callback: CallbackQuery, state: FSMContext):
         target_username=row["username"] if row and row["username"] else "",
         notification_msg_id=None,
         owner_id=owner_id_fb,
-        prompt_msg_id=prompt_msg.message_id,
+        work_msg_id=work_msg_id,
+        prompt_msg_id=None,
     )
     await callback.answer("✍️ Напишите следующее 👇")
+
+
+@router.callback_query(F.data.startswith("fbr_cancel:"))
+async def on_fbr_cancel(callback: CallbackQuery, state: FSMContext):
+    """Отмена «Написать ещё» — редактируем сообщение обратно в «успех»."""
+    parts          = callback.data.split(":")
+    child_bot_id   = int(parts[1])
+    target_user_id = int(parts[2])
+    owner_id_fb    = int(parts[3])
+
+    data = await state.get_data()
+    tname  = data.get("target_name", "Пользователь")
+    tuname = data.get("target_username", "")
+    ndisplay = f"{tname} ({tuname})" if tuname else tname
+    await state.clear()
+
+    more_kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(
+            text="💬 Написать ещё",
+            callback_data=f"fbr_more:{child_bot_id}:{target_user_id}:{owner_id_fb}",
+        )
+    ]])
+    try:
+        await callback.message.edit_text(
+            f"✅ Ответ успешно отправлен пользователю <b>{ndisplay}</b>.",
+            parse_mode="HTML",
+            reply_markup=more_kb,
+        )
+    except Exception:
+        pass
+    await callback.answer("❌ Отменено")

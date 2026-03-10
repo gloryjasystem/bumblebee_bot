@@ -3,6 +3,7 @@ handlers/blacklist.py — UI управления чёрным списком.
 """
 from aiogram import Router, F, Bot
 from aiogram.types import CallbackQuery, Message, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 import asyncio
@@ -136,7 +137,7 @@ async def on_bl_upload(callback: CallbackQuery, platform_user: dict | None):
     await callback.answer()
 
 
-@router.message(F.document)
+@router.message(F.document, StateFilter(None))
 async def on_bl_file_upload(message: Message, bot: Bot, platform_user: dict | None):
     if not platform_user:
         return
@@ -402,7 +403,10 @@ async def on_bl_ban_all(callback: CallbackQuery, platform_user: dict | None):
 # ЧС бот-уровень: обработка загружаемых файлов (add / del)
 # ══════════════════════════════════════════════════════════════
 
-@router.message(F.document)
+@router.message(F.document, StateFilter(
+    "SettingsFSM:bs_bl_waiting_add_file",
+    "SettingsFSM:bs_bl_waiting_del_file",
+))
 async def on_bs_bl_file(message: Message, bot: Bot, state: FSMContext,
                         platform_user: dict | None):
     """Обрабатывает TXT/CSV файлы в состояниях bs_bl_waiting_add_file / bs_bl_waiting_del_file."""

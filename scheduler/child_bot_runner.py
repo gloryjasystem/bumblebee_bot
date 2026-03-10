@@ -558,66 +558,56 @@ async def _handle_message(bot: Bot, child_bot_id: int, owner_id: int, message):
         try:
             # Отправляем ответ пользователю через тот же дочерний бот с заголовком
             header = "💬 <b>Ответ от поддержки</b>\n\n"
-            # Текст подсказки для пользователя «как ответить»
-            hint_text = (
-                "↩️ <b>Чтобы ответить:</b>\n\n"
-                "📱 <b>Телефон</b> — свайпните влево по сообщению выше\n"
-                "👆 Или зажмите его → «Ответить»\n"
-                "🖥 <b>ПК</b> — правой кнопкой мыши → «Ответить»"
-            )
+            reply_hint = "\n\n──────────────────\n💌 <i>Отправьте своё сообщение</i> 👇"
             sent_msg = None
             if message.text:
                 sent_msg = await bot.send_message(
                     target_user_id,
-                    header + message.text,
+                    header + message.text + reply_hint,
                     parse_mode="HTML",
                 )
             elif message.photo:
+                caption_text = (header + (message.caption or "")) + reply_hint
                 sent_msg = await bot.send_photo(
                     target_user_id, message.photo[-1].file_id,
-                    caption=(header + (message.caption or "")),
+                    caption=caption_text,
                     parse_mode="HTML",
                 )
             elif message.video:
+                caption_text = (header + (message.caption or "")) + reply_hint
                 sent_msg = await bot.send_video(
                     target_user_id, message.video.file_id,
-                    caption=(header + (message.caption or "")),
+                    caption=caption_text,
                     parse_mode="HTML",
                 )
             elif message.document:
+                caption_text = (header + (message.caption or "")) + reply_hint
                 sent_msg = await bot.send_document(
                     target_user_id, message.document.file_id,
-                    caption=(header + (message.caption or "")),
+                    caption=caption_text,
                     parse_mode="HTML",
                 )
             elif message.voice:
                 sent_msg = await bot.send_voice(target_user_id, message.voice.file_id)
             elif message.audio:
+                caption_text = (header + (message.caption or "")) + reply_hint
                 sent_msg = await bot.send_audio(
                     target_user_id, message.audio.file_id,
-                    caption=(header + (message.caption or "")),
+                    caption=caption_text,
                     parse_mode="HTML",
                 )
             elif message.sticker:
-                await bot.send_message(target_user_id, header.strip(), parse_mode="HTML")
+                await bot.send_message(
+                    target_user_id,
+                    header.strip() + reply_hint,
+                    parse_mode="HTML",
+                )
                 sent_msg = await bot.send_sticker(target_user_id, message.sticker.file_id)
             elif message.video_note:
                 sent_msg = await bot.send_video_note(target_user_id, message.video_note.file_id)
             else:
                 await bot.send_message(user.id, "⚠️ Такой тип сообщения не поддерживается.")
                 return
-
-            # Подсказка как ответить — отправляем как цитату сообщения админа
-            if sent_msg:
-                try:
-                    await bot.send_message(
-                        target_user_id,
-                        hint_text,
-                        parse_mode="HTML",
-                        reply_to_message_id=sent_msg.message_id,
-                    )
-                except Exception:
-                    pass
 
             # 1. Редактируем промпт-сообщение — простое подтверждение без кнопки
             from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -740,6 +730,16 @@ async def _handle_message(bot: Bot, child_bot_id: int, owner_id: int, message):
                 )
             if sent_owners:
                 logger.info(f"[FEEDBACK] Forwarded msg from user {user.id} to {len(sent_owners)} owner(s)")
+                # Подтверждение пользователю что сообщение получено
+                try:
+                    await bot.send_message(
+                        user.id,
+                        "✅ <b>Сообщение отправлено!</b>\n"
+                        "👍 Мы получили ваш запрос и скоро ответим.",
+                        parse_mode="HTML",
+                    )
+                except Exception:
+                    pass
         else:
             logger.debug(f"[FEEDBACK] No feedback-enabled chats for user {user.id}")
 

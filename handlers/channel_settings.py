@@ -3624,6 +3624,12 @@ async def on_bs_mailing(callback: CallbackQuery, platform_user: dict | None):
         await callback.answer("Рассылка доступна с тарифа Старт.", show_alert=True)
         return
 
+    # Удаляем эхо-сообщение, если возвращаемся из меню черновика
+    from handlers.mailing import _extract_mailing_id_from_keyboard, _delete_draft_echo
+    mid = _extract_mailing_id_from_keyboard(callback)
+    if mid is not None:
+        await _delete_draft_echo(callback.bot, mid)
+
     await callback.message.edit_text(
         "📨 <b>Рассылка</b>\n\nВыберите действие ⬇️",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[

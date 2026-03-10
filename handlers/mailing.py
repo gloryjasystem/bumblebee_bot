@@ -368,8 +368,22 @@ def _draft_settings_text(m: dict) -> str:
 _draft_echo_ids: dict[int, tuple[int, int]] = {}
 
 
+async def _delete_draft_echo(bot, mid: int) -> None:
+    """Удаляет эхо-сообщение черновика из чата и очищает кэш."""
+    cached = _draft_echo_ids.pop(mid, None)
+    if cached:
+        try:
+            await bot.delete_message(cached[1], cached[0])
+        except Exception:
+            pass
+
+
 async def _show_draft(callback: CallbackQuery, m: dict):
-    """Показывает Экран 4: эхо сообщения сверху + меню управления снизу."""
+    """Показывает Экран 4: эхо сообщения сверху + меню управления снизу.
+
+    При первом вызове — отправляет эхо и меню как новые сообщения.
+    При повторном вызове (тогглер) — редактирует эхо и меню на месте.
+    """
     mid         = m["id"]
     text        = m.get("text") or ""
     media       = m.get("media_file_id")
@@ -377,19 +391,45 @@ async def _show_draft(callback: CallbackQuery, m: dict):
     media_below = bool(m.get("media_below", False))
     tg_chat_id  = callback.message.chat.id
 
-    # Удаляем предыдущее эхо-сообщение (если есть) и текущее меню
-    prev_echo = _draft_echo_ids.pop(mid, None)
+    prev_echo = _draft_echo_ids.get(mid)
+
     if prev_echo:
+        # ── Редактируем существующее эхо на месте ─────────────────────
+        echo_msg_id, echo_chat_id = prev_echo
         try:
-            await callback.bot.delete_message(prev_echo[1], prev_echo[0])
+            if media:
+                # Медиа-сообщение — редактируем caption
+                await callback.bot.edit_message_caption(
+                    chat_id=echo_chat_id,
+                    message_id=echo_msg_id,
+                    caption=text or None,
+                    parse_mode="HTML",
+                    show_caption_above_media=(not media_below),
+                )
+            else:
+                # Текстовое сообщение — редактируем текст
+                await callback.bot.edit_message_text(
+                    chat_id=echo_chat_id,
+                    message_id=echo_msg_id,
+                    text=text or "(без текста)",
+                    parse_mode="HTML",
+                )
         except Exception:
             pass
-    try:
-        await callback.message.delete()
-    except Exception:
-        pass
 
-    # ── Эхо: точный предпросмотр того, что получит пользователь ──────
+        # ── Редактируем меню на месте ───────────────────────────────
+        try:
+            await callback.message.edit_text(
+                _draft_settings_text(m),
+                parse_mode="HTML",
+                reply_markup=_kb_draft(m),
+            )
+        except Exception:
+            pass
+        await callback.answer()
+        return
+
+    # ── Первый показ: отправляем эхо и меню как новые сообщения ───────
     _send_fn_map = {
         "photo":    callback.message.answer_photo,
         "video":    callback.message.answer_video,
@@ -414,7 +454,7 @@ async def _show_draft(callback: CallbackQuery, m: dict):
         if text:
             sent_echo = await callback.message.answer(text, parse_mode="HTML")
 
-    # Сохраняем echo message_id для будущего удаления
+    # Сохраняем echo message_id для будущего редактирования/удаления
     if sent_echo:
         _draft_echo_ids[mid] = (sent_echo.message_id, tg_chat_id)
 
@@ -432,6 +472,23 @@ async def _show_draft(callback: CallbackQuery, m: dict):
 # Экран 2: меню рассылки для канала (ch_mailing:{chat_id})
 # ══════════════════════════════════════════════════════════════
 
+def _extract_mailing_id_from_keyboard(callback: CallbackQuery) -> int | None:
+    """Извлекает mailing_id из inline-клавиатуры текущего сообщения.
+    Ищет кнопку с callback_data вида 'ml_toggle:{mid}:...'
+    """
+    try:
+        markup = callback.message.reply_markup
+        if not markup:
+            return None
+        for row in markup.inline_keyboard:
+            for btn in row:
+                if btn.callback_data and btn.callback_data.startswith("ml_toggle:"):
+                    return int(btn.callback_data.split(":")[1])
+    except Exception:
+        pass
+    return None
+
+
 @router.callback_query(F.data.startswith("ch_mailing:"))
 async def on_ch_mailing(callback: CallbackQuery, platform_user: dict | None):
     if not platform_user:
@@ -441,6 +498,12 @@ async def on_ch_mailing(callback: CallbackQuery, platform_user: dict | None):
         await callback.answer("Рассылка доступна с тарифа Старт.", show_alert=True)
         return
     chat_id = int(callback.data.split(":")[1])
+
+    # Удаляем эхо-сообщение, если возвращаемся из меню черновика
+    mid = _extract_mailing_id_from_keyboard(callback)
+    if mid is not None:
+        await _delete_draft_echo(callback.bot, mid)
+
     ch = await db.fetchrow(
         "SELECT chat_title FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint",
         platform_user["user_id"], chat_id,
@@ -701,15 +764,20 @@ async def on_mailing_text(message: Message, state: FSMContext):
     m = await db.fetchrow("SELECT * FROM mailings WHERE id=$1", mailing_id)
 
     # ── Эхо: предпросмотр сообщения (без кнопок)
+    sent_echo = None
     if media_file_id:
         send_fn = {
             "photo": message.answer_photo,
             "video": message.answer_video,
             "document": message.answer_document,
         }.get(media_type, message.answer_photo)
-        await send_fn(media_file_id, caption=text[:1000] or None, parse_mode="HTML")
+        sent_echo = await send_fn(media_file_id, caption=text[:1000] or None, parse_mode="HTML")
     elif text:
-        await message.answer(text[:1200], parse_mode="HTML")
+        sent_echo = await message.answer(text[:1200], parse_mode="HTML")
+
+    # Сохраняем echo message_id для последующего редактирования/удаления
+    if sent_echo:
+        _draft_echo_ids[mailing_id] = (sent_echo.message_id, message.chat.id)
 
     # ── Меню управления
     await message.answer(

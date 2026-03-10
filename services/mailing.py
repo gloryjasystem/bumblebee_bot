@@ -295,8 +295,8 @@ async def _send_message(
         disable_notification=not notify,
     )
 
-    if media_id and media_below:
-        # ⬇ — одно сообщение: текст сверху, медиа снизу
+    if media_id and not media_below:
+        # ⬆ — текст сверху, медиа снизу
         send_kwargs = dict(
             caption=text or None,
             parse_mode="HTML",
@@ -311,7 +311,7 @@ async def _send_message(
             await bot.send_document(user_id, media_id, **send_kwargs)
 
     elif media_id:
-        # ⬆ — стандарт: медиа сверху, текст caption'ом снизу
+        # ⬇ — стандарт: медиа сверху, текст caption'ом снизу
         if media_type == "photo":
             await bot.send_photo(
                 user_id, media_id,

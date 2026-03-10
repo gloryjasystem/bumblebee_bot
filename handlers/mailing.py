@@ -397,8 +397,8 @@ async def _show_draft(callback: CallbackQuery, m: dict):
     }
     sent_echo = None
 
-    if media and media_below:
-        # ⬇ — одно сообщение: текст сверху, фото/видео снизу
+    if media and not media_below:
+        # ⬆ — текст сверху, фото/видео снизу
         send_fn = _send_fn_map.get(media_type, callback.message.answer_photo)
         sent_echo = await send_fn(
             media,
@@ -407,7 +407,7 @@ async def _show_draft(callback: CallbackQuery, m: dict):
             show_caption_above_media=True,
         )
     elif media:
-        # ⬆ — стандарт: фото/видео сверху, текст капшоном снизу
+        # ⬇ — стандарт: фото/видео сверху, текст капшоном снизу
         send_fn = _send_fn_map.get(media_type, callback.message.answer_photo)
         sent_echo = await send_fn(media, caption=text or None, parse_mode="HTML")
     else:

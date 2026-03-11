@@ -899,7 +899,7 @@ async def _handle_join_request(bot: Bot, child_bot_id: int, event: ChatJoinReque
         """
         SELECT autoaccept, autoaccept_delay, welcome_text,
                captcha_type, captcha_text, captcha_timer_min, captcha_emoji_set,
-               captcha_buttons_raw,
+               captcha_buttons_raw, captcha_button_style,
                captcha_greet, captcha_accept_now, captcha_accept_all,
                filter_rtl, filter_hieroglyph, filter_no_photo,
                join_limit_enabled, join_limit_punishment,
@@ -1008,6 +1008,7 @@ async def _handle_join_request(bot: Bot, child_bot_id: int, event: ChatJoinReque
             "captcha_timer_min":        chat_settings.get("captcha_timer_min") or 1,
             "captcha_emoji_set":        chat_settings.get("captcha_emoji_set"),
             "captcha_buttons_raw":      chat_settings.get("captcha_buttons_raw"),
+            "captcha_button_style":     chat_settings.get("captcha_button_style") or "inline",
             "captcha_greet":            chat_settings.get("captcha_greet") or False,
             "captcha_accept_now":       chat_settings.get("captcha_accept_now") or False,
             "captcha_accept_all":       chat_settings.get("captcha_accept_all") or False,

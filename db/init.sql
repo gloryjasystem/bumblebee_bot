@@ -284,3 +284,6 @@ ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS captcha_media TEXT;
 
 -- Текст кнопок капчи: строка с кнопками, по одной на строку (с опциональным цветным квадратом)
 ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS captcha_buttons_raw TEXT;
+
+-- Блокировка пользователей по feedback: пользователь не сможет слать сообщения владельцу
+ALTER TABLE bot_users ADD COLUMN IF NOT EXISTS feedback_blocked BOOLEAN DEFAULT false;

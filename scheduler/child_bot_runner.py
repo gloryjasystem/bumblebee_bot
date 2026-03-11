@@ -342,8 +342,60 @@ async def _handle_captcha_callback(bot: Bot, callback):
             elif data.startswith("captcha:"):
                 await on_captcha_passed(callback, bot)
             elif data.startswith("fb_block:") or data.startswith("fb_unblock:"):
-                # Обрабатывается в handlers.feedback через основной бот
-                await callback.answer()
+                # Выполняем логику прямо здесь — callback приходит в дочернего бота
+                parts          = data.split(":")
+                fb_child_bot_id   = int(parts[1])
+                fb_target_user_id = int(parts[2])
+                fb_owner_id       = int(parts[3])
+                clicker_id        = callback.from_user.id
+                blocking          = data.startswith("fb_block:")
+
+                # Проверяем права (владелец или команда)
+                if clicker_id != fb_owner_id:
+                    is_allowed = await db.fetchval(
+                        "SELECT 1 FROM team_members WHERE user_id=$1 AND owner_id=$2 AND is_active=true",
+                        clicker_id, fb_owner_id,
+                    )
+                    if not is_allowed:
+                        await callback.answer("❌ Нет доступа.", show_alert=True)
+                        return
+
+                # Обновляем БД
+                await db.execute(
+                    "UPDATE bot_users SET feedback_blocked=$1 WHERE user_id=$2 AND owner_id=$3",
+                    blocking, fb_target_user_id, fb_owner_id,
+                )
+
+                # Редактируем клавиатуру in-place
+                from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+                if blocking:
+                    new_block_btn = InlineKeyboardButton(
+                        text="🟢 Разблокировать",
+                        callback_data=f"fb_unblock:{fb_child_bot_id}:{fb_target_user_id}:{fb_owner_id}",
+                    )
+                    toast = "🔴 Пользователь заблокирован"
+                    logger.info(f"[FB_BLOCK] user={fb_target_user_id} blocked by owner={fb_owner_id}")
+                else:
+                    new_block_btn = InlineKeyboardButton(
+                        text="🔴 Заблокировать",
+                        callback_data=f"fb_block:{fb_child_bot_id}:{fb_target_user_id}:{fb_owner_id}",
+                    )
+                    toast = "🟢 Пользователь разблокирован"
+                    logger.info(f"[FB_UNBLOCK] user={fb_target_user_id} unblocked by owner={fb_owner_id}")
+
+                new_kb = InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(
+                        text="💬 Ответить",
+                        callback_data=f"fb_reply:{fb_child_bot_id}:{fb_target_user_id}:{fb_owner_id}",
+                    )],
+                    [new_block_btn],
+                ])
+                try:
+                    await callback.message.edit_reply_markup(reply_markup=new_kb)
+                except Exception:
+                    pass
+                await callback.answer(toast)
+
             elif data.startswith("fbr_more:"):
                 # Редактируем то же сообщение в «режим ввода»
                 parts             = data.split(":")

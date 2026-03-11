@@ -337,21 +337,30 @@ async def handle_feedback_message(
     user_id   = from_user.id if from_user else 0
 
     chat_title = settings.get("chat_title") or str(chat_id)
+    # Сообщение 1: чистый текст обратной связи БЕЗ кнопок
     caption = (
         f"📩 <b>Обратная связь</b>\n"
         f"Площадка: <b>{chat_title}</b>\n"
         f"От: {name} ({username})"
     )
 
-    # Кнопка «Ответить» — callback будет обработан дочерним ботом
-    reply_kb = None
+    # Сообщение 2: «У вас новое сообщение» с кнопками «Ответить» и «Заблокировать»
+    action_kb = None
     if child_bot_id and user_id:
-        reply_kb = InlineKeyboardMarkup(inline_keyboard=[
+        action_kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(
-                text=f"✉️ Ответить {name}",
+                text="💬 Ответить",
                 callback_data=f"fb_reply:{child_bot_id}:{user_id}:{owner_id}",
-            )]
+            )],
+            [InlineKeyboardButton(
+                text="🔴 Заблокировать",
+                callback_data=f"fb_block:{child_bot_id}:{user_id}:{owner_id}",
+            )],
         ])
+    notify_text = (
+        f"ℹ️ <b>У вас новое сообщение от {name}!</b>\n"
+        f"💬 Свайпните сообщение для ответа."
+    )
 
     recipients = [owner_id]
     if target == "all":
@@ -361,32 +370,37 @@ async def handle_feedback_message(
         )
         recipients += [a["user_id"] for a in admins]
 
-    # Определяем «основного» отправителя: дочерний бот (предпочтительно) или main_bot (fallback)
-    primary_bot = child_bot_instance if child_bot_instance else bot
-
     for recipient_id in set(recipients):
         sent = False
         # ── Попытка 1: через дочернего бота ──────────────────────
         if child_bot_instance:
             try:
+                # Сообщение 1 — только текст, без кнопок
                 if message.text:
                     full_text = f"{caption}\n\n{message.text}"
-                    await child_bot_instance.send_message(recipient_id, full_text, parse_mode="HTML", reply_markup=reply_kb)
+                    await child_bot_instance.send_message(recipient_id, full_text, parse_mode="HTML")
                 else:
                     extra = ("\n\n" + message.caption) if message.caption else ""
                     await message.copy_to(
                         recipient_id,
                         caption=caption + extra,
                         parse_mode="HTML",
-                        reply_markup=reply_kb,
+                    )
+                # Сообщение 2 — с кнопками Ответить + Заблокировать
+                if action_kb:
+                    await child_bot_instance.send_message(
+                        recipient_id, notify_text, parse_mode="HTML", reply_markup=action_kb
                     )
                 sent = True
             except Exception as e:
                 logger.debug(f"[FEEDBACK] child_bot send to {recipient_id} failed: {e} — trying sticker fallback")
-                # Стикеры не поддерживают caption — шлём уведомление + медиа отдельно
                 try:
-                    await child_bot_instance.send_message(recipient_id, caption, parse_mode="HTML", reply_markup=reply_kb)
+                    await child_bot_instance.send_message(recipient_id, caption, parse_mode="HTML")
                     await message.copy_to(recipient_id)
+                    if action_kb:
+                        await child_bot_instance.send_message(
+                            recipient_id, notify_text, parse_mode="HTML", reply_markup=action_kb
+                        )
                     sent = True
                 except Exception as e2:
                     logger.debug(f"[FEEDBACK] child_bot sticker fallback also failed to {recipient_id}: {e2}")
@@ -397,20 +411,27 @@ async def handle_feedback_message(
             try:
                 if message.text:
                     full_text = f"{caption}\n\n{message.text}"
-                    await bot.send_message(recipient_id, full_text, parse_mode="HTML", reply_markup=reply_kb)
+                    await bot.send_message(recipient_id, full_text, parse_mode="HTML")
                 else:
                     extra = ("\n\n" + message.caption) if message.caption else ""
                     await message.copy_to(
                         recipient_id,
                         caption=caption + extra,
                         parse_mode="HTML",
-                        reply_markup=reply_kb,
+                    )
+                if action_kb:
+                    await bot.send_message(
+                        recipient_id, notify_text, parse_mode="HTML", reply_markup=action_kb
                     )
             except Exception as e:
                 logger.debug(f"[FEEDBACK] main_bot fallback also failed to {recipient_id}: {e}")
                 try:
-                    await bot.send_message(recipient_id, caption, parse_mode="HTML", reply_markup=reply_kb)
+                    await bot.send_message(recipient_id, caption, parse_mode="HTML")
                     await message.copy_to(recipient_id)
+                    if action_kb:
+                        await bot.send_message(
+                            recipient_id, notify_text, parse_mode="HTML", reply_markup=action_kb
+                        )
                 except Exception as e2:
                     logger.debug(f"[FEEDBACK] main_bot sticker fallback failed to {recipient_id}: {e2}")
 
@@ -441,24 +462,28 @@ async def on_fb_reply(callback: CallbackQuery, state: FSMContext):
                 await callback.message.answer("❌ Нет доступа к этому действию.")
                 return
 
-        # Извлекаем имя и юзернейм из текста уведомления
+        # Имя извлекаем прямо из callback_data parts[2] — не нужно парсить текст
+        # но на всякий случай тоже пробуем из текста если есть
         target_name = "пользователю"
         target_username = ""
-        if callback.message and callback.message.text:
+        row_user = await db.fetchrow(
+            "SELECT first_name, username FROM bot_users WHERE user_id=$1 LIMIT 1",
+            target_user_id,
+        )
+        if row_user:
+            target_name     = row_user["first_name"] or "пользователю"
+            target_username = f"@{row_user['username']}" if row_user["username"] else ""
+        elif callback.message and callback.message.text:
             for line in callback.message.text.splitlines():
-                if line.startswith("От:"):
-                    raw = line.replace("От:", "").strip()
-                    if " (" in raw:
-                        target_name     = raw.split(" (")[0].strip()
-                        target_username = raw.split(" (")[1].rstrip(")")
-                    else:
-                        target_name = raw
+                if "новое сообщение от" in line:
+                    raw = line.split("от ", 1)[-1].rstrip("!").strip()
+                    target_name = raw
                     break
 
-        # Сохраняем исходный текст уведомления для восстановления при отмене
+        # Сохраняем исходный текст кнопочного сообщения для восстановления при отмене
         original_text = callback.message.text or ""
 
-        # Редактируем то же сообщение в режим ввода ответа (без создания нового)
+        # Редактируем сообщение 2 в режим ввода (prompt, скриншот 3)
         name_display = f"{target_name} ({target_username})" if target_username else target_name
         cancel_kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="❌ Отмена", callback_data="fb_cancel_reply")],
@@ -466,8 +491,7 @@ async def on_fb_reply(callback: CallbackQuery, state: FSMContext):
         try:
             await callback.message.edit_text(
                 f"✉️ <b>Напишите ответ для {name_display}:</b>\n\n"
-                f"Следующее сообщение, которое вы напишете сюда, будет отправлено пользователю в личку через дочернего бота.\n"
-                f"Для отмены — нажмите кнопку ниже.",
+                f"Следующее сообщение, которое вы напишете в этот бот, будет отправлено пользователю.",
                 parse_mode="HTML",
                 reply_markup=cancel_kb,
             )
@@ -498,28 +522,87 @@ async def on_fb_cancel_reply(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     await state.clear()
 
-    original_text   = data.get("original_text", "")
     target_name     = data.get("target_name", "пользователю")
     target_username = data.get("target_username", "")
     child_bot_id    = data.get("child_bot_id")
     target_user_id  = data.get("target_user_id")
     owner_id        = data.get("owner_id", 0)
+    name_display    = f"{target_name} ({target_username})" if target_username else target_name
 
     try:
-        if original_text and child_bot_id and target_user_id:
-            # Восстанавливаем исходное уведомление с кнопкой «Ответить»
-            restore_kb = InlineKeyboardMarkup(inline_keyboard=[[
-                InlineKeyboardButton(
-                    text=f"✉️ Ответить {target_name}",
+        if child_bot_id and target_user_id:
+            # Восстанавливаем сообщение 2 (скриншот 2) — «У вас новое сообщение» с кнопками
+            restore_kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(
+                    text="💬 Ответить",
                     callback_data=f"fb_reply:{child_bot_id}:{target_user_id}:{owner_id}",
-                )
-            ]])
-            await callback.message.edit_text(original_text, parse_mode="HTML", reply_markup=restore_kb)
+                )],
+                [InlineKeyboardButton(
+                    text="🔴 Заблокировать",
+                    callback_data=f"fb_block:{child_bot_id}:{target_user_id}:{owner_id}",
+                )],
+            ])
+            await callback.message.edit_text(
+                f"ℹ️ <b>У вас новое сообщение от {name_display}!</b>\n"
+                f"💬 Свайпните сообщение для ответа.",
+                parse_mode="HTML",
+                reply_markup=restore_kb,
+            )
         else:
             await callback.message.edit_text("❌ Ответ отменён.")
     except Exception:
         pass
     await callback.answer()
+
+
+# ── Обработка кнопки «Заблокировать» ─────────────────────────
+@router.callback_query(F.data.startswith("fb_block:"))
+async def on_fb_block(callback: CallbackQuery):
+    """Заблокировать пользователя — он больше не сможет слать feedback этому владельцу."""
+    try:
+        parts          = callback.data.split(":")
+        child_bot_id   = int(parts[1])
+        target_user_id = int(parts[2])
+        owner_id       = int(parts[3])
+        clicker_id     = callback.from_user.id
+
+        # Проверяем права
+        if clicker_id != owner_id:
+            is_allowed = await db.fetchval(
+                "SELECT 1 FROM team_members WHERE user_id=$1 AND owner_id=$2 AND is_active=true",
+                clicker_id, owner_id,
+            )
+            if not is_allowed:
+                await callback.answer("❌ Нет доступа.", show_alert=True)
+                return
+
+        # Помечаем пользователя как заблокированного по feedback
+        await db.execute(
+            """
+            UPDATE bot_users SET feedback_blocked = true
+            WHERE user_id = $1 AND owner_id = $2
+            """,
+            target_user_id, owner_id,
+        )
+
+        # Узнаём имя пользователя
+        row = await db.fetchrow(
+            "SELECT first_name, username FROM bot_users WHERE user_id=$1 AND owner_id=$2 LIMIT 1",
+            target_user_id, owner_id,
+        )
+        name = (row["first_name"] or "Пользователь") if row else "Пользователь"
+        uname = f" (@{row['username']})" if row and row["username"] else ""
+
+        await callback.message.edit_text(
+            f"🔴 <b>{name}{uname} заблокирован</b>\n\n"
+            f"Этот пользователь больше не сможет отправлять вам сообщения через обратную связь.",
+            parse_mode="HTML",
+        )
+        await callback.answer("🔴 Пользователь заблокирован")
+        logger.info(f"[FB_BLOCK] user={target_user_id} blocked by owner={owner_id}")
+    except Exception as e:
+        logger.error(f"[FB_BLOCK] Error: {e}", exc_info=True)
+        await callback.answer(f"⚠️ Ошибка: {e}", show_alert=True)
 
 
 # ── Обработка введённого ответа ────────────────────────────────

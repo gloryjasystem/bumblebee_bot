@@ -307,12 +307,11 @@ async def _handle_fb_reply_callback(bot: Bot, child_bot_id: int, callback):
             "owner_id":            owner_id,
         }
 
-        # Редактируем то же сообщение в режим ввода (без отдельного сообщения)
+        # Редактируем сообщение 2 в режим ввода (prompt, скриншот 3)
         try:
             await callback.message.edit_text(
                 f"✉️ <b>Напишите ответ для {name_display}:</b>\n\n"
-                f"Следующее сообщение, которое вы напишете в этот бот, будет отправлено пользователю.\n"
-                f"Для отмены — напишите /cancel",
+                f"Следующее сообщение, которое вы напишете в этот бот, будет отправлено пользователю.",
                 parse_mode="HTML",
             )
         except Exception as edit_err:
@@ -332,7 +331,8 @@ async def _handle_captcha_callback(bot: Bot, callback):
     """Обрабатывает нажатие кнопки капчи в дочернем боте."""
     data = callback.data or ""
     if (data.startswith("captcha_ok:") or data.startswith("captcha:") or data.startswith("captcha_rnd:")
-            or data.startswith("fbr_more:") or data.startswith("fbr_cancel:")):
+            or data.startswith("fbr_more:") or data.startswith("fbr_cancel:")
+            or data.startswith("fb_block:")):
         from handlers.captcha import on_captcha_simple_passed, on_captcha_random_press, on_captcha_passed
         try:
             if data.startswith("captcha_ok:"):
@@ -341,6 +341,9 @@ async def _handle_captcha_callback(bot: Bot, callback):
                 await on_captcha_random_press(callback, bot)
             elif data.startswith("captcha:"):
                 await on_captcha_passed(callback, bot)
+            elif data.startswith("fb_block:"):
+                # Обрабатывается в handlers.feedback.on_fb_block через основной бот
+                await callback.answer()
             elif data.startswith("fbr_more:"):
                 # Редактируем то же сообщение в «режим ввода»
                 parts             = data.split(":")
@@ -388,7 +391,7 @@ async def _handle_captcha_callback(bot: Bot, callback):
                 _reply_states[(fb_child_bot_id, admin_id)]["work_msg_id"] = new_prompt.message_id
                 await callback.answer("✍️ Напишите следующее 👇")
             elif data.startswith("fbr_cancel:"):
-                # Редактируем сообщение обратно в «успех»
+                # Восстанавливаем сообщение 2 (скриншот 2) — «У вас новое сообщение» с кнопками
                 parts             = data.split(":")
                 fb_child_bot_id   = int(parts[1])
                 fb_target_user_id = int(parts[2])
@@ -406,20 +409,25 @@ async def _handle_captcha_callback(bot: Bot, callback):
                     tname, tuname = "Пользователь", ""
                 ndisplay = f"{tname} ({tuname})" if tuname else tname
                 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-                more_kb = InlineKeyboardMarkup(inline_keyboard=[[
-                    InlineKeyboardButton(
-                        text="💬 Написать ещё",
-                        callback_data=f"fbr_more:{fb_child_bot_id}:{fb_target_user_id}:{fb_owner_id}",
-                    )
-                ]])
+                restore_kb = InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(
+                        text="💬 Ответить",
+                        callback_data=f"fb_reply:{fb_child_bot_id}:{fb_target_user_id}:{fb_owner_id}",
+                    )],
+                    [InlineKeyboardButton(
+                        text="🔴 Заблокировать",
+                        callback_data=f"fb_block:{fb_child_bot_id}:{fb_target_user_id}:{fb_owner_id}",
+                    )],
+                ])
                 try:
                     await callback.message.delete()
                 except Exception:
                     pass
                 await callback.message.answer(
-                    f"✅ <b>Ответ отправлен</b>\n\nПользователь <b>{ndisplay}</b> получил ваш ответ.",
+                    f"ℹ️ <b>У вас новое сообщение от {ndisplay}!</b>\n"
+                    f"💬 Свайпните сообщение для ответа.",
                     parse_mode="HTML",
-                    reply_markup=more_kb,
+                    reply_markup=restore_kb,
                 )
                 await callback.answer("❌ Отменено")
         except Exception as e:
@@ -531,41 +539,29 @@ async def _handle_message(bot: Bot, child_bot_id: int, owner_id: int, message):
             work_msg_id_c   = state.get("work_msg_id")
             target_msg_c    = notification_c or work_msg_id_c
             from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-            if target_msg_c and original_text_c:
-                # Восстанавливаем исходное сообщение с кнопкой «Ответить»
-                restore_kb = InlineKeyboardMarkup(inline_keyboard=[[
-                    InlineKeyboardButton(
-                        text=f"✉️ Ответить {tname_c}",
-                        callback_data=f"fb_reply:{child_bot_id}:{tv_user_id}:{owner_id_c}",
-                    )
-                ]])
-                try:
-                    await bot.edit_message_text(
-                        original_text_c,
-                        chat_id=user.id,
-                        message_id=target_msg_c,
-                        parse_mode="HTML",
-                        reply_markup=restore_kb,
-                    )
-                except Exception:
-                    await bot.send_message(user.id, "❌ Ответ отменён.")
-            elif target_msg_c:
-                # fbr_more флоу — восстанавливаем статус «Успех» + «Написать ещё»
+            if target_msg_c:
                 ndisplay_c = f"{tname_c} ({tuname_c})" if tuname_c else tname_c
-                more_kb_c = InlineKeyboardMarkup(inline_keyboard=[[
-                    InlineKeyboardButton(
-                        text="💬 Написать ещё",
-                        callback_data=f"fbr_more:{child_bot_id}:{tv_user_id}:{owner_id_c}",
-                    )
-                ]])
+                restore_kb = InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(
+                        text="💬 Ответить",
+                        callback_data=f"fb_reply:{child_bot_id}:{tv_user_id}:{owner_id_c}",
+                    )],
+                    [InlineKeyboardButton(
+                        text="🔴 Заблокировать",
+                        callback_data=f"fb_block:{child_bot_id}:{tv_user_id}:{owner_id_c}",
+                    )],
+                ])
                 try:
-                    await bot.edit_message_text(
-                        f"✅ <b>Ответ отправлен</b>\n\nПользователь <b>{ndisplay_c}</b> получил ваш ответ.",
-                        chat_id=user.id, message_id=target_msg_c,
-                        parse_mode="HTML", reply_markup=more_kb_c,
-                    )
+                    await bot.delete_message(chat_id=user.id, message_id=target_msg_c)
                 except Exception:
-                    await bot.send_message(user.id, "❌ Ответ отменён.")
+                    pass
+                await bot.send_message(
+                    user.id,
+                    f"ℹ️ <b>У вас новое сообщение от {ndisplay_c}!</b>\n"
+                    f"💬 Свайпните сообщение для ответа.",
+                    parse_mode="HTML",
+                    reply_markup=restore_kb,
+                )
             else:
                 await bot.send_message(user.id, "❌ Ответ отменён.")
             return
@@ -747,6 +743,14 @@ async def _handle_message(bot: Bot, child_bot_id: int, owner_id: int, message):
                 )
                 if is_team:
                     logger.debug(f"[FEEDBACK] Skipping: user {user.id} is a team member")
+                    continue
+                # Не пересылать если пользователь заблокирован по feedback
+                is_blocked = await db.fetchval(
+                    "SELECT feedback_blocked FROM bot_users WHERE user_id=$1 AND owner_id=$2 LIMIT 1",
+                    user.id, oid,
+                )
+                if is_blocked:
+                    logger.debug(f"[FEEDBACK] Skipping: user {user.id} is feedback_blocked for owner {oid}")
                     continue
                 sent_owners.add(oid)
                 # child_bot_instance=bot → уведомления идут через дочернего бота, не через основной

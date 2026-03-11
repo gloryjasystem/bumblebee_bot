@@ -501,16 +501,25 @@ async def on_captcha_text_input(message: Message, state: FSMContext):
 async def on_ch_captcha_btns(callback: CallbackQuery, state: FSMContext, platform_user: dict | None):
     if not platform_user:
         return
-    chat_id = int(callback.data.split(":")[1])
+    chat_id  = int(callback.data.split(":")[1])
+    ch = await db.fetchrow(
+        "SELECT captcha_type FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint",
+        platform_user["user_id"], chat_id,
+    )
+    ctypes_map = {"simple": "Простая", "random": "Рандомная"}
+    ctype_label = ctypes_map.get((ch.get("captcha_type") or "simple") if ch else "simple", "Простая")
     await state.set_state(MessagesFSM.waiting_for_captcha_buttons)
     await state.update_data(chat_id=chat_id, owner_id=platform_user["user_id"])
     await callback.message.edit_text(
-        "✏️ <b>Текст кнопок капчи</b>\n\n"
-        "Отправьте текст кнопок через запятую.\n"
-        "Пример: <code>Я не робот, Пропустить, Войти</code>",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="◀️ Отмена", callback_data=f"ch_captcha:{chat_id}")],
-        ]),
+        f"<u>{ctype_label} капча</u>:\n\n"
+        "🔤 Текст кнопок\n\n"
+        "<blockquote>Цвет:\n"
+        "🟦 - Синий\n"
+        "🟩 - Зелёный\n"
+        "🟥 - Красный\n\n"
+        "Пример: 🟩 Я не робот</blockquote>\n\n"
+        "➡ Пришлите названия для <u>кнопок капчи</u>:",
+        parse_mode="HTML",
     )
     await callback.answer()
 
@@ -527,9 +536,9 @@ async def on_captcha_btns_input(message: Message, state: FSMContext):
     )
     await state.clear()
     await message.answer(
-        "✅ Текст кнопок сохранён.",
+        "Кнопки успешно установлены!",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="◀️ К капче", callback_data=f"ch_captcha:{chat_id}")],
+            [InlineKeyboardButton(text="↩ Вернуться в капчу", callback_data=f"ch_captcha:{chat_id}")],
         ]),
     )
 

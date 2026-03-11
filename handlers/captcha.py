@@ -34,6 +34,26 @@ def _fill_captcha_text(template: str, user, chat_title: str) -> str:
         .replace("{day}",   datetime.now().strftime("%d.%m.%Y"))
     )
 
+
+def _parse_captcha_buttons(raw: str) -> list[str]:
+    """Парсит captcha_buttons_raw в список надписей кнопок.
+    Поддерживает разделитель новая строка и запятая.
+    Цветные эмоджи (🟩/🟦/🟥) остаются как есть — Telegram покажет их в тексте кнопки.
+    """
+    if not raw:
+        return []
+    parts = []
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line:
+            # попробуем ещё разделить по запятой если строка пустая
+            continue
+        for btn in line.split(","):
+            btn = btn.strip()
+            if btn:
+                parts.append(btn)
+    return parts[:10]  # не больше 10 кнопок
+
 # Хранилище pending-заявок: {(chat_id, user_id): ChatJoinRequest}
 _pending: dict[tuple[int, int], ChatJoinRequest] = {}
 
@@ -87,12 +107,22 @@ async def send_captcha(bot: Bot, event: ChatJoinRequest, settings_row: dict):
                f"⏱ У тебя {timer_min} мин."
         )
         text = _fill_captcha_text(raw_text, user, event.chat.title)
-        kb = InlineKeyboardMarkup(inline_keyboard=[[
-            InlineKeyboardButton(
-                text="✅ Я не робот",
-                callback_data=f"captcha_ok:{event.chat.id}:{user.id}",
-            )
-        ]])
+        # Применяем пользовательские кнопки если заданы, иначе — кнопка по умолчанию
+        custom_btns = _parse_captcha_buttons(settings_row.get("captcha_buttons_raw") or "")
+        if custom_btns:
+            kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(
+                    text=btn_label,
+                    callback_data=f"captcha_ok:{event.chat.id}:{user.id}",
+                )] for btn_label in custom_btns
+            ])
+        else:
+            kb = InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(
+                    text="✅ Я не робот",
+                    callback_data=f"captcha_ok:{event.chat.id}:{user.id}",
+                )
+            ]])
 
     # ── Рандомная капча ────────────────────────────────────────
     elif captcha_type == "random":
@@ -187,12 +217,21 @@ async def send_captcha_group(
                f"⏱ У тебя {timer_min} мин."
         )
         text = _fill_captcha_text(raw_text, user, chat_title)
-        kb = InlineKeyboardMarkup(inline_keyboard=[[
-            InlineKeyboardButton(
-                text="✅ Я не робот",
-                callback_data=f"captcha_ok:{chat_id}:{user.id}",
-            )
-        ]])
+        custom_btns = _parse_captcha_buttons(settings_row.get("captcha_buttons_raw") or "")
+        if custom_btns:
+            kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(
+                    text=btn_label,
+                    callback_data=f"captcha_ok:{chat_id}:{user.id}",
+                )] for btn_label in custom_btns
+            ])
+        else:
+            kb = InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(
+                    text="✅ Я не робот",
+                    callback_data=f"captcha_ok:{chat_id}:{user.id}",
+                )
+            ]])
 
     # ── Рандомная капча ──────────────────────────────────────────
     elif captcha_type == "random":

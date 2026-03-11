@@ -281,3 +281,6 @@ ALTER TABLE mailings ADD COLUMN IF NOT EXISTS media_below BOOLEAN DEFAULT false;
 
 -- Медиа (фото) для сообщения капчи: file_id фотографии
 ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS captcha_media TEXT;
+
+-- Текст кнопок капчи: строка с кнопками, по одной на строку (с опциональным цветным квадратом)
+ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS captcha_buttons_raw TEXT;

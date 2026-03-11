@@ -691,15 +691,22 @@ async def _handle_message(bot: Bot, child_bot_id: int, owner_id: int, message):
 
     else:
         # ── 3. Обычное сообщение → обратная связь ───────────────
-        # Пропускаем если у пользователя активная капча (reply-режим):
-        # нажатие кнопки капчи создаёт текстовое сообщение — не пересылаем его в обратную связь.
-        from handlers.captcha import _pending, _pending_group
-        _user_has_captcha = (
-            any(uid == user.id for (_, uid) in _pending) or
-            any(uid == user.id for (_, uid) in _pending_group)
-        )
-        if _user_has_captcha:
-            logger.debug(f"[FEEDBACK] Skipping: user {user.id} has active captcha — not forwarding to feedback")
+        # Если у пользователя активная reply-капча — обрабатываем её,
+        # не пересылаем сообщение в обратную связь.
+        from handlers.captcha import _pending, _pending_group, _approve_user_from_message
+        _captcha_chat_id = None
+        for (_cid, _uid) in list(_pending.keys()):
+            if _uid == user.id:
+                _captcha_chat_id = _cid
+                break
+        if _captcha_chat_id is None:
+            for (_cid, _uid) in list(_pending_group.keys()):
+                if _uid == user.id:
+                    _captcha_chat_id = _cid
+                    break
+        if _captcha_chat_id is not None:
+            logger.debug(f"[CAPTCHA REPLY] Processing reply captcha for user {user.id} chat {_captcha_chat_id}")
+            await _approve_user_from_message(message, bot, _captcha_chat_id, user.id, success=True)
             return
 
         # JOIN с bot_users убран намеренно: feedback работает даже если

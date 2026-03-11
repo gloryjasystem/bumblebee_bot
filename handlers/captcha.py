@@ -9,6 +9,7 @@ import logging
 import random
 from datetime import datetime
 from aiogram import Router, F, Bot
+from aiogram.filters import StateFilter
 from aiogram.types import (
     CallbackQuery, ChatJoinRequest,
     InlineKeyboardMarkup, InlineKeyboardButton,
@@ -358,7 +359,7 @@ async def _captcha_timeout_group(
 
 @router.callback_query(F.data.startswith("captcha_ok:"))
 async def on_captcha_simple_passed(callback: CallbackQuery, bot: Bot):
-    """Простая капча — любая кнопка засчитывается."""
+    """Простая капча — любая кнопка засчитывается (inline-режим)."""
     parts   = callback.data.split(":")
     chat_id = int(parts[1])
     user_id = int(parts[2])
@@ -391,6 +392,29 @@ async def on_captcha_random_press(callback: CallbackQuery, bot: Bot):
     await _approve_user(callback, bot, chat_id, user_id, success=success)
 
 
+@router.message(F.chat.type == "private", StateFilter(None))
+async def on_captcha_reply_message(message: Message, bot: Bot):
+    """Reply-капча — пользователь нажал кнопку Reply-клавиатуры в личке.
+    Ищем активный pending для данного пользователя. Этот хендлер срабатывает
+    только если у пользователя есть незакрытая капча (captcha_button_style=reply).
+    """
+    user_id = message.from_user.id
+
+    # Ищем pending-заявку (join_request режим)
+    for key, event in list(_pending.items()):
+        chat_id, uid = key
+        if uid == user_id:
+            await _approve_user_from_message(message, bot, chat_id, user_id, success=True)
+            return
+
+    # Ищем pending-заявку (групповой режим)
+    for key in list(_pending_group.keys()):
+        chat_id, uid = key
+        if uid == user_id:
+            await _approve_user_from_message(message, bot, chat_id, user_id, success=True)
+            return
+
+
 # ══════════════════════════════════════════════════════════════
 # Вспомогательные функции
 # ══════════════════════════════════════════════════════════════
@@ -399,6 +423,7 @@ async def _approve_user(
     callback: CallbackQuery, bot: Bot,
     chat_id: int, user_id: int, success: bool,
 ):
+    """Обработка результата капчи при нажатии inline-кнопки (CallbackQuery)."""
     key   = (chat_id, user_id)
     event = _pending.pop(key, None)
 
@@ -419,11 +444,6 @@ async def _approve_user(
                         )
                     except Exception as ex:
                         logger.debug(f"captcha_events insert failed (group success): {ex}")
-                # Приветствие НЕ отправляем здесь — пользователь ещё не вступил.
-                # Оно будет отправлено в _handle_chat_member (child_bot_runner.py)
-                # сразу после того как пользователь кликнет one_time_link и реально войдёт.
-                # _passed_captcha_group — флаг, по которому _handle_chat_member это определит.
-                # Одноразовая ссылка для вступления
                 one_time_link = group_data.get("one_time_link")
                 if one_time_link:
                     await callback.message.edit_text(
@@ -439,7 +459,6 @@ async def _approve_user(
                 await callback.answer("✅ Отлично!")
                 logger.info(f"[GROUP CAPTCHA] Passed: user={user_id} chat={chat_id} — welcome deferred to on-join event")
             else:
-                # Записываем событие капчи (провал, групповой режим)
                 if owner_id:
                     try:
                         await db.execute(
@@ -458,13 +477,11 @@ async def _approve_user(
         return
 
     if success:
-        # ← Регистрируем ДО approve, чтобы chat_member-хендлер не кикнул пользователя повторно.
-        # _handle_chat_member видит captcha_type != "off" и при отсутствии ключа кикает снова.
         _passed_captcha_group.add(key)
         try:
             await event.approve()
         except Exception as e:
-            _passed_captcha_group.discard(key)  # откатываем при неудаче
+            _passed_captcha_group.discard(key)
             logger.warning(f"Approve failed: {e}")
             await callback.answer("❌ Не удалось одобрить заявку", show_alert=True)
             return
@@ -476,7 +493,6 @@ async def _approve_user(
             from handlers.join_requests import _register_user, _send_welcome
             await _register_user(settings_row["owner_id"], chat_id, callback.from_user)
 
-            # Записываем событие капчи (успех)
             try:
                 await db.execute(
                     "INSERT INTO captcha_events (owner_id, chat_id, user_id, passed) VALUES ($1,$2,$3,true)",
@@ -485,9 +501,7 @@ async def _approve_user(
             except Exception as ex:
                 logger.debug(f"captcha_events insert failed: {ex}")
 
-            # Трекинг статистики ссылки-приглашения (event — ChatJoinRequest с invite_link)
             inv_url = event.invite_link.invite_link if getattr(event, "invite_link", None) and event.invite_link else None
-            # Fallback: берём из сохранённого при получении join_request
             if not inv_url:
                 inv_url = _pending_link_urls.pop(key, None)
             logger.info(f"[CAPTCHA APPROVED] user={callback.from_user.id} invite_link={inv_url}")
@@ -499,8 +513,6 @@ async def _approve_user(
                 except Exception as e:
                     logger.warning(f"[LINK TRACK] failed: {e}")
 
-            # Приветствие отправляем сразу после event.approve(), пока DM-права
-            # от ChatJoinRequest ещё активны — позже они истекают.
             welcome = settings_row.get("welcome_text")
             if welcome:
                 from scheduler.child_bot_runner import _try_send_dm
@@ -514,7 +526,6 @@ async def _approve_user(
                     await callback.message.delete()
                 except Exception:
                     pass
-                # Всегда отвечаем на callback — иначе Telegram показывает «часики» на кнопке
                 await callback.answer("✅ Отлично!")
                 return
 
@@ -522,12 +533,10 @@ async def _approve_user(
         await callback.answer("✅ Отлично!")
 
     else:
-        # Неверный ответ — записываем событие (провал)
         try:
             await event.decline()
         except Exception:
             pass
-        # Записываем событие капчи (провал)
         settings_row = await db.fetchrow(
             "SELECT owner_id FROM bot_chats WHERE chat_id=$1::bigint AND is_active=true", chat_id
         )
@@ -544,6 +553,96 @@ async def _approve_user(
             "Вы можете подать заявку повторно."
         )
         await callback.answer("❌ Неверно!", show_alert=True)
+
+
+async def _approve_user_from_message(
+    message: Message, bot: Bot,
+    chat_id: int, user_id: int, success: bool,
+):
+    """Обработка результата капчи при нажатии Reply-кнопки (Message)."""
+    key   = (chat_id, user_id)
+    event = _pending.pop(key, None)
+
+    # Убираем Reply-клавиатуру
+    try:
+        await bot.send_message(
+            user_id,
+            "✅ Капча пройдена! Добро пожаловать.",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+    except Exception:
+        pass
+
+    if not event:
+        # ── Групповой режим ──
+        group_data = _pending_group.pop(key, None)
+        _expected.pop(key, None)
+        if group_data:
+            owner_id = group_data.get("owner_id")
+            _passed_captcha_group.add(key)
+            if owner_id:
+                try:
+                    await db.execute(
+                        "INSERT INTO captcha_events (owner_id, chat_id, user_id, passed) VALUES ($1,$2,$3,true)",
+                        owner_id, chat_id, user_id,
+                    )
+                except Exception as ex:
+                    logger.debug(f"captcha_events insert failed (group reply): {ex}")
+            one_time_link = group_data.get("one_time_link")
+            if one_time_link:
+                await bot.send_message(
+                    user_id,
+                    f'🔗 <a href="{one_time_link}">Войти в группу</a>\n\nСсылка одноразовая.',
+                    parse_mode="HTML",
+                )
+            logger.info(f"[GROUP CAPTCHA REPLY] Passed: user={user_id} chat={chat_id}")
+        else:
+            logger.debug(f"[CAPTCHA REPLY] No pending for user={user_id} — ignored")
+        return
+
+    # ── Join-request режим ──
+    _passed_captcha_group.add(key)
+    try:
+        await event.approve()
+    except Exception as e:
+        _passed_captcha_group.discard(key)
+        logger.warning(f"[CAPTCHA REPLY] Approve failed: {e}")
+        return
+
+    settings_row = await db.fetchrow(
+        "SELECT * FROM bot_chats WHERE chat_id=$1::bigint AND is_active=true", chat_id
+    )
+    if settings_row:
+        from handlers.join_requests import _register_user
+        await _register_user(settings_row["owner_id"], chat_id, message.from_user)
+
+        try:
+            await db.execute(
+                "INSERT INTO captcha_events (owner_id, chat_id, user_id, passed) VALUES ($1,$2,$3,true)",
+                settings_row["owner_id"], chat_id, message.from_user.id,
+            )
+        except Exception as ex:
+            logger.debug(f"captcha_events insert failed (reply): {ex}")
+
+        inv_url = event.invite_link.invite_link if getattr(event, "invite_link", None) and event.invite_link else None
+        if not inv_url:
+            inv_url = _pending_link_urls.pop(key, None)
+        if inv_url:
+            try:
+                from scheduler.child_bot_runner import _track_invite_link
+                await _track_invite_link(inv_url, message.from_user)
+            except Exception as e:
+                logger.warning(f"[LINK TRACK REPLY] failed: {e}")
+
+        welcome = settings_row.get("welcome_text")
+        if welcome:
+            from scheduler.child_bot_runner import _try_send_dm
+            await _try_send_dm(
+                bot, message.from_user.id, welcome,
+                show_typing=bool(settings_row.get("typing_action")),
+            )
+
+    logger.info(f"[CAPTCHA REPLY] Passed join_request: user={user_id} chat={chat_id}")
 
 
 

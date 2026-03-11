@@ -324,8 +324,8 @@ def _kb_draft(m: dict) -> InlineKeyboardMarkup:
     preview_icon = "👁 Превью: да" if not m.get("disable_preview") else "👁 Превью: нет"
     notify_icon  = f"🔔 Уведомить: {_yn(m.get('notify_users', True))}"
     protect_icon = f"🔒 Защитить: {_yn(m.get('protect_content', False))}"
-    pin_icon     = f"📌 Закрепить: {_yn(m.get('pin_message', False))}"
-    delete_icon  = f"🗑 Удалить: {_yn(m.get('delete_after_send', False))}"
+    pin_icon     = f"📌 Закрепить: {'24ч' if m.get('pin_message', False) else 'нет'}"
+    delete_icon  = f"🗑 Удалить: {'24ч' if m.get('delete_after_send', False) else 'нет'}"
 
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✏️ URL-кнопки", callback_data=f"ml_url_buttons:{mid}")],
@@ -359,8 +359,8 @@ def _draft_settings_text(m: dict) -> str:
     dt_str = scheduled.strftime("%d.%m.%Y %H:%M") if scheduled else datetime.now(timezone.utc).strftime("%d.%m.%Y %H:%M")
     return (
         f"\n\n📅 <b>Дата рассылки:</b> {dt_str}\n"
-        f"🗑 <b>Удалить после:</b> {_yn(m.get('delete_after_send', False))}\n"
-        f"📌 <b>Закрепить:</b> {_yn(m.get('pin_message', False))}"
+        f"🗑 <b>Удалить:</b> {'через 24 часа' if m.get('delete_after_send', False) else 'нет'}\n"
+        f"📌 <b>Закрепить:</b> {'на 24 часа' if m.get('pin_message', False) else 'нет'}"
     )
 
 

@@ -384,6 +384,7 @@ async def _show_draft(callback: CallbackQuery, m: dict):
     При первом вызове — отправляет эхо и меню как новые сообщения.
     При повторном вызове (тогглер) — редактирует эхо и меню на месте.
     """
+    from services.mailing import _parse_buttons
     mid         = m["id"]
     text        = m.get("text") or ""
     media       = m.get("media_file_id")
@@ -392,6 +393,8 @@ async def _show_draft(callback: CallbackQuery, m: dict):
     tg_chat_id  = callback.message.chat.id
     # show_caption_above_media поддерживается только для фото/видео
     supports_above = media_type in ("photo", "video")
+    # Inline-кнопки из url_buttons_raw
+    kb = _parse_buttons(m.get("url_buttons_raw") or "", m.get("button_color") or "blue")
 
     prev_echo = _draft_echo_ids.get(mid)
 
@@ -418,6 +421,15 @@ async def _show_draft(callback: CallbackQuery, m: dict):
                     text=text or "(без текста)",
                     parse_mode="HTML",
                 )
+        except Exception:
+            pass
+        # Обновляем inline-кнопки на эхо
+        try:
+            await callback.bot.edit_message_reply_markup(
+                chat_id=echo_chat_id,
+                message_id=echo_msg_id,
+                reply_markup=kb,
+            )
         except Exception:
             pass
 
@@ -449,14 +461,15 @@ async def _show_draft(callback: CallbackQuery, m: dict):
             caption=text or None,
             parse_mode="HTML",
             show_caption_above_media=True,
+            reply_markup=kb,
         )
     elif media:
         # ⬇ — стандарт: медиа сверху, текст капшоном снизу
         send_fn = _send_fn_map.get(media_type, callback.message.answer_photo)
-        sent_echo = await send_fn(media, caption=text or None, parse_mode="HTML")
+        sent_echo = await send_fn(media, caption=text or None, parse_mode="HTML", reply_markup=kb)
     else:
         if text:
-            sent_echo = await callback.message.answer(text, parse_mode="HTML")
+            sent_echo = await callback.message.answer(text, parse_mode="HTML", reply_markup=kb)
 
     # Сохраняем echo message_id для будущего редактирования/удаления
     if sent_echo:
@@ -938,6 +951,10 @@ async def on_ml_url_buttons(callback: CallbackQuery, state: FSMContext, platform
     except Exception:
         pass
 
+    # Ставим FSM-состояние — пользователь может сразу ввести кнопки
+    await state.update_data(mailing_id=mid, owner_id=platform_user["user_id"])
+    await state.set_state(MailingFSM.waiting_for_buttons)
+
     # Отправляем экран URL-кнопок как новое сообщение (+ только кнопка Назад)
     await callback.message.answer(
         _URL_BUTTONS_HELP + now_text,
@@ -995,6 +1012,7 @@ async def on_ml_input_buttons(callback: CallbackQuery, state: FSMContext, platfo
 
 @router.message(MailingFSM.waiting_for_buttons)
 async def on_mailing_buttons_input(message: Message, state: FSMContext):
+    from services.mailing import _parse_buttons
     data = await state.get_data()
     mid = data.get("mailing_id")
     owner_id = data.get("owner_id")
@@ -1004,11 +1022,54 @@ async def on_mailing_buttons_input(message: Message, state: FSMContext):
         raw, mid, owner_id,
     )
     await state.clear()
+
+    # Загружаем обновлённый черновик
+    m = await db.fetchrow("SELECT * FROM mailings WHERE id=$1", mid)
+    if not m:
+        await message.answer("❌ Черновик не найден.")
+        return
+    m = dict(m)
+
+    # Парсим inline-кнопки
+    kb = _parse_buttons(m.get("url_buttons_raw") or "", m.get("button_color") or "blue")
+
+    text       = m.get("text") or ""
+    media      = m.get("media_file_id")
+    media_type = m.get("media_type")
+    media_below = bool(m.get("media_below", False))
+    supports_above = media_type in ("photo", "video")
+    tg_chat_id = message.chat.id
+
+    # ── Отправляем эхо с inline-кнопками ───────────────────────
+    sent_echo = None
+    _send_fn_map = {
+        "photo":    message.answer_photo,
+        "video":    message.answer_video,
+        "document": message.answer_document,
+    }
+    try:
+        if media and not media_below and supports_above:
+            send_fn = _send_fn_map.get(media_type, message.answer_photo)
+            sent_echo = await send_fn(
+                media, caption=text or None, parse_mode="HTML",
+                show_caption_above_media=True, reply_markup=kb,
+            )
+        elif media:
+            send_fn = _send_fn_map.get(media_type, message.answer_photo)
+            sent_echo = await send_fn(media, caption=text or None, parse_mode="HTML", reply_markup=kb)
+        elif text:
+            sent_echo = await message.answer(text, parse_mode="HTML", reply_markup=kb)
+    except Exception:
+        pass
+
+    if sent_echo:
+        _draft_echo_ids[mid] = (sent_echo.message_id, tg_chat_id)
+
+    # ── Меню настроек черновика ─────────────────────────────────
     await message.answer(
-        "✅ Кнопки сохранены.",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="◀️ К настройкам", callback_data=f"ml_url_buttons:{mid}")],
-        ]),
+        _draft_settings_text(m),
+        parse_mode="HTML",
+        reply_markup=_kb_draft(m),
     )
 
 

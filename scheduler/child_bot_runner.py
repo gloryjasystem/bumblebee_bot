@@ -374,13 +374,18 @@ async def _handle_captcha_callback(bot: Bot, callback):
                         callback_data=f"fbr_cancel:{fb_child_bot_id}:{fb_target_user_id}:{fb_owner_id}",
                     )
                 ]])
-                await callback.message.edit_text(
+                try:
+                    await callback.message.delete()
+                except Exception:
+                    pass
+                new_prompt = await callback.message.answer(
                     f"✉️ <b>Напишите ответ для {ndisplay}:</b>\n\n"
                     "Следующее сообщение, которое вы напишете в этот бот, будет отправлено пользователю.\n"
                     "Для отмены — нажмите кнопку ниже или /cancel",
                     parse_mode="HTML",
                     reply_markup=cancel_kb,
                 )
+                _reply_states[(fb_child_bot_id, admin_id)]["work_msg_id"] = new_prompt.message_id
                 await callback.answer("✍️ Напишите следующее 👇")
             elif data.startswith("fbr_cancel:"):
                 # Редактируем сообщение обратно в «успех»
@@ -407,8 +412,12 @@ async def _handle_captcha_callback(bot: Bot, callback):
                         callback_data=f"fbr_more:{fb_child_bot_id}:{fb_target_user_id}:{fb_owner_id}",
                     )
                 ]])
-                await callback.message.edit_text(
-                    f"✅ Ответ успешно отправлен пользователю <b>{ndisplay}</b>.",
+                try:
+                    await callback.message.delete()
+                except Exception:
+                    pass
+                await callback.message.answer(
+                    f"✅ <b>Ответ отправлен</b>\n\nПользователь <b>{ndisplay}</b> получил ваш ответ.",
                     parse_mode="HTML",
                     reply_markup=more_kb,
                 )
@@ -625,7 +634,7 @@ async def _handle_message(bot: Bot, child_bot_id: int, owner_id: int, message):
                 await bot.send_message(user.id, "⚠️ Такой тип сообщения не поддерживается.")
                 return
 
-            # Редактируем то же сообщение (prompt) в статус успеха + кнопка «Написать ещё»
+            # Удаляем prompt-сообщение и отправляем новое сообщение об успехе внизу (с кнопкой «Написать ещё»)
             from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
             target_msg_id = notification_id or work_msg_id
             more_kb = InlineKeyboardMarkup(inline_keyboard=[[
@@ -636,15 +645,15 @@ async def _handle_message(bot: Bot, child_bot_id: int, owner_id: int, message):
             ]])
             if target_msg_id:
                 try:
-                    await bot.edit_message_text(
-                        f"✅ <b>Ответ отправлен</b>\n\nПользователь <b>{name_display}</b> получил ваш ответ.",
-                        chat_id=user.id,
-                        message_id=target_msg_id,
-                        parse_mode="HTML",
-                        reply_markup=more_kb,
-                    )
+                    await bot.delete_message(chat_id=user.id, message_id=target_msg_id)
                 except Exception:
                     pass
+            await bot.send_message(
+                user.id,
+                f"✅ <b>Ответ отправлен</b>\n\nПользователь <b>{name_display}</b> получил ваш ответ.",
+                parse_mode="HTML",
+                reply_markup=more_kb,
+            )
             logger.info(f"[FEEDBACK REPLY via child] Sent to user {target_user_id} via bot {child_bot_id}")
         except Exception as e:
             await bot.send_message(

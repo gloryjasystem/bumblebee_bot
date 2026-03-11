@@ -609,9 +609,15 @@ async def on_feedback_reply_text(message: Message, state: FSMContext):
 
         logger.info(f"[FEEDBACK REPLY] Sent reply to user {target_user_id} via bot {child_bot_id}")
 
-        # Удаляем prompt-сообщение и отправляем чистое сообщение об успехе внизу (без кнопок)
+        # Удаляем prompt-сообщение и отправляем новое сообщение об успехе внизу (с кнопкой «Написать ещё»)
         work_msg_id   = data.get("work_msg_id")
         target_msg_id = notification_msg_id or work_msg_id
+        more_kb = InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(
+                text="💬 Написать ещё",
+                callback_data=f"fbr_more:{child_bot_id}:{target_user_id}:{owner_id_fb}",
+            )
+        ]])
         if target_msg_id:
             try:
                 await message.bot.delete_message(
@@ -623,6 +629,7 @@ async def on_feedback_reply_text(message: Message, state: FSMContext):
         await message.answer(
             f"✅ <b>Ответ отправлен</b>\n\nПользователь <b>{name_display}</b> получил ваш ответ.",
             parse_mode="HTML",
+            reply_markup=more_kb,
         )
 
     except Exception as e:

@@ -226,7 +226,9 @@ async def run_mailing(mailing_id: int, bot: Bot,
     if media_file_id and child_bot_instance:
         try:
             file_info = await bot.get_file(media_file_id)
-            _media_bytes = await bot.download_file(file_info.file_path)
+            _bio = await bot.download_file(file_info.file_path)
+            _bio.seek(0)
+            _media_bytes = _bio.read()
             logger.info(
                 f"[MAILING {mailing_id}] media downloaded via main bot, "
                 f"size={len(_media_bytes)} bytes"

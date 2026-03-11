@@ -38,8 +38,8 @@ _EMOJI_SETS = [
     "🌍🌎🌏🗺",
 ]
 
-# Стили кнопок капчи
-_BUTTON_STYLES = ["1x1", "1x2", "2x2"]
+# Тип кнопок капчи (размещение)
+_BUTTON_PLACEMENTS = ["inline", "reply"]
 
 # Таймер капчи (цикл)
 _TIMER_CYCLE = [1, 2, 5, 10, 30]
@@ -216,29 +216,42 @@ async def _show_captcha(callback: CallbackQuery, chat_id: int, owner_id: int):
         await callback.answer("Площадка не найдена", show_alert=True)
         return
 
-    ctype       = ch.get("captcha_type") or "off"
-    timer       = int(ch["captcha_timer_min"] if ch.get("captcha_timer_min") else 1)
-    lang_on     = bool(ch.get("captcha_lang", False))
-    anim_on     = bool(ch.get("captcha_animation", False))
-    btn_style   = ch.get("captcha_button_style") or "1x1"
-    greet_on    = bool(ch.get("captcha_greet", False))
-    accept_now  = bool(ch.get("captcha_accept_now", False))
-    accept_all  = bool(ch.get("captcha_accept_all", False))
-    emoji_set   = ch.get("captcha_emoji_set") or _EMOJI_SETS[0]
+    ctype         = ch.get("captcha_type") or "off"
+    timer         = int(ch["captcha_timer_min"] if ch.get("captcha_timer_min") else 1)
+    lang_val      = ch.get("captcha_lang") or "off"   # 'ru' / 'en' / 'off'
+    anim_on       = bool(ch.get("captcha_animation", False))
+    btn_placement = ch.get("captcha_button_style") or "inline"  # 'inline' / 'reply'
+    greet_on      = bool(ch.get("captcha_greet", False))
+    accept_now    = bool(ch.get("captcha_accept_now", False))
+    accept_all    = bool(ch.get("captcha_accept_all", False))
+    emoji_set     = ch.get("captcha_emoji_set") or _EMOJI_SETS[0]
 
     type_labels = {"off": "🔒 Капча: выкл", "simple": "🔒 Капча: простая",
                    "random": "🔒 Капча: рандомная"}
     type_label = type_labels.get(ctype, "🔒 Капча")
 
-    def yn(v): return "вкл" if v else "выкл"
+    # Иконки языка
+    _LANG_FLAGS = {"ru": "🇷🇺", "en": "🇬🇧", "off": "🏳️"}
+    lang_icon  = _LANG_FLAGS.get(lang_val, "🏳️")
+    lang_label = {"ru": "Русский", "en": "English", "off": "выкл"}.get(lang_val, "выкл")
+
+    # Иконки кнопок (размещение)
+    _PLACE_ICONS = {"inline": "📩 Inline", "reply": "⌨️ Reply"}
+    btn_label = _PLACE_ICONS.get(btn_placement, btn_placement)
+
+    # Иконки зависящие от состояния
+    anim_icon    = "📸" if anim_on else "📷"
+    greet_icon   = "📤" if greet_on else "✉️"
+    accept_icon  = "🔋" if accept_now else "🪫"
+    accept_a_icon = "✅" if accept_all else "❎"
 
     info = (
         "<blockquote>"
         "● <b>Простая:</b> пользователю достаточно нажать на любую кнопку.\n\n"
         "● <b>Рандомная:</b> пользователю необходимо нажать на верную кнопку.\n\n"
-        "🤚 <b>Приветствовать:</b> позволяет отправлять пользователю приветствие "
+        "📤 <b>Приветствовать:</b> позволяет отправлять пользователю приветствие "
         "сразу после решения капчи.\n\n"
-        "⬇️ <b>Принимать сразу:</b> позволяет принимать заявки сразу после решения капчи.\n\n"
+        "🔋 <b>Принимать сразу:</b> позволяет принимать заявки сразу после решения капчи.\n\n"
         "✅ <b>Принимать всех:</b> если данная опция включена, то даже если пользователь "
         "проигнорировал капчу, его заявка будет обработана."
         "</blockquote>\n\n"
@@ -262,16 +275,34 @@ async def _show_captcha(callback: CallbackQuery, chat_id: int, owner_id: int):
                 InlineKeyboardButton(text="✏️ Текст кнопок", callback_data=f"ch_captcha_btns:{chat_id}"),
             ],
             [
-                InlineKeyboardButton(text=f"🌐 Язык: {yn(lang_on)}",  callback_data=f"ch_cap_toggle:{chat_id}:lang"),
-                InlineKeyboardButton(text=f"🎬 Анимация: {yn(anim_on)}", callback_data=f"ch_cap_toggle:{chat_id}:anim"),
+                InlineKeyboardButton(
+                    text=f"{lang_icon} Язык: {lang_label}",
+                    callback_data=f"ch_cap_lang_menu:{chat_id}",
+                ),
+                InlineKeyboardButton(
+                    text=f"{anim_icon} Анимация: {'вкл' if anim_on else 'выкл'}",
+                    callback_data=f"ch_cap_toggle:{chat_id}:anim",
+                ),
             ],
             [
-                InlineKeyboardButton(text=f"🎲 Кнопки: {btn_style}", callback_data=f"ch_cap_toggle:{chat_id}:btn_style"),
-                InlineKeyboardButton(text=f"⏱ Таймер: {timer} мин",  callback_data=f"ch_cap_toggle:{chat_id}:timer"),
+                InlineKeyboardButton(
+                    text=f"🎛 Кнопки: {btn_label}",
+                    callback_data=f"ch_cap_btn_menu:{chat_id}",
+                ),
+                InlineKeyboardButton(text=f"⏱ Таймер: {timer} мин", callback_data=f"ch_cap_toggle:{chat_id}:timer"),
             ],
-            [InlineKeyboardButton(text=f"📦 Приветствовать: {yn(greet_on)}",  callback_data=f"ch_cap_toggle:{chat_id}:greet")],
-            [InlineKeyboardButton(text=f"📲 Принимать сразу: {yn(accept_now)}", callback_data=f"ch_cap_toggle:{chat_id}:accept_now")],
-            [InlineKeyboardButton(text=f"✅ Принимать всех: {yn(accept_all)}",  callback_data=f"ch_cap_toggle:{chat_id}:accept_all")],
+            [InlineKeyboardButton(
+                text=f"{greet_icon} Приветствовать: {'вкл' if greet_on else 'выкл'}",
+                callback_data=f"ch_cap_toggle:{chat_id}:greet",
+            )],
+            [InlineKeyboardButton(
+                text=f"{accept_icon} Принимать сразу: {'вкл' if accept_now else 'выкл'}",
+                callback_data=f"ch_cap_toggle:{chat_id}:accept_now",
+            )],
+            [InlineKeyboardButton(
+                text=f"{accept_a_icon} Принимать всех: {'вкл' if accept_all else 'выкл'}",
+                callback_data=f"ch_cap_toggle:{chat_id}:accept_all",
+            )],
         ]
 
     buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"ch_messages:{chat_id}")])
@@ -320,7 +351,7 @@ async def on_ch_captcha_type(callback: CallbackQuery, platform_user: dict | None
     await _show_captcha(callback, chat_id, owner_id)
 
 
-# ── Toggle: всё остальное в капче ─────────────────────────────
+# ── Toggle: anim / timer / greet / accept_now / accept_all ────
 
 @router.callback_query(F.data.startswith("ch_cap_toggle:"))
 async def on_ch_cap_toggle(callback: CallbackQuery, platform_user: dict | None):
@@ -338,28 +369,11 @@ async def on_ch_cap_toggle(callback: CallbackQuery, platform_user: dict | None):
     if not ch:
         return
 
-    if key == "lang":
-        new_val = not bool(ch.get("captcha_lang", False))
-        await db.execute("UPDATE bot_chats SET captcha_lang=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
-                         new_val, owner_id, chat_id)
-        await callback.answer("Язык: " + ("вкл" if new_val else "выкл"))
-
-    elif key == "anim":
+    if key == "anim":
         new_val = not bool(ch.get("captcha_animation", False))
         await db.execute("UPDATE bot_chats SET captcha_animation=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
                          new_val, owner_id, chat_id)
         await callback.answer("Анимация: " + ("вкл" if new_val else "выкл"))
-
-    elif key == "btn_style":
-        cur = ch.get("captcha_button_style") or "1x1"
-        try:
-            idx = _BUTTON_STYLES.index(cur)
-        except ValueError:
-            idx = 0
-        new_val = _BUTTON_STYLES[(idx + 1) % len(_BUTTON_STYLES)]
-        await db.execute("UPDATE bot_chats SET captcha_button_style=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
-                         new_val, owner_id, chat_id)
-        await callback.answer(f"Кнопки: {new_val}")
 
     elif key == "timer":
         cur = int(ch.get("captcha_timer_min") or 1)
@@ -391,6 +405,137 @@ async def on_ch_cap_toggle(callback: CallbackQuery, platform_user: dict | None):
         await callback.answer("Принимать всех: " + ("вкл" if new_val else "выкл"))
 
     await _show_captcha(callback, chat_id, owner_id)
+
+
+# ── Язык капчи: подменю ────────────────────────────────────────
+
+@router.callback_query(F.data.startswith("ch_cap_lang_menu:"))
+async def on_ch_cap_lang_menu(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    chat_id  = int(callback.data.split(":")[1])
+    owner_id = platform_user["user_id"]
+    ch = await db.fetchrow(
+        "SELECT captcha_lang FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint",
+        owner_id, chat_id,
+    )
+    current = (ch["captcha_lang"] if ch and ch.get("captcha_lang") else "off") or "off"
+
+    _LANG_OPTIONS = [
+        ("off", "🏳️ Выкл"),
+        ("ru",  "🇷🇺 Русский"),
+        ("en",  "🇬🇧 English"),
+    ]
+    btns = []
+    for code, label in _LANG_OPTIONS:
+        mark = " ✅" if code == current else ""
+        btns.append([InlineKeyboardButton(
+            text=label + mark,
+            callback_data=f"ch_cap_lang_set:{chat_id}:{code}",
+        )])
+    btns.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"ch_captcha:{chat_id}")])
+
+    await callback.message.edit_text(
+        "🏳️ <b>Язык капчи</b>\n\n"
+        "Выберите язык текста и кнопок капчи.\n"
+        "Применяется к <u>стандартным текстам</u> — если вы не задали свой текст вручную.",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=btns),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("ch_cap_lang_set:"))
+async def on_ch_cap_lang_set(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    parts    = callback.data.split(":")
+    chat_id  = int(parts[1])
+    lang_val = parts[2]   # 'ru' / 'en' / 'off'
+    owner_id = platform_user["user_id"]
+    await db.execute(
+        "UPDATE bot_chats SET captcha_lang=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
+        lang_val, owner_id, chat_id,
+    )
+    labels = {"off": "Язык: выкл", "ru": "Язык: Русский", "en": "Language: English"}
+    await callback.answer(labels.get(lang_val, lang_val))
+    callback.data = f"ch_captcha:{chat_id}"
+    await on_ch_captcha(callback, platform_user)
+
+
+# ── Кнопки капчи: подменю (inline / reply) ─────────────────────
+
+@router.callback_query(F.data.startswith("ch_cap_btn_menu:"))
+async def on_ch_cap_btn_menu(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    chat_id  = int(callback.data.split(":")[1])
+    owner_id = platform_user["user_id"]
+    ch = await db.fetchrow(
+        "SELECT captcha_button_style FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint",
+        owner_id, chat_id,
+    )
+    current = (ch["captcha_button_style"] if ch and ch.get("captcha_button_style") else "inline") or "inline"
+
+    # Визуальное описание каждого варианта
+    _PLACEMENT_OPTIONS = [
+        (
+            "inline",
+            "📩 Inline — под сообщением",
+            "Кнопки прикреплены к сообщению капчи:\n"
+            "┌─────────────────────┐\n"
+            "│ 📨 Текст капчи...   │\n"
+            "│ [  ✅ Я не робот  ] │\n"
+            "└─────────────────────┘",
+        ),
+        (
+            "reply",
+            "⌨️ Reply — в области ввода",
+            "Кнопки появляются в панели ввода:\n"
+            "┌─────────────────────┐\n"
+            "│ 📨 Текст капчи...   │\n"
+            "└─────────────────────┘\n"
+            "[ ✅ Я не робот ][ ❌ ]",
+        ),
+    ]
+    btns = []
+    for code, label, _ in _PLACEMENT_OPTIONS:
+        mark = " ✅" if code == current else ""
+        btns.append([InlineKeyboardButton(
+            text=label + mark,
+            callback_data=f"ch_cap_btn_set:{chat_id}:{code}",
+        )])
+
+    # Показываем описание текущего варианта
+    desc = next((d for c, _, d in _PLACEMENT_OPTIONS if c == current), "")
+    btns.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"ch_captcha:{chat_id}")])
+
+    await callback.message.edit_text(
+        f"🎛 <b>Размещение кнопок капчи</b>\n\n"
+        f"<blockquote>{desc}</blockquote>\n\n"
+        "Выберите, где должны отображаться кнопки капчи:",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=btns),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("ch_cap_btn_set:"))
+async def on_ch_cap_btn_set(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    parts     = callback.data.split(":")
+    chat_id   = int(parts[1])
+    placement = parts[2]   # 'inline' / 'reply'
+    owner_id  = platform_user["user_id"]
+    await db.execute(
+        "UPDATE bot_chats SET captcha_button_style=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
+        placement, owner_id, chat_id,
+    )
+    labels = {"inline": "📩 Inline", "reply": "⌨️ Reply"}
+    await callback.answer(f"Кнопки: {labels.get(placement, placement)}")
+    callback.data = f"ch_captcha:{chat_id}"
+    await on_ch_captcha(callback, platform_user)
 
 
 # ── Выбор набора эмодзи (рандомная капча) ──────────────────────

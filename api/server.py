@@ -77,9 +77,9 @@ def create_app(bot: Bot, dp: Dispatcher) -> FastAPI:
                 "ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS captcha_type         TEXT    DEFAULT 'off'",
                 "ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS captcha_text         TEXT",
                 "ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS captcha_buttons_raw  TEXT",
-                "ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS captcha_lang         BOOLEAN DEFAULT false",
+                "ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS captcha_lang         TEXT    DEFAULT 'off'",
                 "ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS captcha_animation    BOOLEAN DEFAULT false",
-                "ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS captcha_button_style TEXT    DEFAULT '1x1'",
+                "ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS captcha_button_style TEXT    DEFAULT 'inline'",
                 "ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS captcha_timer_min    INT     DEFAULT 1",
                 "ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS captcha_emoji_set    TEXT    DEFAULT '🍕🍔🌭🌮'",
                 "ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS captcha_greet        BOOLEAN DEFAULT false",
@@ -89,6 +89,10 @@ def create_app(bot: Bot, dp: Dispatcher) -> FastAPI:
                 "ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS reaction_emoji       TEXT    DEFAULT '👍'",
                 "ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS auto_delete_min      INT     DEFAULT 0",
                 "ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS feedback_lang        TEXT    DEFAULT 'ru'",
+                # Миграция captcha_lang: если колонка была BOOLEAN — конвертируем в TEXT
+                "ALTER TABLE bot_chats ALTER COLUMN captcha_lang TYPE TEXT USING CASE WHEN captcha_lang::text = 'true' THEN 'ru' ELSE 'off' END",
+                # Миграция captcha_button_style: старые значения 1x1/1x2/2x2 → inline
+                "UPDATE bot_chats SET captcha_button_style = 'inline' WHERE captcha_button_style IN ('1x1', '1x2', '2x2')",
             ]:
                 await conn.execute(migration)
             # Таблица автоответчика

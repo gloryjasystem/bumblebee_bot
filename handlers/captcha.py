@@ -19,6 +19,46 @@ import db.pool as db
 logger = logging.getLogger(__name__)
 router = Router()
 
+# Тексты капчи по языкам
+_CAPTCHA_DEFAULT: dict[str, dict[str, str]] = {
+    "ru": {
+        "simple": (
+            "👋 Привет, <b>{name}</b>!\n\n"
+            "Прежде чем войти в <b>{chat}</b>,\n"
+            "докажи что ты не робот — нажми кнопку ниже ✅\n\n"
+            "⏱ У тебя {timer} мин."
+        ),
+        "random": (
+            "👋 Привет, <b>{name}</b>!\n\n"
+            "Чтобы войти в <b>{chat}</b>, нажми на: <b>{correct}</b>\n\n"
+            "⏱ У тебя {timer} мин."
+        ),
+        "btn_simple": "✅ Я не робот",
+    },
+    "en": {
+        "simple": (
+            "👋 Hi, <b>{name}</b>!\n\n"
+            "Before joining <b>{chat}</b>,\n"
+            "prove you're not a robot — press the button below ✅\n\n"
+            "⏱ You have {timer} min."
+        ),
+        "random": (
+            "👋 Hi, <b>{name}</b>!\n\n"
+            "To join <b>{chat}</b>, press: <b>{correct}</b>\n\n"
+            "⏱ You have {timer} min."
+        ),
+        "btn_simple": "✅ I'm not a robot",
+    },
+}
+
+
+def _get_lang_texts(settings_row: dict) -> dict[str, str]:
+    """Returns the language-specific text templates based on captcha_lang setting."""
+    lang = settings_row.get("captcha_lang") or "ru"
+    if lang not in _CAPTCHA_DEFAULT:
+        lang = "ru"
+    return _CAPTCHA_DEFAULT[lang]
+
 
 def _fill_captcha_text(template: str, user, chat_title: str) -> str:
     """Подставляет переменные {name}, {allname}, {username}, {chat}, {day} в текст капчи."""
@@ -115,12 +155,10 @@ async def send_captcha(bot: Bot, event: ChatJoinRequest, settings_row: dict):
 
     # ── Простая капча ──────────────────────────────────────────
     if captcha_type == "simple":
+        lang_texts = _get_lang_texts(settings_row)
         raw_text = (
             settings_row.get("captcha_text")
-            or f"👋 Привет, <b>{{name}}</b>!\n\n"
-               f"Прежде чем войти в <b>{{chat}}</b>,\n"
-               f"докажи что ты не робот — нажми кнопку ниже ✅\n\n"
-               f"⏱ У тебя {timer_min} мин."
+            or lang_texts["simple"].replace("{timer}", str(timer_min))
         )
         text = _fill_captcha_text(raw_text, user, event.chat.title)
         # Применяем пользовательские кнопки если заданы, иначе — кнопка по умолчанию
@@ -136,13 +174,14 @@ async def send_captcha(bot: Bot, event: ChatJoinRequest, settings_row: dict):
         else:
             kb = InlineKeyboardMarkup(inline_keyboard=[[
                 InlineKeyboardButton(
-                    text="✅ Я не робот",
+                    text=lang_texts["btn_simple"],
                     callback_data=f"captcha_ok:{event.chat.id}:{user.id}",
                 )
             ]])
 
     # ── Рандомная капча ────────────────────────────────────────
     elif captcha_type == "random":
+        lang_texts = _get_lang_texts(settings_row)
         emoji_set_raw = settings_row.get("captcha_emoji_set") or "🍕🍔🌭🌮"
         # Разбиваем строку на отдельные эмоджи (каждый эмодзи = 1-2 символа Unicode)
         emojis = _split_emojis(emoji_set_raw)
@@ -157,9 +196,7 @@ async def send_captcha(bot: Bot, event: ChatJoinRequest, settings_row: dict):
 
         raw_text = (
             settings_row.get("captcha_text")
-            or f"👋 Привет, <b>{{name}}</b>!\n\n"
-               f"Чтобы войти в <b>{{chat}}</b>, нажми на: <b>{correct}</b>\n\n"
-               f"⏱ У тебя {timer_min} мин."
+            or lang_texts["random"].replace("{correct}", correct).replace("{timer}", str(timer_min))
         )
         text = _fill_captcha_text(raw_text, user, event.chat.title)
         kb = InlineKeyboardMarkup(inline_keyboard=[[
@@ -226,12 +263,10 @@ async def send_captcha_group(
 
     # ── Простая капча ──────────────────────────────────────────
     if captcha_type == "simple":
+        lang_texts = _get_lang_texts(settings_row)
         raw_text = (
             settings_row.get("captcha_text")
-            or f"👋 Привет, <b>{{name}}</b>!\n\n"
-               f"Чтобы войти в <b>{{chat}}</b>,\n"
-               f"докажи что ты не робот — нажми кнопку ниже ✅\n\n"
-               f"⏱ У тебя {timer_min} мин."
+            or lang_texts["simple"].replace("{timer}", str(timer_min))
         )
         text = _fill_captcha_text(raw_text, user, chat_title)
         custom_btns = _parse_captcha_buttons(settings_row.get("captcha_buttons_raw") or "")
@@ -246,13 +281,14 @@ async def send_captcha_group(
         else:
             kb = InlineKeyboardMarkup(inline_keyboard=[[
                 InlineKeyboardButton(
-                    text="✅ Я не робот",
+                    text=lang_texts["btn_simple"],
                     callback_data=f"captcha_ok:{chat_id}:{user.id}",
                 )
             ]])
 
     # ── Рандомная капча ──────────────────────────────────────────
     elif captcha_type == "random":
+        lang_texts = _get_lang_texts(settings_row)
         emoji_set_raw = settings_row.get("captcha_emoji_set") or "🍕🍔🌭🌮"
         emojis = _split_emojis(emoji_set_raw)
         if len(emojis) < 2:
@@ -264,9 +300,7 @@ async def send_captcha_group(
 
         raw_text = (
             settings_row.get("captcha_text")
-            or f"👋 Привет, <b>{{name}}</b>!\n\n"
-               f"Чтобы войти в <b>{{chat}}</b>, нажми на: <b>{correct}</b>\n\n"
-               f"⏱ У тебя {timer_min} мин."
+            or lang_texts["random"].replace("{correct}", correct).replace("{timer}", str(timer_min))
         )
         text = _fill_captcha_text(raw_text, user, chat_title)
         kb = InlineKeyboardMarkup(inline_keyboard=[[

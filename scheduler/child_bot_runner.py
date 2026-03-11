@@ -691,6 +691,17 @@ async def _handle_message(bot: Bot, child_bot_id: int, owner_id: int, message):
 
     else:
         # ── 3. Обычное сообщение → обратная связь ───────────────
+        # Пропускаем если у пользователя активная капча (reply-режим):
+        # нажатие кнопки капчи создаёт текстовое сообщение — не пересылаем его в обратную связь.
+        from handlers.captcha import _pending, _pending_group
+        _user_has_captcha = (
+            any(uid == user.id for (_, uid) in _pending) or
+            any(uid == user.id for (_, uid) in _pending_group)
+        )
+        if _user_has_captcha:
+            logger.debug(f"[FEEDBACK] Skipping: user {user.id} has active captcha — not forwarding to feedback")
+            return
+
         # JOIN с bot_users убран намеренно: feedback работает даже если
         # пользователь ещё не нажимал /start и нет записи в bot_users.
         chats = await db.fetch(

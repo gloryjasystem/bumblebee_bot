@@ -1182,8 +1182,14 @@ def _mailing_progress_text(mailing_id: int, sent: int, total: int,
                             errors: int, status: str, bot_username: str = "",
                             started_at=None) -> str:
     """Строит текст экрана прогресса рассылки (как на скриншоте 2)."""
-    # Прогресс-бар 10 символов
-    pct = (sent / total * 100) if total > 0 else 0.0
+    # Прогресс считаем по попыткам (успешно + ошибки), а не только успешным.
+    # Это гарантирует 100% по завершении даже при блокировках.
+    attempted = sent + errors
+    if status in ("done", "cancelled"):
+        # По завершении всегда 100%
+        pct = 100.0
+    else:
+        pct = (attempted / total * 100) if total > 0 else 0.0
     filled = int(pct / 10)
     bar = "▓" * filled + "░" * (10 - filled)
 
@@ -1194,7 +1200,8 @@ def _mailing_progress_text(mailing_id: int, sent: int, total: int,
     }
     status_str = status_map.get(status, "🟢 В процессе")
 
-    received = sent - errors
+    # Отправлено = попытки (тем, кому пытались отправить)
+    # Получили   = только успешно доставленные
     bot_line = f"📣 Рассылка: @{bot_username}\n" if bot_username else "📣 Рассылка\n"
 
     dt_str = ""
@@ -1208,8 +1215,8 @@ def _mailing_progress_text(mailing_id: int, sent: int, total: int,
         f"{bot_line}"
         f"<code>{bar}</code> {pct:.1f}%\n\n"
         f"{'ϙ' if status == 'running' else '📊'} Статус: {status_str}\n"
-        f"↗️ Отправлено: <b>{sent}</b> из <b>{total}</b>\n"
-        f"✅ Получили: <b>{received}</b>\n"
+        f"↗️ Отправлено: <b>{attempted}</b> из <b>{total}</b>\n"
+        f"✅ Получили: <b>{sent}</b>\n"
         f"🚫 Блокировали: <b>{errors}</b>\n\n"
         f"⚡ Скорость: Минимальная (~10/сек)"
         f"{dt_str}"

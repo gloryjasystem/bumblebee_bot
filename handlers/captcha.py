@@ -35,10 +35,19 @@ def _fill_captcha_text(template: str, user, chat_title: str) -> str:
     )
 
 
-def _parse_captcha_buttons(raw: str) -> list[str]:
-    """Парсит captcha_buttons_raw в список надписей кнопок.
+# Маппинг цвет-emoji → style (Bot API 9.4)
+_CAPTCHA_EMOJI_STYLE_MAP = {
+    "🟦": "primary",   # синяя
+    "🟩": "success",   # зелёная
+    "🟥": "danger",    # красная
+}
+
+
+def _parse_captcha_buttons(raw: str) -> list[tuple[str, str | None]]:
+    """Парсит captcha_buttons_raw в список (текст, style|None).
     Поддерживает разделитель новая строка и запятая.
-    Цветные эмоджи (🟩/🟦/🟥) остаются как есть — Telegram покажет их в тексте кнопки.
+    Если строка начинается с цветного эмодзи (🟩/🟦/🟥) — возвращает соответствующий style,
+    эмодзи убирается из текста кнопки (цвет применяется через Bot API 9.4).
     """
     if not raw:
         return []
@@ -46,12 +55,19 @@ def _parse_captcha_buttons(raw: str) -> list[str]:
     for line in raw.splitlines():
         line = line.strip()
         if not line:
-            # попробуем ещё разделить по запятой если строка пустая
             continue
         for btn in line.split(","):
             btn = btn.strip()
-            if btn:
-                parts.append(btn)
+            if not btn:
+                continue
+            # Определяем цвет по ведущему emoji
+            btn_style = None
+            for emoji, style in _CAPTCHA_EMOJI_STYLE_MAP.items():
+                if btn.startswith(emoji):
+                    btn_style = style
+                    btn = btn[len(emoji):].strip()
+                    break
+            parts.append((btn, btn_style))
     return parts[:10]  # не больше 10 кнопок
 
 # Хранилище pending-заявок: {(chat_id, user_id): ChatJoinRequest}
@@ -114,7 +130,8 @@ async def send_captcha(bot: Bot, event: ChatJoinRequest, settings_row: dict):
                 [InlineKeyboardButton(
                     text=btn_label,
                     callback_data=f"captcha_ok:{event.chat.id}:{user.id}",
-                )] for btn_label in custom_btns
+                    **({"style": btn_style} if btn_style else {}),
+                )] for btn_label, btn_style in custom_btns
             ])
         else:
             kb = InlineKeyboardMarkup(inline_keyboard=[[
@@ -223,7 +240,8 @@ async def send_captcha_group(
                 [InlineKeyboardButton(
                     text=btn_label,
                     callback_data=f"captcha_ok:{chat_id}:{user.id}",
-                )] for btn_label in custom_btns
+                    **({"style": btn_style} if btn_style else {}),
+                )] for btn_label, btn_style in custom_btns
             ])
         else:
             kb = InlineKeyboardMarkup(inline_keyboard=[[

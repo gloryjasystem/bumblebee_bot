@@ -26,16 +26,24 @@ SPEEDS = {
 }
 
 
-# ── Парсинг url_buttons_raw ──────────────────────────────────
+# Маппинг цвет-emoji → style (Bot API 9.4)
+_EMOJI_STYLE_MAP = {
+    "🟦": "primary",   # синяя
+    "🟩": "success",   # зелёная
+    "🟥": "danger",    # красная
+}
 
 def _parse_buttons(raw: str, color: str = "blue") -> InlineKeyboardMarkup | None:
     """
     Парсит сырой текст кнопок в InlineKeyboardMarkup.
 
     Форматы:
-      Текст — ссылка                  → одна кнопка в ряду
+      Текст — ссылка                        → одна кнопка в ряду (стиль по умолчанию)
+      🟦 Текст — ссылка                     → синяя кнопка (primary)
+      🟩 Текст — ссылка                     → зелёная кнопка (success)
+      🟥 Текст — ссылка                     → красная кнопка (danger)
       Текст 1 — ссылка | Текст 2 — ссылка  → два в ряду
-      Текст — ссылка (webapp)         → WebApp-кнопка
+      Текст — ссылка (webapp)               → WebApp-кнопка
     """
     if not raw or not raw.strip():
         return None
@@ -48,6 +56,15 @@ def _parse_buttons(raw: str, color: str = "blue") -> InlineKeyboardMarkup | None
         row = []
         for chunk in line.split("|"):
             chunk = chunk.strip()
+
+            # Определяем цвет по ведущему emoji
+            btn_style = None
+            for emoji, style in _EMOJI_STYLE_MAP.items():
+                if chunk.startswith(emoji):
+                    btn_style = style
+                    chunk = chunk[len(emoji):].strip()
+                    break
+
             # Проверяем формат "Текст — ссылка" (поддерживаем — и -)
             match = re.match(r"^(.+?)\s*[—\-]{1,2}\s*(https?://\S+?)(\s+\(webapp\))?$", chunk)
             if match:
@@ -57,7 +74,10 @@ def _parse_buttons(raw: str, color: str = "blue") -> InlineKeyboardMarkup | None
                 if is_webapp:
                     btn = InlineKeyboardButton(text=text, web_app=WebAppInfo(url=url))
                 else:
-                    btn = InlineKeyboardButton(text=text, url=url)
+                    kwargs = dict(text=text, url=url)
+                    if btn_style:
+                        kwargs["style"] = btn_style
+                    btn = InlineKeyboardButton(**kwargs)
                 row.append(btn)
         if row:
             rows.append(row)

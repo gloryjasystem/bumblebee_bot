@@ -558,7 +558,7 @@ async def on_fb_cancel_reply(callback: CallbackQuery, state: FSMContext):
 # ── Обработка кнопки «Заблокировать» ─────────────────────────
 @router.callback_query(F.data.startswith("fb_block:"))
 async def on_fb_block(callback: CallbackQuery):
-    """Заблокировать пользователя — он больше не сможет слать feedback этому владельцу."""
+    """Заблокировать пользователя — меняет кнопку in-place на «Разблокировать»."""
     try:
         parts          = callback.data.split(":")
         child_bot_id   = int(parts[1])
@@ -578,30 +578,78 @@ async def on_fb_block(callback: CallbackQuery):
 
         # Помечаем пользователя как заблокированного по feedback
         await db.execute(
-            """
-            UPDATE bot_users SET feedback_blocked = true
-            WHERE user_id = $1 AND owner_id = $2
-            """,
+            "UPDATE bot_users SET feedback_blocked = true WHERE user_id=$1 AND owner_id=$2",
             target_user_id, owner_id,
         )
 
-        # Узнаём имя пользователя
-        row = await db.fetchrow(
-            "SELECT first_name, username FROM bot_users WHERE user_id=$1 AND owner_id=$2 LIMIT 1",
-            target_user_id, owner_id,
-        )
-        name = (row["first_name"] or "Пользователь") if row else "Пользователь"
-        uname = f" (@{row['username']})" if row and row["username"] else ""
-
-        await callback.message.edit_text(
-            f"🔴 <b>{name}{uname} заблокирован</b>\n\n"
-            f"Этот пользователь больше не сможет отправлять вам сообщения через обратную связь.",
-            parse_mode="HTML",
-        )
+        # Меняем кнопку in-place: Заблокировать → Разблокировать
+        new_kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(
+                text="💬 Ответить",
+                callback_data=f"fb_reply:{child_bot_id}:{target_user_id}:{owner_id}",
+            )],
+            [InlineKeyboardButton(
+                text="🟢 Разблокировать",
+                callback_data=f"fb_unblock:{child_bot_id}:{target_user_id}:{owner_id}",
+            )],
+        ])
+        try:
+            await callback.message.edit_reply_markup(reply_markup=new_kb)
+        except Exception:
+            pass
         await callback.answer("🔴 Пользователь заблокирован")
         logger.info(f"[FB_BLOCK] user={target_user_id} blocked by owner={owner_id}")
     except Exception as e:
         logger.error(f"[FB_BLOCK] Error: {e}", exc_info=True)
+        await callback.answer(f"⚠️ Ошибка: {e}", show_alert=True)
+
+
+# ── Обработка кнопки «Разблокировать» ────────────────────────
+@router.callback_query(F.data.startswith("fb_unblock:"))
+async def on_fb_unblock(callback: CallbackQuery):
+    """Разблокировать пользователя — меняет кнопку in-place обратно на «Заблокировать»."""
+    try:
+        parts          = callback.data.split(":")
+        child_bot_id   = int(parts[1])
+        target_user_id = int(parts[2])
+        owner_id       = int(parts[3])
+        clicker_id     = callback.from_user.id
+
+        # Проверяем права
+        if clicker_id != owner_id:
+            is_allowed = await db.fetchval(
+                "SELECT 1 FROM team_members WHERE user_id=$1 AND owner_id=$2 AND is_active=true",
+                clicker_id, owner_id,
+            )
+            if not is_allowed:
+                await callback.answer("❌ Нет доступа.", show_alert=True)
+                return
+
+        # Снимаем блокировку
+        await db.execute(
+            "UPDATE bot_users SET feedback_blocked = false WHERE user_id=$1 AND owner_id=$2",
+            target_user_id, owner_id,
+        )
+
+        # Меняем кнопку in-place: Разблокировать → Заблокировать
+        new_kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(
+                text="💬 Ответить",
+                callback_data=f"fb_reply:{child_bot_id}:{target_user_id}:{owner_id}",
+            )],
+            [InlineKeyboardButton(
+                text="🔴 Заблокировать",
+                callback_data=f"fb_block:{child_bot_id}:{target_user_id}:{owner_id}",
+            )],
+        ])
+        try:
+            await callback.message.edit_reply_markup(reply_markup=new_kb)
+        except Exception:
+            pass
+        await callback.answer("🟢 Пользователь разблокирован")
+        logger.info(f"[FB_UNBLOCK] user={target_user_id} unblocked by owner={owner_id}")
+    except Exception as e:
+        logger.error(f"[FB_UNBLOCK] Error: {e}", exc_info=True)
         await callback.answer(f"⚠️ Ошибка: {e}", show_alert=True)
 
 

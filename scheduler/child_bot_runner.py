@@ -332,7 +332,7 @@ async def _handle_captcha_callback(bot: Bot, callback):
     data = callback.data or ""
     if (data.startswith("captcha_ok:") or data.startswith("captcha:") or data.startswith("captcha_rnd:")
             or data.startswith("fbr_more:") or data.startswith("fbr_cancel:")
-            or data.startswith("fb_block:")):
+            or data.startswith("fb_block:") or data.startswith("fb_unblock:")):
         from handlers.captcha import on_captcha_simple_passed, on_captcha_random_press, on_captcha_passed
         try:
             if data.startswith("captcha_ok:"):
@@ -341,8 +341,8 @@ async def _handle_captcha_callback(bot: Bot, callback):
                 await on_captcha_random_press(callback, bot)
             elif data.startswith("captcha:"):
                 await on_captcha_passed(callback, bot)
-            elif data.startswith("fb_block:"):
-                # Обрабатывается в handlers.feedback.on_fb_block через основной бот
+            elif data.startswith("fb_block:") or data.startswith("fb_unblock:"):
+                # Обрабатывается в handlers.feedback через основной бот
                 await callback.answer()
             elif data.startswith("fbr_more:"):
                 # Редактируем то же сообщение в «режим ввода»

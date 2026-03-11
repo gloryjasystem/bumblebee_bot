@@ -455,14 +455,22 @@ async def on_fb_reply(callback: CallbackQuery, state: FSMContext):
                         target_name = raw
                     break
 
-        # Меняем кнопку на статус ожидания (убираем кнопку из уведомления)
-        waiting_text = (
-            f"✉️ <b>Ответ на обратную связь</b>\n"
-            f"От: {target_name} ({target_username})\n\n"
-            f"⏳ <i>Ожидаем ответ...</i>"
-        )
+        # Сохраняем исходный текст уведомления для восстановления при отмене
+        original_text = callback.message.text or ""
+
+        # Редактируем то же сообщение в режим ввода ответа (без создания нового)
+        name_display = f"{target_name} ({target_username})" if target_username else target_name
+        cancel_kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="fb_cancel_reply")],
+        ])
         try:
-            await callback.message.edit_text(waiting_text, parse_mode="HTML")
+            await callback.message.edit_text(
+                f"✉️ <b>Напишите ответ для {name_display}:</b>\n\n"
+                f"Следующее сообщение, которое вы напишете сюда, будет отправлено пользователю в личку через дочернего бота.\n"
+                f"Для отмены — нажмите кнопку ниже.",
+                parse_mode="HTML",
+                reply_markup=cancel_kb,
+            )
         except Exception as edit_err:
             logger.warning(f"[FB_REPLY] Could not edit notification message: {edit_err}")
 
@@ -473,21 +481,10 @@ async def on_fb_reply(callback: CallbackQuery, state: FSMContext):
             target_name=target_name,
             target_username=target_username,
             notification_msg_id=callback.message.message_id,
+            original_text=original_text,
             owner_id=owner_id,
         )
         logger.info(f"[FB_REPLY] clicker={clicker_id} set reply state for user={target_user_id} via bot={child_bot_id}")
-
-        # Отправляем явное сообщение-подсказку и сохраняем его ID
-        name_display = f"{target_name} ({target_username})" if target_username else target_name
-        prompt_msg = await callback.message.answer(
-            f"✉️ <b>Напишите ответ для {name_display}:</b>\n\n"
-            f"Следующее сообщение, которое вы напишете сюда, будет отправлено пользователю в личку через дочернего бота.",
-            parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="❌ Отмена", callback_data="fb_cancel_reply")],
-            ]),
-        )
-        await state.update_data(prompt_msg_id=prompt_msg.message_id)
         await callback.answer(f"✉️ Напишите ответ для {target_name} 👇")
 
     except Exception as e:
@@ -495,12 +492,31 @@ async def on_fb_reply(callback: CallbackQuery, state: FSMContext):
         await callback.answer(f"⚠️ Ошибка: {e}", show_alert=True)
 
 
-# ── Обработка кнопки «Ответить» ────────────────────────────────
+# ── Обработка кнопки «Отмена» ────────────────────────────────
 @router.callback_query(F.data == "fb_cancel_reply")
 async def on_fb_cancel_reply(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
     await state.clear()
+
+    original_text   = data.get("original_text", "")
+    target_name     = data.get("target_name", "пользователю")
+    target_username = data.get("target_username", "")
+    child_bot_id    = data.get("child_bot_id")
+    target_user_id  = data.get("target_user_id")
+    owner_id        = data.get("owner_id", 0)
+
     try:
-        await callback.message.edit_text("❌ Ответ отменён.")
+        if original_text and child_bot_id and target_user_id:
+            # Восстанавливаем исходное уведомление с кнопкой «Ответить»
+            restore_kb = InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(
+                    text=f"✉️ Ответить {target_name}",
+                    callback_data=f"fb_reply:{child_bot_id}:{target_user_id}:{owner_id}",
+                )
+            ]])
+            await callback.message.edit_text(original_text, parse_mode="HTML", reply_markup=restore_kb)
+        else:
+            await callback.message.edit_text("❌ Ответ отменён.")
     except Exception:
         pass
     await callback.answer()
@@ -593,38 +609,23 @@ async def on_feedback_reply_text(message: Message, state: FSMContext):
 
         logger.info(f"[FEEDBACK REPLY] Sent reply to user {target_user_id} via bot {child_bot_id}")
 
-        # 1. Редактируем промпт-сообщение — простое подтверждение без кнопки
-        work_msg_id = data.get("work_msg_id")
+        # Редактируем то же сообщение (prompt/notification) в статус успеха с кнопкой «Написать ещё»
+        work_msg_id   = data.get("work_msg_id")
+        target_msg_id = notification_msg_id or work_msg_id
         more_kb = InlineKeyboardMarkup(inline_keyboard=[[
             InlineKeyboardButton(
                 text="💬 Написать ещё",
                 callback_data=f"fbr_more:{child_bot_id}:{target_user_id}:{owner_id_fb}",
             )
         ]])
-        success_text = f"✅ Ответ успешно отправлен пользователю <b>{name_display}</b>."
-        del_msg_id = work_msg_id or prompt_msg_id
-        if del_msg_id:
+        if target_msg_id:
             try:
                 await message.bot.edit_message_text(
-                    f"✅ Ответ отправлен\n\nПользователь <b>{name_display}</b> получил ваш ответ.",
+                    f"✅ <b>Ответ отправлен</b>\n\nПользователь <b>{name_display}</b> получил ваш ответ.",
                     chat_id=message.chat.id,
-                    message_id=del_msg_id,
+                    message_id=target_msg_id,
                     parse_mode="HTML",
-                )
-            except Exception:
-                pass
-        # 2. Новое сообщение с кнопкой — под отправленным сообщением
-        await message.answer(success_text, parse_mode="HTML", reply_markup=more_kb)
-
-        # Обновляем верхнее уведомление — "Ожидаем ответ" → "Ответ отправлен"
-        if notification_msg_id:
-            try:
-                await message.bot.edit_message_text(
-                    f"✅ <b>Ответ отправлен</b>\n"
-                    f"Пользователь {name_display} получил ваш ответ.",
-                    chat_id=message.chat.id,
-                    message_id=notification_msg_id,
-                    parse_mode="HTML",
+                    reply_markup=more_kb,
                 )
             except Exception:
                 pass

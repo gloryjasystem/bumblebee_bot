@@ -214,6 +214,29 @@ async def run_mailing(mailing_id: int, bot: Bot,
         mailing.get("button_color") or "blue",
     )
 
+    # ── Если используем дочернего бота и есть медиа: скачиваем файл ──
+    # Telegram file_id привязан к боту — file_id главного бота не работает
+    # у дочернего. Решение: скачать байты через главный бот один раз,
+    # отправить первому получателю через дочернего (он вернёт свой file_id),
+    # затем использовать child_file_id для всех остальных.
+    _media_bytes: bytes | None = None
+    _child_media_id: str | None = None
+    media_file_id = mailing.get("media_file_id")
+
+    if media_file_id and child_bot_instance:
+        try:
+            file_info = await bot.get_file(media_file_id)
+            _media_bytes = await bot.download_file(file_info.file_path)
+            logger.info(
+                f"[MAILING {mailing_id}] media downloaded via main bot, "
+                f"size={len(_media_bytes)} bytes"
+            )
+        except Exception as e:
+            logger.warning(
+                f"[MAILING {mailing_id}] failed to download media: {e}. "
+                f"Mailing will fail for all recipients."
+            )
+
     for rec in recipients:
         control = _active_mailings.get(mailing_id, {})
 
@@ -230,7 +253,30 @@ async def run_mailing(mailing_id: int, bot: Bot,
         user_dict["_chat_title"] = chat_title
 
         try:
-            await _send_message(send_bot, rec["user_id"], mailing, kb, user_dict)
+            if _media_bytes is not None and _child_media_id is None:
+                # Первая медиа-отправка: загружаем файл на серверы дочернего бота
+                from aiogram.types import BufferedInputFile
+                filename = f"media.{mailing.get('media_type', 'bin')}"
+                override = BufferedInputFile(_media_bytes, filename=filename)
+                child_id = await _send_message(
+                    send_bot, rec["user_id"], mailing, kb, user_dict,
+                    media_override=override,
+                )
+                if child_id:
+                    _child_media_id = child_id
+                    logger.info(
+                        f"[MAILING {mailing_id}] child_file_id obtained: "
+                        f"{child_id[:20]}..."
+                    )
+            elif _child_media_id is not None:
+                # Все последующие: мгновенно через child file_id
+                await _send_message(
+                    send_bot, rec["user_id"], mailing, kb, user_dict,
+                    media_override=_child_media_id,
+                )
+            else:
+                # Текстовая рассылка или fallback на main bot
+                await _send_message(send_bot, rec["user_id"], mailing, kb, user_dict)
             sent += 1
             await db.execute("UPDATE mailings SET sent_count=$1 WHERE id=$2", sent, mailing_id)
         except TelegramForbiddenError:
@@ -243,13 +289,16 @@ async def run_mailing(mailing_id: int, bot: Bot,
             logger.warning(f"Mailing {mailing_id}: rate limit {e.retry_after}s")
             await asyncio.sleep(e.retry_after)
             try:
-                await _send_message(send_bot, rec["user_id"], mailing, kb, user_dict)
+                # При retry тоже используем child_media_id если уже есть
+                override = _child_media_id if _child_media_id else None
+                await _send_message(send_bot, rec["user_id"], mailing, kb, user_dict,
+                                    media_override=override)
                 sent += 1
             except Exception:
                 errors += 1
         except Exception as e:
             errors += 1
-            logger.debug(f"Mailing {mailing_id}: failed to {rec['user_id']}: {e}")
+            logger.warning(f"Mailing {mailing_id}: failed to send to {rec['user_id']}: {e}")
 
         speed = _active_mailings.get(mailing_id, {}).get("speed", "low")
         await asyncio.sleep(SPEEDS.get(speed, 0.08))
@@ -295,19 +344,29 @@ async def _send_message(
     mailing: dict,
     kb: InlineKeyboardMarkup | None,
     user_dict: dict,
-):
-    """Отправляет одно сообщение рассылки пользователю."""
-    raw_text   = mailing.get("text") or ""
-    media_id   = mailing.get("media_file_id")
-    media_type = mailing.get("media_type")
+    media_override=None,
+) -> str | None:
+    """
+    Отправляет одно сообщение рассылки пользователю.
+
+    media_override — если передан, используется вместо mailing["media_file_id"].
+    Может быть BufferedInputFile (первая отправка) или str (child file_id, все последующие).
+
+    Возвращает file_id медиа из ответа Telegram (для переиспользования) или None.
+    """
+    raw_text    = mailing.get("text") or ""
+    media_type  = mailing.get("media_type")
     media_below = bool(mailing.get("media_below", False))
+
+    # Что отправляем: override имеет приоритет над сохранённым file_id
+    actual_media = media_override if media_override is not None else mailing.get("media_file_id")
 
     # Подстановка переменных
     text = _substitute_vars(raw_text, user_dict) if raw_text else ""
 
-    protect  = bool(mailing.get("protect_content", False))
-    notify   = bool(mailing.get("notify_users", True))
-    no_prev  = bool(mailing.get("disable_preview", False))
+    protect = bool(mailing.get("protect_content", False))
+    notify  = bool(mailing.get("notify_users", True))
+    no_prev = bool(mailing.get("disable_preview", False))
 
     common = dict(
         reply_markup=kb,
@@ -315,38 +374,51 @@ async def _send_message(
         disable_notification=not notify,
     )
 
-    if media_id and not media_below:
-        # ⬆ — текст сверху, медиа снизу
-        send_kwargs = dict(
-            caption=text or None,
-            parse_mode="HTML",
-            show_caption_above_media=True,
-            **common,
-        )
-        if media_type == "photo":
-            await bot.send_photo(user_id, media_id, has_spoiler=False, **send_kwargs)
-        elif media_type == "video":
-            await bot.send_video(user_id, media_id, **send_kwargs)
-        elif media_type == "document":
-            await bot.send_document(user_id, media_id, **send_kwargs)
+    sent_msg = None
 
-    elif media_id:
+    if actual_media and not media_below:
+        # ⬆ — текст сверху (show_caption_above_media), только для photo/video
+        if media_type == "photo":
+            sent_msg = await bot.send_photo(
+                user_id, actual_media,
+                caption=text or None, parse_mode="HTML",
+                show_caption_above_media=True,
+                **common,
+            )
+        elif media_type == "video":
+            sent_msg = await bot.send_video(
+                user_id, actual_media,
+                caption=text or None, parse_mode="HTML",
+                show_caption_above_media=True,
+                **common,
+            )
+        elif media_type == "document":
+            # document не поддерживает show_caption_above_media — игнорируем флаг
+            sent_msg = await bot.send_document(
+                user_id, actual_media,
+                caption=text or None, parse_mode="HTML",
+                **common,
+            )
+
+    elif actual_media:
         # ⬇ — стандарт: медиа сверху, текст caption'ом снизу
         if media_type == "photo":
-            await bot.send_photo(
-                user_id, media_id,
-                caption=text, parse_mode="HTML",
-                has_spoiler=False, **common,
+            sent_msg = await bot.send_photo(
+                user_id, actual_media,
+                caption=text or None, parse_mode="HTML",
+                **common,
             )
         elif media_type == "video":
-            await bot.send_video(
-                user_id, media_id,
-                caption=text, parse_mode="HTML", **common,
+            sent_msg = await bot.send_video(
+                user_id, actual_media,
+                caption=text or None, parse_mode="HTML",
+                **common,
             )
         elif media_type == "document":
-            await bot.send_document(
-                user_id, media_id,
-                caption=text, parse_mode="HTML", **common,
+            sent_msg = await bot.send_document(
+                user_id, actual_media,
+                caption=text or None, parse_mode="HTML",
+                **common,
             )
 
     else:
@@ -357,6 +429,17 @@ async def _send_message(
             link_preview_options=LinkPreviewOptions(is_disabled=no_prev),
             **common,
         )
+        return None
+
+    # Возвращаем file_id из ответа дочернего бота для переиспользования
+    if sent_msg:
+        if media_type == "photo" and sent_msg.photo:
+            return sent_msg.photo[-1].file_id
+        if media_type == "video" and sent_msg.video:
+            return sent_msg.video.file_id
+        if media_type == "document" and sent_msg.document:
+            return sent_msg.document.file_id
+    return None
 
 
 

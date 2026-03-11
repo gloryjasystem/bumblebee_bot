@@ -322,7 +322,7 @@ def _kb_draft(m: dict) -> InlineKeyboardMarkup:
     _below       = bool(m.get("media_below", False))
     media_icon   = f"📎 Медиа: {'⬇' if _below else '⬆'}"
     preview_icon = "👁 Превью: да" if not m.get("disable_preview") else "👁 Превью: нет"
-    notify_icon  = f"🔔 Уведомить: {_yn(m.get('notify_users', True))}"
+    notify_icon  = f"{'🔔' if m.get('notify_users', True) else '🔕'} Уведомить: {_yn(m.get('notify_users', True))}"
     protect_icon = f"🔒 Защитить: {_yn(m.get('protect_content', False))}"
     pin_icon     = f"📌 Закрепить: {'24ч' if m.get('pin_message', False) else 'нет'}"
     delete_icon  = f"🗑 Удалить: {'24ч' if m.get('delete_after_send', False) else 'нет'}"

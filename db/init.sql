@@ -278,3 +278,6 @@ ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS join_limit_count        INTEGER  
 
 -- Позиция медиа в рассылке: false = сверху (caption), true = снизу (отдельным сообщением)
 ALTER TABLE mailings ADD COLUMN IF NOT EXISTS media_below BOOLEAN DEFAULT false;
+
+-- Медиа (фото) для сообщения капчи: file_id фотографии
+ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS captcha_media TEXT;

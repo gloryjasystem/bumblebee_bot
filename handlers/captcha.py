@@ -7,6 +7,7 @@ handlers/captcha.py — Капча «Я не робот».
 import asyncio
 import logging
 import random
+from datetime import datetime
 from aiogram import Router, F, Bot
 from aiogram.types import (
     CallbackQuery, ChatJoinRequest,
@@ -17,6 +18,21 @@ import db.pool as db
 
 logger = logging.getLogger(__name__)
 router = Router()
+
+
+def _fill_captcha_text(template: str, user, chat_title: str) -> str:
+    """Подставляет переменные {name}, {allname}, {username}, {chat}, {day} в текст капчи."""
+    full_name = ((
+        (user.first_name or "") + " " + (user.last_name or "")
+    ).strip() or user.first_name or "")
+    return (
+        template
+        .replace("{name}",    user.first_name or "")
+        .replace("{allname}", full_name)
+        .replace("{username}", f"@{user.username}" if user.username else user.first_name or "")
+        .replace("{chat}",  chat_title)
+        .replace("{day}",   datetime.now().strftime("%d.%m.%Y"))
+    )
 
 # Хранилище pending-заявок: {(chat_id, user_id): ChatJoinRequest}
 _pending: dict[tuple[int, int], ChatJoinRequest] = {}
@@ -63,13 +79,14 @@ async def send_captcha(bot: Bot, event: ChatJoinRequest, settings_row: dict):
 
     # ── Простая капча ──────────────────────────────────────────
     if captcha_type == "simple":
-        text = (
+        raw_text = (
             settings_row.get("captcha_text")
-            or f"👋 Привет, <b>{user.first_name}</b>!\n\n"
-               f"Прежде чем войти в <b>{event.chat.title}</b>,\n"
+            or f"👋 Привет, <b>{{name}}</b>!\n\n"
+               f"Прежде чем войти в <b>{{chat}}</b>,\n"
                f"докажи что ты не робот — нажми кнопку ниже ✅\n\n"
                f"⏱ У тебя {timer_min} мин."
         )
+        text = _fill_captcha_text(raw_text, user, event.chat.title)
         kb = InlineKeyboardMarkup(inline_keyboard=[[
             InlineKeyboardButton(
                 text="✅ Я не робот",
@@ -80,7 +97,7 @@ async def send_captcha(bot: Bot, event: ChatJoinRequest, settings_row: dict):
     # ── Рандомная капча ────────────────────────────────────────
     elif captcha_type == "random":
         emoji_set_raw = settings_row.get("captcha_emoji_set") or "🍕🍔🌭🌮"
-        # Разбиваем строку на отдельные эмодзи (каждый эмодзи = 1-2 символа Unicode)
+        # Разбиваем строку на отдельные эмоджи (каждый эмодзи = 1-2 символа Unicode)
         emojis = _split_emojis(emoji_set_raw)
         if len(emojis) < 2:
             emojis = ["🍕", "🍔", "🌭", "🌮"]
@@ -91,12 +108,13 @@ async def send_captcha(bot: Bot, event: ChatJoinRequest, settings_row: dict):
         random.shuffle(options)
         _expected[key] = correct
 
-        text = (
+        raw_text = (
             settings_row.get("captcha_text")
-            or f"👋 Привет, <b>{user.first_name}</b>!\n\n"
-               f"Чтобы войти в <b>{event.chat.title}</b>, нажми на: <b>{correct}</b>\n\n"
+            or f"👋 Привет, <b>{{name}}</b>!\n\n"
+               f"Чтобы войти в <b>{{chat}}</b>, нажми на: <b>{correct}</b>\n\n"
                f"⏱ У тебя {timer_min} мин."
         )
+        text = _fill_captcha_text(raw_text, user, event.chat.title)
         kb = InlineKeyboardMarkup(inline_keyboard=[[
             InlineKeyboardButton(
                 text=e,
@@ -110,10 +128,16 @@ async def send_captcha(bot: Bot, event: ChatJoinRequest, settings_row: dict):
         _pending.pop(key, None)
         return
 
+    media_id = settings_row.get("captcha_media")
     try:
-        msg = await bot.send_message(
-            user.id, text, parse_mode="HTML", reply_markup=kb,
-        )
+        if media_id:
+            msg = await bot.send_photo(
+                user.id, photo=media_id, caption=text, parse_mode="HTML", reply_markup=kb,
+            )
+        else:
+            msg = await bot.send_message(
+                user.id, text, parse_mode="HTML", reply_markup=kb,
+            )
         asyncio.create_task(
             _captcha_timeout(bot, event, settings_row, msg.message_id)
         )
@@ -155,13 +179,14 @@ async def send_captcha_group(
 
     # ── Простая капча ──────────────────────────────────────────
     if captcha_type == "simple":
-        text = (
+        raw_text = (
             settings_row.get("captcha_text")
-            or f"👋 Привет, <b>{user.first_name}</b>!\n\n"
-               f"Чтобы войти в <b>{chat_title}</b>,\n"
+            or f"👋 Привет, <b>{{name}}</b>!\n\n"
+               f"Чтобы войти в <b>{{chat}}</b>,\n"
                f"докажи что ты не робот — нажми кнопку ниже ✅\n\n"
                f"⏱ У тебя {timer_min} мин."
         )
+        text = _fill_captcha_text(raw_text, user, chat_title)
         kb = InlineKeyboardMarkup(inline_keyboard=[[
             InlineKeyboardButton(
                 text="✅ Я не робот",
@@ -169,7 +194,7 @@ async def send_captcha_group(
             )
         ]])
 
-    # ── Рандомная капча ────────────────────────────────────────
+    # ── Рандомная капча ──────────────────────────────────────────
     elif captcha_type == "random":
         emoji_set_raw = settings_row.get("captcha_emoji_set") or "🍕🍔🌭🌮"
         emojis = _split_emojis(emoji_set_raw)
@@ -180,12 +205,13 @@ async def send_captcha_group(
         random.shuffle(options)
         _expected[key] = correct
 
-        text = (
+        raw_text = (
             settings_row.get("captcha_text")
-            or f"👋 Привет, <b>{user.first_name}</b>!\n\n"
-               f"Чтобы войти в <b>{chat_title}</b>, нажми на: <b>{correct}</b>\n\n"
+            or f"👋 Привет, <b>{{name}}</b>!\n\n"
+               f"Чтобы войти в <b>{{chat}}</b>, нажми на: <b>{correct}</b>\n\n"
                f"⏱ У тебя {timer_min} мин."
         )
+        text = _fill_captcha_text(raw_text, user, chat_title)
         kb = InlineKeyboardMarkup(inline_keyboard=[[
             InlineKeyboardButton(
                 text=e,
@@ -197,8 +223,12 @@ async def send_captcha_group(
         _pending_group.pop(key, None)
         return
 
+    media_id = settings_row.get("captcha_media")
     try:
-        msg = await bot.send_message(user.id, text, parse_mode="HTML", reply_markup=kb)
+        if media_id:
+            msg = await bot.send_photo(user.id, photo=media_id, caption=text, parse_mode="HTML", reply_markup=kb)
+        else:
+            msg = await bot.send_message(user.id, text, parse_mode="HTML", reply_markup=kb)
         asyncio.create_task(
             _captcha_timeout_group(bot, chat_id, user.id, timer_min, msg.message_id)
         )

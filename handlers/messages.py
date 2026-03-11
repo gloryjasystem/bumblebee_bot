@@ -444,16 +444,26 @@ async def on_ch_cap_set_emoji(callback: CallbackQuery, platform_user: dict | Non
 async def on_ch_captcha_text(callback: CallbackQuery, state: FSMContext, platform_user: dict | None):
     if not platform_user:
         return
-    chat_id = int(callback.data.split(":")[1])
+    chat_id  = int(callback.data.split(":")[1])
+    ch = await db.fetchrow(
+        "SELECT captcha_type FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint",
+        platform_user["user_id"], chat_id,
+    )
+    ctype_label = {"simple": "простой", "random": "рандомной"}.get(
+        (ch.get("captcha_type") or "simple") if ch else "simple", "простой"
+    )
     await state.set_state(MessagesFSM.waiting_for_captcha_text)
     await state.update_data(chat_id=chat_id, owner_id=platform_user["user_id"])
     await callback.message.edit_text(
-        "✏️ <b>Текст капчи</b>\n\n"
-        "Отправьте текст, который будет показан пользователю перед входом.\n\n"
-        "Переменные: <code>{name}</code>, <code>{chat}</code>",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="◀️ Отмена", callback_data=f"ch_captcha:{chat_id}")],
-        ]),
+        f"Пришлите сообщение для <u>{ctype_label} капчи</u>.\n\n"
+        "<b>Переменные:</b>\n"
+        "├ Имя: <code>{name}</code>\n"
+        "├ ФИО: <code>{allname}</code>\n"
+        "├ Юзер: <code>{username}</code>\n"
+        "├ Площадка: <code>{chat}</code>\n"
+        "└ Текущая дата: <code>{day}</code>\n\n"
+        "ℹ️ Можно прикрепить медиа.",
+        parse_mode="HTML",
     )
     await callback.answer()
 
@@ -463,16 +473,24 @@ async def on_captcha_text_input(message: Message, state: FSMContext):
     data     = await state.get_data()
     chat_id  = data["chat_id"]
     owner_id = data["owner_id"]
-    text     = sanitize(message.text or "", max_len=512)
+
+    # Поддержка текста и/или фото
+    if message.photo:
+        text     = sanitize(message.caption or "", max_len=1024)
+        media_id = message.photo[-1].file_id   # берём наибольшее разрешение
+    else:
+        text     = sanitize(message.text or "", max_len=1024)
+        media_id = None
+
     await db.execute(
-        "UPDATE bot_chats SET captcha_text=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
-        text, owner_id, chat_id,
+        "UPDATE bot_chats SET captcha_text=$1, captcha_media=$2 WHERE owner_id=$3 AND chat_id=$4::bigint",
+        text, media_id, owner_id, chat_id,
     )
     await state.clear()
     await message.answer(
-        "✅ Текст капчи сохранён.",
+        "Сообщение установлено",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="◀️ К капче", callback_data=f"ch_captcha:{chat_id}")],
+            [InlineKeyboardButton(text="↩ В меню капчи", callback_data=f"ch_captcha:{chat_id}")],
         ]),
     )
 

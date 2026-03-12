@@ -22,9 +22,10 @@ router = Router()
 
 
 class MailingFSM(StatesGroup):
-    waiting_for_text     = State()
-    waiting_for_schedule = State()
-    waiting_for_buttons  = State()
+    waiting_for_text      = State()
+    waiting_for_schedule  = State()
+    waiting_for_buttons   = State()
+    waiting_for_edit_text = State()  # редактирование запланированной рассылки
 
 
 class MassMailingFSM(StatesGroup):
@@ -600,28 +601,29 @@ async def on_mailing_bot_start(callback: CallbackQuery, state: FSMContext,
 
 @router.callback_query(F.data.startswith("mailing_bot_scheduled:"))
 async def on_mailing_bot_scheduled(callback: CallbackQuery, platform_user: dict | None):
-    """Запланированные рассылки на уровне бота."""
+    """Запланированные рассылки на уровне бота (bot-level + channel-level)."""
     if not platform_user:
         return
     child_bot_id = int(callback.data.split(":")[1])
     owner_id = platform_user["user_id"]
 
     rows = await db.fetch(
-        """SELECT m.id, m.text, m.scheduled_at, bc.chat_title
+        """SELECT m.id, m.text, m.scheduled_at
            FROM mailings m
-           JOIN bot_chats bc ON m.chat_id=bc.chat_id AND m.owner_id=bc.owner_id
-           WHERE bc.child_bot_id=$1 AND m.owner_id=$2
+           WHERE m.owner_id=$1
+             AND m.child_bot_id=$2
              AND m.status IN ('pending','scheduled')
-           ORDER BY m.scheduled_at ASC LIMIT 10""",
-        child_bot_id, owner_id,
+           ORDER BY m.scheduled_at ASC LIMIT 15""",
+        owner_id, child_bot_id,
     )
 
     if not rows:
         await callback.message.edit_text(
-            "📅 <b>Запланированные рассылки</b>\n\nНет запланированных рассылок.",
+            "📅 <b>Запланированные</b>\n\nСписок задач ⬇️\n\nНет запланированных рассылок.",
+            parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="◀️ Назад",
-                                       callback_data=f"bs_mailing:{child_bot_id}")],
+                                      callback_data=f"bs_mailing:{child_bot_id}")],
             ]),
         )
         await callback.answer()
@@ -629,21 +631,359 @@ async def on_mailing_bot_scheduled(callback: CallbackQuery, platform_user: dict 
 
     buttons = []
     for r in rows:
-        dt = r["scheduled_at"].strftime("%d.%m %H:%M") if r.get("scheduled_at") else "—"
-        title = (r.get("chat_title") or "")[:10]
+        dt = r["scheduled_at"].strftime("%d.%m.%Y %H:%M") if r.get("scheduled_at") else "—"
         preview = (r["text"] or "")[:20]
         buttons.append([InlineKeyboardButton(
-            text=f"📅 {dt} [{title}] {preview}…",
-            callback_data=f"mailing_view:{r['id']}",
+            text=f"{dt} | {preview}",
+            callback_data=f"ml_scheduled_view:{r['id']}:{child_bot_id}",
         )])
     buttons.append([InlineKeyboardButton(text="◀️ Назад",
                                           callback_data=f"bs_mailing:{child_bot_id}")])
 
     await callback.message.edit_text(
-        "📅 <b>Запланированные рассылки</b>",
+        "📅 <b>Запланированные</b>\n\nСписок задач ⬇️",
+        parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
     )
     await callback.answer()
+
+
+def _kb_scheduled(m: dict, child_bot_id: int) -> InlineKeyboardMarkup:
+    """Клавиатура просмотра запланированной рассылки (скриншот 3)."""
+    mid = m["id"]
+    _below       = bool(m.get("media_below", False))
+    media_icon   = f"📎 Медиа: {'\u2b07' if _below else '\u2b06'}"
+    preview_icon = "👁 Превью: нет" if m.get("disable_preview") else "👁 Превью: да"
+    notify_icon  = f"{'\U0001f514' if m.get('notify_users', True) else '\U0001f515'} Уведомить: {'\u0434\u0430' if m.get('notify_users', True) else '\u043d\u0435\u0442'}"
+    protect_icon = f"🔒 Защитить: {'\u0434\u0430' if m.get('protect_content') else '\u043d\u0435\u0442'}"
+    pin_icon     = f"📌 Закрепить: {'24\u0447' if m.get('pin_message') else '\u043d\u0435\u0442'}"
+    delete_icon  = f"🗑 Удалить: {'24\u0447' if m.get('delete_after_send') else '\u043d\u0435\u0442'}"
+
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✏️ Редактировать",       callback_data=f"ml_sched_edit:{mid}:{child_bot_id}")],
+        [InlineKeyboardButton(text="🔗 URL-кнопки",              callback_data=f"ml_url_buttons:{mid}")],
+        [
+            InlineKeyboardButton(text=media_icon,   callback_data=f"ml_stoggle:{mid}:{child_bot_id}:media"),
+            InlineKeyboardButton(text=preview_icon, callback_data=f"ml_stoggle:{mid}:{child_bot_id}:preview"),
+        ],
+        [
+            InlineKeyboardButton(text=notify_icon,  callback_data=f"ml_stoggle:{mid}:{child_bot_id}:notify"),
+            InlineKeyboardButton(text=protect_icon, callback_data=f"ml_stoggle:{mid}:{child_bot_id}:protect"),
+        ],
+        [
+            InlineKeyboardButton(text=pin_icon,    callback_data=f"ml_stoggle:{mid}:{child_bot_id}:pin"),
+            InlineKeyboardButton(text=delete_icon, callback_data=f"ml_stoggle:{mid}:{child_bot_id}:delete"),
+        ],
+        [InlineKeyboardButton(text="⏰ Изменить время",   callback_data=f"ml_sched_reschedule:{mid}:{child_bot_id}")],
+        [InlineKeyboardButton(text="🚫 Отменить рассылку", callback_data=f"ml_sched_cancel:{mid}:{child_bot_id}")],
+        [InlineKeyboardButton(text="◀️ Назад",               callback_data=f"mailing_bot_scheduled:{child_bot_id}")],
+    ])
+
+
+def _scheduled_settings_text(m: dict) -> str:
+    """Текст блока настроек запланированной рассылки."""
+    scheduled = m.get("scheduled_at")
+    dt_str = scheduled.strftime("%d.%m.%Y %H:%M") if scheduled else "—"
+    return (
+        f"\n\n📅 <b>Дата рассылки:</b> {dt_str}\n"
+        f"🗑 <b>Удалить:</b> {'\u0447ерез 24 часа' if m.get('delete_after_send') else 'нет'}\n"
+        f"📌 <b>Закрепить:</b> {'\u043dа 24 часа' if m.get('pin_message') else 'нет'}"
+    )
+
+
+@router.callback_query(F.data.startswith("ml_scheduled_view:"))
+async def on_ml_scheduled_view(callback: CallbackQuery, platform_user: dict | None):
+    """Открывает запланированную рассылку: эхо-сообщение + меню управления."""
+    if not platform_user:
+        return
+    parts = callback.data.split(":")
+    mid = int(parts[1])
+    child_bot_id = int(parts[2])
+    owner_id = platform_user["user_id"]
+
+    m = await db.fetchrow(
+        "SELECT * FROM mailings WHERE id=$1 AND owner_id=$2", mid, owner_id
+    )
+    if not m:
+        await callback.answer("Рассылка не найдена", show_alert=True)
+        return
+    md = dict(m)
+
+    # Удаляем сообщение-список
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
+
+    # Отправляем эхо-сообщение
+    from services.mailing import _parse_buttons as _pb
+    text = md.get("text") or ""
+    media = md.get("media_file_id")
+    media_type = md.get("media_type")
+    kb_echo = _pb(md.get("url_buttons_raw") or "", md.get("button_color") or "blue")
+    lpo = LinkPreviewOptions(is_disabled=bool(md.get("disable_preview", False)))
+
+    sent_echo = None
+    if media:
+        send_fn = {
+            "photo": callback.message.answer_photo,
+            "video": callback.message.answer_video,
+            "document": callback.message.answer_document,
+        }.get(media_type, callback.message.answer_photo)
+        sent_echo = await send_fn(media, caption=text[:1000] or None,
+                                   parse_mode="HTML", reply_markup=kb_echo)
+    elif text:
+        sent_echo = await callback.message.answer(
+            text[:1200], parse_mode="HTML",
+            link_preview_options=lpo, reply_markup=kb_echo,
+        )
+
+    if sent_echo:
+        _draft_echo_ids[mid] = (sent_echo.message_id, callback.message.chat.id)
+
+    # Меню управления
+    await callback.message.answer(
+        _scheduled_settings_text(md),
+        parse_mode="HTML",
+        reply_markup=_kb_scheduled(md, child_bot_id),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("ml_stoggle:"))
+async def on_ml_stoggle(callback: CallbackQuery, platform_user: dict | None):
+    """Тогглеры настроек для запланированной рассылки."""
+    if not platform_user:
+        return
+    parts = callback.data.split(":")
+    mid = int(parts[1])
+    child_bot_id = int(parts[2])
+    setting = parts[3]
+    owner_id = platform_user["user_id"]
+
+    m = await db.fetchrow("SELECT * FROM mailings WHERE id=$1 AND owner_id=$2", mid, owner_id)
+    if not m:
+        await callback.answer("Черновик не найден", show_alert=True)
+        return
+    md = dict(m)
+
+    if setting == "media":
+        new_val = not bool(md.get("media_below", False))
+        await db.execute("UPDATE mailings SET media_below=$1 WHERE id=$2", new_val, mid)
+    elif setting in _TOGGLE_MAP:
+        col, default = _TOGGLE_MAP[setting]
+        new_val = not (md[col] if md[col] is not None else default)
+        await db.execute(f"UPDATE mailings SET {col}=$1 WHERE id=$2", new_val, mid)
+
+    m = await db.fetchrow("SELECT * FROM mailings WHERE id=$1", mid)
+    md = dict(m)
+
+    # Обновляем эхо
+    prev_echo = _draft_echo_ids.get(mid)
+    if prev_echo:
+        from services.mailing import _parse_buttons as _pb
+        text = md.get("text") or ""
+        media = md.get("media_file_id")
+        media_type = md.get("media_type")
+        kb_echo = _pb(md.get("url_buttons_raw") or "", md.get("button_color") or "blue")
+        lpo = LinkPreviewOptions(is_disabled=bool(md.get("disable_preview", False)))
+        echo_msg_id, echo_chat_id = prev_echo
+        try:
+            if media:
+                await callback.bot.edit_message_caption(
+                    chat_id=echo_chat_id, message_id=echo_msg_id,
+                    caption=text or None, parse_mode="HTML",
+                )
+            else:
+                await callback.bot.edit_message_text(
+                    chat_id=echo_chat_id, message_id=echo_msg_id,
+                    text=text or "(без текста)", parse_mode="HTML",
+                    link_preview_options=lpo,
+                )
+            await callback.bot.edit_message_reply_markup(
+                chat_id=echo_chat_id, message_id=echo_msg_id, reply_markup=kb_echo,
+            )
+        except Exception:
+            pass
+
+    try:
+        await callback.message.edit_text(
+            _scheduled_settings_text(md),
+            parse_mode="HTML",
+            reply_markup=_kb_scheduled(md, child_bot_id),
+        )
+    except Exception:
+        pass
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("ml_sched_cancel:"))
+async def on_ml_sched_cancel(callback: CallbackQuery, platform_user: dict | None):
+    """Отменяет запланированную рассылку."""
+    if not platform_user:
+        return
+    parts = callback.data.split(":")
+    mid = int(parts[1])
+    child_bot_id = int(parts[2])
+    owner_id = platform_user["user_id"]
+
+    await db.execute(
+        "UPDATE mailings SET status='cancelled', scheduled_at=NULL WHERE id=$1 AND owner_id=$2",
+        mid, owner_id,
+    )
+    await _delete_draft_echo(callback.bot, mid)
+
+    await callback.message.edit_text(
+        "✅ <b>Запланированная рассылка отменена.</b>",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="◀️ К списку",
+                                  callback_data=f"mailing_bot_scheduled:{child_bot_id}")],
+        ]),
+    )
+    await callback.answer("Рассылка отменена")
+
+
+@router.callback_query(F.data.startswith("ml_sched_reschedule:"))
+async def on_ml_sched_reschedule(callback: CallbackQuery, state: FSMContext,
+                                  platform_user: dict | None):
+    """Изменить время запланированной рассылки — переиспользуем FSM планирования."""
+    if not platform_user:
+        return
+    parts = callback.data.split(":")
+    mid = int(parts[1])
+    child_bot_id = int(parts[2])
+
+    await state.set_state(MailingFSM.waiting_for_schedule)
+    await state.update_data(mailing_id=str(mid), child_bot_id=child_bot_id)
+
+    now_utc = datetime.now(timezone.utc)
+    now_str = now_utc.strftime("%H:%M")
+    back_cb = f"ml_scheduled_view:{mid}:{child_bot_id}"
+
+    await callback.message.edit_text(
+        "<u>Отправьте новую дату в формате</u>\n"
+        "├ <code>01.01.25 12:00</code>\n"
+        "├ <code>01.01.23, 11:24 (+3)</code>\n"
+        "├ <code>01-01-2023, 11:24 (+3)</code>\n"
+        f"└ <code>{now_str} (+3)</code> [Текущая дата]\n\n"
+        "<blockquote>⏱ Если необходимо, укажите в скобках ваш <a href='https://time.is/UTC'>часовой пояс</a>.</blockquote>\n\n"
+        "<blockquote>⏱ Отправить сейчас: <code>now</code></blockquote>\n\n"
+        "Выберите действие ⬇️",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🚫 Отменить", callback_data=back_cb)],
+        ]),
+        link_preview_options=LinkPreviewOptions(is_disabled=True),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("ml_sched_edit:"))
+async def on_ml_sched_edit(callback: CallbackQuery, state: FSMContext,
+                            platform_user: dict | None):
+    """Переходим в FSM-режим редактирования текста рассылки."""
+    if not platform_user:
+        return
+    parts = callback.data.split(":")
+    mid = int(parts[1])
+    child_bot_id = int(parts[2])
+
+    await state.set_state(MailingFSM.waiting_for_edit_text)
+    await state.update_data(mailing_id=str(mid), child_bot_id=child_bot_id,
+                             owner_id=platform_user["user_id"])
+
+    await _delete_draft_echo(callback.bot, mid)
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
+
+    await callback.message.answer(
+        "✏️ <b>Редактирование рассылки</b>\n\n"
+        "Отправьте новое сообщение для рассылки.\n"
+        "Можно прикрепить медиа.",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🚫 Отмена",
+                                  callback_data=f"ml_scheduled_view:{mid}:{child_bot_id}")],
+        ]),
+    )
+    await callback.answer()
+
+
+@router.message(MailingFSM.waiting_for_edit_text)
+async def on_scheduled_edit_input(message: Message, state: FSMContext):
+    """Получаем новый текст/медиа для запланированной рассылки."""
+    data = await state.get_data()
+    mailing_id = int(data.get("mailing_id", 0))
+    child_bot_id = int(data.get("child_bot_id", 0))
+    owner_id = data.get("owner_id") or message.from_user.id
+
+    text = ""
+    media_file_id = None
+    media_type = None
+
+    if message.text:
+        text = sanitize(message.text, max_len=4096)
+    elif message.caption:
+        text = sanitize(message.caption, max_len=1024)
+
+    if message.photo:
+        media_file_id = message.photo[-1].file_id
+        media_type = "photo"
+    elif message.video:
+        media_file_id = message.video.file_id
+        media_type = "video"
+    elif message.document:
+        media_file_id = message.document.file_id
+        media_type = "document"
+
+    if not text and not media_file_id:
+        await message.answer("⚠️ Отправьте текст или медиа.")
+        return
+
+    # Обновляем черновик
+    if media_file_id:
+        await db.execute(
+            "UPDATE mailings SET text=$1, media_file_id=$2, media_type=$3 WHERE id=$4 AND owner_id=$5",
+            text, media_file_id, media_type, mailing_id, owner_id,
+        )
+    else:
+        await db.execute(
+            "UPDATE mailings SET text=$1, media_file_id=NULL, media_type=NULL WHERE id=$2 AND owner_id=$3",
+            text, mailing_id, owner_id,
+        )
+
+    await state.clear()
+    m = await db.fetchrow("SELECT * FROM mailings WHERE id=$1", mailing_id)
+    md = dict(m)
+
+    # Отправляем обновлённое эхо
+    from services.mailing import _parse_buttons as _pb
+    kb_echo = _pb(md.get("url_buttons_raw") or "", md.get("button_color") or "blue")
+    lpo = LinkPreviewOptions(is_disabled=bool(md.get("disable_preview", False)))
+    sent_echo = None
+    if media_file_id:
+        send_fn = {
+            "photo": message.answer_photo,
+            "video": message.answer_video,
+            "document": message.answer_document,
+        }.get(media_type, message.answer_photo)
+        sent_echo = await send_fn(media_file_id, caption=text[:1000] or None,
+                                   parse_mode="HTML", reply_markup=kb_echo)
+    elif text:
+        sent_echo = await message.answer(text[:1200], parse_mode="HTML",
+                                          link_preview_options=lpo, reply_markup=kb_echo)
+    if sent_echo:
+        _draft_echo_ids[mailing_id] = (sent_echo.message_id, message.chat.id)
+
+    # Меню управления
+    await message.answer(
+        _scheduled_settings_text(md),
+        parse_mode="HTML",
+        reply_markup=_kb_scheduled(md, child_bot_id),
+    )
 
 
 

@@ -3579,13 +3579,17 @@ def _tz_grid_buttons(child_bot_id: int) -> list[list[InlineKeyboardButton]]:
 
 @router.callback_query(F.data.startswith("bs_timezone:"))
 async def on_bs_timezone(callback: CallbackQuery, platform_user: dict | None,
-                         _selected_time: str | None = None):
+                         _selected_time: str | None = None,
+                         _child_bot_id: int | None = None):
     """Экран 2: текущий часовой пояс + время в blockquote.
     _selected_time — время с нажатой кнопки (если пришли из bs_tz_pick).
+    _child_bot_id — если callback.data не bs_timezone:X (например, вызов из bs_tz_pick).
     """
     if not platform_user:
         return
-    child_bot_id = int(callback.data.split(":")[1])
+    # При прямом вызове из bs_tz_pick callback.data нельзя мутировать (модель заморожена),
+    # поэтому child_bot_id передаётся явным параметром.
+    child_bot_id = _child_bot_id if _child_bot_id is not None else int(callback.data.split(":")[1])
     owner_id = platform_user["user_id"]
 
     ch = await _get_bot_first_chat(owner_id, child_bot_id)
@@ -3674,8 +3678,8 @@ async def on_bs_tz_pick(callback: CallbackQuery, platform_user: dict | None):
         tz, child_bot_id, owner_id,
     )
     await callback.answer(f"✅ Часовой пояс: {tz}")
-    callback.data = f"bs_timezone:{child_bot_id}"
-    await on_bs_timezone(callback, platform_user, _selected_time=selected_time)
+    # Не мутируем callback.data (модель заморожена), передаём child_bot_id напрямую
+    await on_bs_timezone(callback, platform_user, _selected_time=selected_time, _child_bot_id=child_bot_id)
 
 
 

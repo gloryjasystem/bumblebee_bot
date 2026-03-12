@@ -1199,8 +1199,8 @@ async def on_schedule_input(message: Message, state: FSMContext):
                 pass
             return
 
-        # Переводим в UTC: вычитаем смещение
-        dt = dt - timedelta(hours=tz_offset)
+        # Переводим в UTC: вычитаем смещение и делаем aware
+        dt = (dt - timedelta(hours=tz_offset)).replace(tzinfo=timezone.utc)
 
     # ── Проверка: дата должна быть в будущем ─────────────────────
     if dt <= now_utc:

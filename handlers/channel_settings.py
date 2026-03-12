@@ -3549,7 +3549,9 @@ _TZ_GRID = [
 
 
 def _tz_grid_buttons(child_bot_id: int) -> list[list[InlineKeyboardButton]]:
-    """Строит сетку кнопок с текущим временем в каждой зоне (4 колонки)."""
+    """Строит сетку кнопок с текущим временем в каждой зоне (4 колонки).
+    Время кодируется в callback_data, чтобы экран 2 показал именно нажатое время.
+    """
     now_utc = datetime.now(dt_timezone.utc)
     rows: list[list[InlineKeyboardButton]] = []
     row: list[InlineKeyboardButton] = []
@@ -3558,10 +3560,11 @@ def _tz_grid_buttons(child_bot_id: int) -> list[list[InlineKeyboardButton]]:
             zi = zoneinfo.ZoneInfo(tz_name)
             label = now_utc.astimezone(zi).strftime("%H:%M")
         except Exception:
-            label = "--:--"
+            label = now_utc.strftime("%H:%M")
+        # Формат: bs_tz_pick:{child_bot_id}:{tz_name}:{HH:MM}
         row.append(InlineKeyboardButton(
             text=label,
-            callback_data=f"bs_tz_pick:{child_bot_id}:{tz_name}",
+            callback_data=f"bs_tz_pick:{child_bot_id}:{tz_name}:{label}",
         ))
         if len(row) == 4:
             rows.append(row)
@@ -3572,8 +3575,11 @@ def _tz_grid_buttons(child_bot_id: int) -> list[list[InlineKeyboardButton]]:
 
 
 @router.callback_query(F.data.startswith("bs_timezone:"))
-async def on_bs_timezone(callback: CallbackQuery, platform_user: dict | None):
-    """Экран 2: текущий часовой пояс + текущее время в blockquote."""
+async def on_bs_timezone(callback: CallbackQuery, platform_user: dict | None,
+                         _selected_time: str | None = None):
+    """Экран 2: текущий часовой пояс + время в blockquote.
+    _selected_time — время с нажатой кнопки (если пришли из bs_tz_pick).
+    """
     if not platform_user:
         return
     child_bot_id = int(callback.data.split(":")[1])
@@ -3582,17 +3588,20 @@ async def on_bs_timezone(callback: CallbackQuery, platform_user: dict | None):
     ch = await _get_bot_first_chat(owner_id, child_bot_id)
     current_tz = ch["timezone"] if ch and ch.get("timezone") else "Europe/Moscow"
 
-    try:
-        zi = zoneinfo.ZoneInfo(current_tz)
-        time_str = datetime.now(dt_timezone.utc).astimezone(zi).strftime("%H:%M")
-    except Exception:
-        time_str = "--:--"
+    if _selected_time:
+        time_str = _selected_time
+    else:
+        try:
+            zi = zoneinfo.ZoneInfo(current_tz)
+            time_str = datetime.now(dt_timezone.utc).astimezone(zi).strftime("%H:%M")
+        except Exception:
+            time_str = "--:--"
 
     await callback.message.edit_text(
         "🌙 <b>Часовой пояс</b>\n\n"
         f"<blockquote>ℹ Сейчас установлен часовой пояс: {current_tz}.</blockquote>\n"
         f"<blockquote>🕐 Текущее время: {time_str}</blockquote>\n\n"
-        "Выберите действие 🦅",
+        "Выберите действие ⬇️",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(
@@ -3610,7 +3619,7 @@ async def on_bs_timezone(callback: CallbackQuery, platform_user: dict | None):
 
 @router.callback_query(F.data.startswith("bs_tz_change:"))
 async def on_bs_tz_change(callback: CallbackQuery, platform_user: dict | None):
-    """Экран 3: сетка времён О‪—‬‪—‬ выбери своё текущее время."""
+    """Экран 3: сетка времён — выбери своё текущее время."""
     if not platform_user:
         return
     child_bot_id = int(callback.data.split(":")[1])
@@ -3633,7 +3642,7 @@ async def on_bs_tz_change(callback: CallbackQuery, platform_user: dict | None):
         f"🌙 <b>Часовой пояс:</b> {current_tz}\n\n"
         "<blockquote>ℹ Для смены часового пояса выберите текущее время "
         "для вашего региона.</blockquote>\n\n"
-        "Выберите действие 🦅",
+        "Выберите действие ⬇️",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=grid),
     )
@@ -3642,12 +3651,19 @@ async def on_bs_tz_change(callback: CallbackQuery, platform_user: dict | None):
 
 @router.callback_query(F.data.startswith("bs_tz_pick:"))
 async def on_bs_tz_pick(callback: CallbackQuery, platform_user: dict | None):
-    """Пользователь нажал на время — сохраняем часовой пояс и возвращаемся на экран 2."""
+    """Пользователь нажал на время — сохраняем часовой пояс и возвращаемся на экран 2.
+    Формат callback_data: bs_tz_pick:{child_bot_id}:{tz_name}:{HH:MM}
+    """
     if not platform_user:
         return
     parts = callback.data.split(":")
+    # parts[0] = 'bs_tz_pick', parts[1] = child_bot_id
+    # parts[2] = region (e.g. 'Europe'), parts[3] = city (e.g. 'Kiev') или время HH:MM
+    # Время всегда последний элемент вида HH:MM (содержит ':')
     child_bot_id = int(parts[1])
-    tz = ":".join(parts[2:])  # IANA tz не содержит ':', но на всякий случай
+    # Время — последний элемент (формат ЧЧ:ММ), часовой пояс — всё между child_bot_id и временем
+    selected_time = parts[-1]  # «18:29»
+    tz = ":".join(parts[2:-1])  # «Europe/Kiev» или «UTC»
     owner_id = platform_user["user_id"]
 
     await db.execute(
@@ -3656,7 +3672,7 @@ async def on_bs_tz_pick(callback: CallbackQuery, platform_user: dict | None):
     )
     await callback.answer(f"✅ Часовой пояс: {tz}")
     callback.data = f"bs_timezone:{child_bot_id}"
-    await on_bs_timezone(callback, platform_user)
+    await on_bs_timezone(callback, platform_user, _selected_time=selected_time)
 
 
 

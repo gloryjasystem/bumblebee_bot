@@ -631,30 +631,29 @@ async def _handle_message(bot: Bot, child_bot_id: int, owner_id: int, message):
         try:
             # Отправляем ответ пользователю через тот же дочерний бот с заголовком
             header = "💬 <b>Ответ от поддержки</b>\n\n"
-            reply_hint = "\n\n──────────────────\n💌 <i>Отправьте своё сообщение</i> 👇"
             sent_msg = None
             if message.text:
                 sent_msg = await bot.send_message(
                     target_user_id,
-                    header + message.text + reply_hint,
+                    header + message.text,
                     parse_mode="HTML",
                 )
             elif message.photo:
-                caption_text = (header + (message.caption or "")) + reply_hint
+                caption_text = header + (message.caption or "")
                 sent_msg = await bot.send_photo(
                     target_user_id, message.photo[-1].file_id,
                     caption=caption_text,
                     parse_mode="HTML",
                 )
             elif message.video:
-                caption_text = (header + (message.caption or "")) + reply_hint
+                caption_text = header + (message.caption or "")
                 sent_msg = await bot.send_video(
                     target_user_id, message.video.file_id,
                     caption=caption_text,
                     parse_mode="HTML",
                 )
             elif message.document:
-                caption_text = (header + (message.caption or "")) + reply_hint
+                caption_text = header + (message.caption or "")
                 sent_msg = await bot.send_document(
                     target_user_id, message.document.file_id,
                     caption=caption_text,
@@ -663,7 +662,7 @@ async def _handle_message(bot: Bot, child_bot_id: int, owner_id: int, message):
             elif message.voice:
                 sent_msg = await bot.send_voice(target_user_id, message.voice.file_id)
             elif message.audio:
-                caption_text = (header + (message.caption or "")) + reply_hint
+                caption_text = header + (message.caption or "")
                 sent_msg = await bot.send_audio(
                     target_user_id, message.audio.file_id,
                     caption=caption_text,
@@ -672,7 +671,7 @@ async def _handle_message(bot: Bot, child_bot_id: int, owner_id: int, message):
             elif message.sticker:
                 await bot.send_message(
                     target_user_id,
-                    header.strip() + reply_hint,
+                    header.strip(),
                     parse_mode="HTML",
                 )
                 sent_msg = await bot.send_sticker(target_user_id, message.sticker.file_id)

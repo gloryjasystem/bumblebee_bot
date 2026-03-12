@@ -687,30 +687,29 @@ async def on_feedback_reply_text(message: Message, state: FSMContext):
     try:
         # Отправляем через дочернего бота с заголовком
         header = "💬 <b>Ответ от поддержки</b>\n\n"
-        reply_hint = "\n\n──────────────────\n💌 <i>Отправьте своё сообщение</i> 👇"
         sent_msg = None
         if message.text:
             sent_msg = await child_bot.send_message(
                 target_user_id,
-                header + message.text + reply_hint,
+                header + message.text,
                 parse_mode="HTML",
             )
         elif message.photo:
-            caption_text = (header + (message.caption or "")) + reply_hint
+            caption_text = header + (message.caption or "")
             sent_msg = await child_bot.send_photo(
                 target_user_id, message.photo[-1].file_id,
                 caption=caption_text,
                 parse_mode="HTML",
             )
         elif message.video:
-            caption_text = (header + (message.caption or "")) + reply_hint
+            caption_text = header + (message.caption or "")
             sent_msg = await child_bot.send_video(
                 target_user_id, message.video.file_id,
                 caption=caption_text,
                 parse_mode="HTML",
             )
         elif message.document:
-            caption_text = (header + (message.caption or "")) + reply_hint
+            caption_text = header + (message.caption or "")
             sent_msg = await child_bot.send_document(
                 target_user_id, message.document.file_id,
                 caption=caption_text,
@@ -719,7 +718,7 @@ async def on_feedback_reply_text(message: Message, state: FSMContext):
         elif message.voice:
             sent_msg = await child_bot.send_voice(target_user_id, message.voice.file_id)
         elif message.audio:
-            caption_text = (header + (message.caption or "")) + reply_hint
+            caption_text = header + (message.caption or "")
             sent_msg = await child_bot.send_audio(
                 target_user_id, message.audio.file_id,
                 caption=caption_text,
@@ -728,7 +727,7 @@ async def on_feedback_reply_text(message: Message, state: FSMContext):
         elif message.sticker:
             await child_bot.send_message(
                 target_user_id,
-                header.strip() + reply_hint,
+                header.strip(),
                 parse_mode="HTML",
             )
             sent_msg = await child_bot.send_sticker(target_user_id, message.sticker.file_id)

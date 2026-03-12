@@ -1421,8 +1421,8 @@ async def on_lim_count(callback: CallbackQuery, platform_user: dict | None):
         platform_user["user_id"], chat_id,
     )
     cycle   = {2: 5, 5: 10, 10: 20, 20: 50, 50: 100, 100: 200, 200: 2}
-    cur     = int(ch["join_limit_count"] if ch and ch.get("join_limit_count") else 2)
-    new_val = cycle.get(cur, 2)
+    cur     = int(ch["join_limit_count"] if ch and ch.get("join_limit_count") else 50)
+    new_val = cycle.get(cur, 50)
     await db.execute(
         "UPDATE bot_chats SET join_limit_count=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
         new_val, platform_user["user_id"], chat_id,
@@ -2152,8 +2152,8 @@ async def on_bs_lim_count(callback: CallbackQuery, platform_user: dict | None):
         owner_id, chat_id,
     )
     cycle = {2: 5, 5: 10, 10: 20, 20: 50, 50: 100, 100: 200, 200: 2}
-    cur   = int((ch["join_limit_count"] if ch and ch.get("join_limit_count") else 2))
-    new_val = cycle.get(cur, 2)
+    cur   = int((ch["join_limit_count"] if ch and ch.get("join_limit_count") else 50))
+    new_val = cycle.get(cur, 50)
     await db.execute(
         "UPDATE bot_chats SET join_limit_count=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
         new_val, owner_id, chat_id,

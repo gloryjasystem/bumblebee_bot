@@ -1496,31 +1496,106 @@ async def on_schedule_input(message: Message, state: FSMContext):
     raw = (message.text or "").strip()
     now_utc = datetime.now(timezone.utc)
 
-    # ── Поддержка "now" — запуск немедленно ──────────────────────
+    # ── Поддержка "now" — НЕМЕДЛЕННЫЙ запуск рассылки ────────────
     if raw.lower() == "now":
-        dt = now_utc
-        tz_offset = 0
-    else:
-        # Парсим смещение часового пояса: (+3), (-5) и т.п.
-        tz_offset = 0
-        tz_match = re.search(r'\(([+-]?\d{1,2})\)', raw)
-        if tz_match:
-            tz_offset = int(tz_match.group(1))
-            raw = re.sub(r'\s*\([+-]?\d{1,2}\)', '', raw).strip()
+        await state.clear()
+        if not mailing_id:
+            await message.answer("❌ Черновик не найден.")
+            return
 
-        # Нормализация: убираем запятые, дефисы → точки
-        raw = raw.replace(',', '').strip()
-        raw = re.sub(r'(\d{1,2})-(\d{1,2})-(\d{2,4})', r'\1.\2.\3', raw)
+        mailing = await db.fetchrow(
+            "SELECT m.*, cb.bot_username FROM mailings m "
+            "LEFT JOIN child_bots cb ON cb.id = m.child_bot_id "
+            "WHERE m.id=$1",
+            int(mailing_id),
+        )
+        if not mailing:
+            await message.answer("❌ Черновик не найден.")
+            return
 
-        dt = None
-        for fmt in ("%d.%m.%y %H:%M", "%d.%m.%Y %H:%M", "%d.%m %H:%M"):
+        mailing_id_int = int(mailing_id)
+        bot_username   = mailing.get("bot_username") or ""
+        child_bot_id   = mailing.get("child_bot_id")
+
+        await db.execute("UPDATE mailings SET status='pending', scheduled_at=NULL WHERE id=$1", mailing_id_int)
+        await _delete_draft_echo(message.bot, mailing_id_int)
+
+        # Удаляем входящее сообщение «now»
+        try:
+            await message.delete()
+        except Exception:
+            pass
+
+        # Начальный прогресс-экран (как в on_mailing_run)
+        progress_text = _mailing_progress_text(mailing_id_int, 0, 0, 0, "running", bot_username)
+        progress_msg = await message.answer(
+            progress_text,
+            parse_mode="HTML",
+            reply_markup=kb_mailing_control(mailing_id_int, False, "low"),
+        )
+
+        upd_chat_id = message.chat.id
+        upd_msg_id  = progress_msg.message_id
+        back_cb     = f"bs_mailing:{child_bot_id}" if child_bot_id else "menu:mailing"
+
+        async def _progress_cb_now(ml_id: int, sent: int, total: int,
+                                    errors: int, status: str):
+            m_row = await db.fetchrow("SELECT started_at FROM mailings WHERE id=$1", ml_id)
+            started_at = m_row["started_at"] if m_row else None
+            text = _mailing_progress_text(ml_id, sent, total, errors, status, bot_username, started_at)
+            kb = kb_mailing_control(ml_id, False, "low") if status == "running" else None
             try:
-                dt = datetime.strptime(raw, fmt)
-                if fmt == "%d.%m %H:%M":
-                    dt = dt.replace(year=now_utc.year)
-                break
-            except ValueError:
-                continue
+                await message.bot.edit_message_text(
+                    text,
+                    chat_id=upd_chat_id,
+                    message_id=upd_msg_id,
+                    parse_mode="HTML",
+                    reply_markup=kb,
+                )
+            except Exception:
+                pass
+            # После завершения — меню рассылки (Скриншот 3)
+            if status in ("done", "cancelled"):
+                try:
+                    await message.bot.send_message(
+                        chat_id=upd_chat_id,
+                        text="📨 <b>Рассылка</b>\n\nВыберите действие ⬇️",
+                        parse_mode="HTML",
+                        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                            [InlineKeyboardButton(text="➕ Создать рассылку",
+                                                  callback_data=f"mailing_bot_start:{child_bot_id}")],
+                            [InlineKeyboardButton(text="📅 Запланированные",
+                                                  callback_data=f"mailing_bot_scheduled:{child_bot_id}")],
+                            [InlineKeyboardButton(text="◀️ Назад",
+                                                  callback_data=back_cb)],
+                        ]),
+                    )
+                except Exception:
+                    pass
+
+        asyncio.create_task(mailing_svc.run_mailing(mailing_id_int, message.bot, _progress_cb_now))
+        return
+
+    # ── Обычный флоу: парсим дату ────────────────────────────────
+    tz_offset = 0
+    tz_match = re.search(r'\(([+-]?\d{1,2})\)', raw)
+    if tz_match:
+        tz_offset = int(tz_match.group(1))
+        raw = re.sub(r'\s*\([+-]?\d{1,2}\)', '', raw).strip()
+
+    # Нормализация: убираем запятые, дефисы → точки
+    raw = raw.replace(',', '').strip()
+    raw = re.sub(r'(\d{1,2})-(\d{1,2})-(\d{2,4})', r'\1.\2.\3', raw)
+
+    dt = None
+    for fmt in ("%d.%m.%y %H:%M", "%d.%m.%Y %H:%M", "%d.%m %H:%M"):
+        try:
+            dt = datetime.strptime(raw, fmt)
+            if fmt == "%d.%m %H:%M":
+                dt = dt.replace(year=now_utc.year)
+            break
+        except ValueError:
+            continue
 
         if dt is None:
             err = await message.answer(

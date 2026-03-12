@@ -1298,6 +1298,7 @@ def kb_limits(ch: dict, back_callback: str | None = None) -> InlineKeyboardMarku
 
 
 async def _show_limits(callback: CallbackQuery, chat_id: int, owner_id: int):
+    from aiogram.exceptions import TelegramBadRequest
     ch = await db.fetchrow(
         "SELECT * FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint",
         owner_id, chat_id,
@@ -1306,13 +1307,16 @@ async def _show_limits(callback: CallbackQuery, chat_id: int, owner_id: int):
         await callback.answer("Площадка не найдена", show_alert=True)
         return
     lk = dict(ch)
-    await callback.message.edit_text(
-        "🔄 <b>Лимит</b>\n\n"
-        "<i>Установите лимит на количество вступлений в течении определённого времени.</i>\n\n"
-        "ⓘ При <u>превышении лимита</u>, бот пришлёт уведомление.",
-        parse_mode="HTML",
-        reply_markup=kb_limits(lk),
-    )
+    try:
+        await callback.message.edit_text(
+            "🔄 <b>Лимит</b>\n\n"
+            "<i>Установите лимит на количество вступлений в течении определённого времени.</i>\n\n"
+            "ⓘ При <u>превышении лимита</u>, бот пришлёт уведомление.",
+            parse_mode="HTML",
+            reply_markup=kb_limits(lk),
+        )
+    except TelegramBadRequest:
+        pass
     await callback.answer()
 
 
@@ -1357,6 +1361,7 @@ async def on_lim_probe(callback: CallbackQuery, platform_user: dict | None):
     """Переключить проверку лимита вкл/выкл."""
     if not platform_user:
         return
+    await callback.answer()  # сразу закрываем, чтобы Telegram не ретраил
     chat_id = int(callback.data.split(":")[1])
     ch = await db.fetchrow(
         "SELECT join_limit_enabled FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint",
@@ -2078,6 +2083,7 @@ async def _get_child_bot_id_by_chat(chat_id: int, owner_id: int) -> int | None:
 async def on_bs_lim_probe(callback: CallbackQuery, platform_user: dict | None):
     if not platform_user:
         return
+    await callback.answer()  # сразу закрываем, чтобы Telegram не ретраил
     chat_id = int(callback.data.split(":")[1])
     owner_id = platform_user["user_id"]
     ch = await db.fetchrow(
@@ -2089,7 +2095,6 @@ async def on_bs_lim_probe(callback: CallbackQuery, platform_user: dict | None):
         "UPDATE bot_chats SET join_limit_enabled=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
         new_val, owner_id, chat_id,
     )
-    await callback.answer("Проверка: " + ("✅ Вкл" if new_val else "☐ Выкл"))
     child_bot_id = await _get_child_bot_id_by_chat(chat_id, owner_id)
     if child_bot_id:
         await _show_bs_limits(callback, child_bot_id, owner_id)

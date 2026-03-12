@@ -1622,7 +1622,22 @@ async def on_schedule_input(message: Message, state: FSMContext):
         asyncio.create_task(mailing_svc.run_mailing(mailing_id_int, message.bot, _progress_cb_now))
         return
 
-    # ── Обычный флоу: парсим дату ────────────────────────────────
+    # ── Обычный флоу: парсим дату ────────────────────────────
+    # Определяем часовой пояс бота (добавляется к оффсету, если пользователь не указал (+N))
+    _bot_tz_offset_hours: float = 0.0
+    if mailing_id:
+        try:
+            import zoneinfo as _zi
+            _cbi = await db.fetchval("SELECT child_bot_id FROM mailings WHERE id=$1", int(mailing_id))
+            if _cbi:
+                _tz_name = await _get_bot_tz(_cbi)
+                _zi_obj = _zi.ZoneInfo(_tz_name)
+                _now_local = now_utc.astimezone(_zi_obj)
+                _bot_tz_offset_hours = _now_local.utcoffset().total_seconds() / 3600
+        except Exception:
+            pass
+
+    tz_offset_given = bool(re.search(r'\([+-]?\d{1,2}\)', raw))
     tz_offset = 0
     tz_match = re.search(r'\(([+-]?\d{1,2})\)', raw)
     if tz_match:
@@ -1660,16 +1675,25 @@ async def on_schedule_input(message: Message, state: FSMContext):
             pass
         return
 
-    # Переводим в UTC: вычитаем смещение и делаем aware
-    dt = (dt - timedelta(hours=tz_offset)).replace(tzinfo=timezone.utc)
+    # Переводим в UTC:
+    # • если пользователь дал явный (+N) — используем его
+    # • если нет — считаем введённое время в TZ бота
+    effective_offset = tz_offset if tz_offset_given else _bot_tz_offset_hours
+    dt = (dt - timedelta(hours=effective_offset)).replace(tzinfo=timezone.utc)
 
-    # ── Проверка: дата должна быть в будущем ─────────────────────
+    # ── Проверка: дата должна быть в будущем ────────────────────
     if dt <= now_utc:
+        # Показываем подсказку в TZ бота (не в UTC)
+        import zoneinfo as _zi_hint
+        _hint_cbi = await db.fetchval("SELECT child_bot_id FROM mailings WHERE id=$1", int(mailing_id)) if mailing_id else None
+        hint_time = (now_utc + timedelta(hours=1)).astimezone(
+            _zi_hint.ZoneInfo(await _get_bot_tz(_hint_cbi))
+        ).strftime('%d.%m.%Y %H:%M')
         err = await message.answer(
             "⏰ <b>Дата уже прошла!</b>\n\n"
             "Укажите дату <b>в будущем</b>.\n"
             "Например, через час: "
-            f"<code>{(now_utc + timedelta(hours=1)).strftime('%d.%m.%Y %H:%M')}</code>",
+            f"<code>{hint_time}</code>",
             parse_mode="HTML",
         )
         # Авто-удаление ошибки через 5 сек

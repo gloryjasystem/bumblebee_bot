@@ -247,8 +247,9 @@ async def on_mass_mailing_text(message: Message, state: FSMContext):
         await message.answer(text[:1200], parse_mode="HTML")
 
     # ── Меню управления
+    _tz = await _get_bot_tz(dict(m).get("child_bot_id"))
     await message.answer(
-        _draft_settings_text(dict(m)) + bots_note,
+        _draft_settings_text(dict(m), _tz) + bots_note,
         parse_mode="HTML",
         reply_markup=_kb_draft(dict(m)),
     )
@@ -364,10 +365,37 @@ def _kb_draft(m: dict) -> InlineKeyboardMarkup:
     ])
 
 
-def _draft_settings_text(m: dict) -> str:
-    """Текст блока настроек под превью."""
+async def _get_bot_tz(child_bot_id: int | None) -> str:
+    """Возвращает IANA-имя часового пояса бота. По умолчанию UTC."""
+    if not child_bot_id:
+        return "UTC"
+    try:
+        row = await db.fetchrow(
+            "SELECT timezone FROM bot_chats WHERE child_bot_id=$1 LIMIT 1",
+            child_bot_id,
+        )
+        return (row["timezone"] or "UTC") if row else "UTC"
+    except Exception:
+        return "UTC"
+
+
+def _draft_settings_text(m: dict, tz_name: str = "UTC") -> str:
+    """Текст блока настроек под превью.
+    tz_name — IANA-зона бота, в которой отображается время.
+    """
+    import zoneinfo as _zi
+    try:
+        zi = _zi.ZoneInfo(tz_name)
+    except Exception:
+        zi = _zi.ZoneInfo("UTC")
     scheduled = m.get("scheduled_at")
-    dt_str = scheduled.strftime("%d.%m.%Y %H:%M") if scheduled else datetime.now(timezone.utc).strftime("%d.%m.%Y %H:%M")
+    if scheduled:
+        # scheduled_at хранится в UTC; переводим в часовой пояс бота
+        dt_local = scheduled.astimezone(zi) if scheduled.tzinfo else scheduled.replace(tzinfo=timezone.utc).astimezone(zi)
+        dt_str = dt_local.strftime("%d.%m.%Y %H:%M")
+    else:
+        # Черновик без даты — показываем текущий момент в TZ бота
+        dt_str = datetime.now(timezone.utc).astimezone(zi).strftime("%d.%m.%Y %H:%M")
     return (
         f"\n\n📅 <b>Дата рассылки:</b> {dt_str}\n"
         f"🗑 <b>Удалить:</b> {'через 24 часа' if m.get('delete_after_send', False) else 'нет'}\n"
@@ -409,6 +437,8 @@ async def _show_draft(callback: CallbackQuery, m: dict):
     lpo = LinkPreviewOptions(is_disabled=disable_prev)
     # Inline-кнопки из url_buttons_raw
     kb = _parse_buttons(m.get("url_buttons_raw") or "", m.get("button_color") or "blue")
+    # Часовой пояс бота для отображения даты рассылки
+    tz_name = await _get_bot_tz(m.get("child_bot_id"))
 
     prev_echo = _draft_echo_ids.get(mid)
 
@@ -451,7 +481,7 @@ async def _show_draft(callback: CallbackQuery, m: dict):
         # ── Редактируем меню на месте ───────────────────────────────
         try:
             await callback.message.edit_text(
-                _draft_settings_text(m),
+                _draft_settings_text(m, tz_name),
                 parse_mode="HTML",
                 reply_markup=_kb_draft(m),
             )
@@ -495,7 +525,7 @@ async def _show_draft(callback: CallbackQuery, m: dict):
 
     # ── Меню управления (настройки + кнопки) ───────────
     await callback.message.answer(
-        _draft_settings_text(m),
+        _draft_settings_text(m, tz_name),
         parse_mode="HTML",
         reply_markup=_kb_draft(m),
     )
@@ -680,14 +710,25 @@ def _kb_scheduled(m: dict, child_bot_id: int) -> InlineKeyboardMarkup:
     ])
 
 
-def _scheduled_settings_text(m: dict) -> str:
-    """Текст блока настроек запланированной рассылки."""
+def _scheduled_settings_text(m: dict, tz_name: str = "UTC") -> str:
+    """Текст блока настроек запланированной рассылки.
+    tz_name — IANA-зона бота, в которой отображается время.
+    """
+    import zoneinfo as _zi
+    try:
+        zi = _zi.ZoneInfo(tz_name)
+    except Exception:
+        zi = _zi.ZoneInfo("UTC")
     scheduled = m.get("scheduled_at")
-    dt_str = scheduled.strftime("%d.%m.%Y %H:%M") if scheduled else "—"
+    if scheduled:
+        dt_local = scheduled.astimezone(zi) if scheduled.tzinfo else scheduled.replace(tzinfo=timezone.utc).astimezone(zi)
+        dt_str = dt_local.strftime("%d.%m.%Y %H:%M")
+    else:
+        dt_str = "—"
     return (
         f"\n\n📅 <b>Дата рассылки:</b> {dt_str}\n"
-        f"🗑 <b>Удалить:</b> {'\u0447ерез 24 часа' if m.get('delete_after_send') else 'нет'}\n"
-        f"📌 <b>Закрепить:</b> {'\u043dа 24 часа' if m.get('pin_message') else 'нет'}"
+        f"🗑 <b>Удалить:</b> {'через 24 часа' if m.get('delete_after_send') else 'нет'}\n"
+        f"📌 <b>Закрепить:</b> {'на 24 часа' if m.get('pin_message') else 'нет'}"
     )
 
 
@@ -742,8 +783,9 @@ async def on_ml_scheduled_view(callback: CallbackQuery, platform_user: dict | No
         _draft_echo_ids[mid] = (sent_echo.message_id, callback.message.chat.id)
 
     # Меню управления
+    _tz = await _get_bot_tz(child_bot_id)
     await callback.message.answer(
-        _scheduled_settings_text(md),
+        _scheduled_settings_text(md, _tz),
         parse_mode="HTML",
         reply_markup=_kb_scheduled(md, child_bot_id),
     )
@@ -806,9 +848,10 @@ async def on_ml_stoggle(callback: CallbackQuery, platform_user: dict | None):
         except Exception:
             pass
 
+    _tz = await _get_bot_tz(child_bot_id)
     try:
         await callback.message.edit_text(
-            _scheduled_settings_text(md),
+            _scheduled_settings_text(md, _tz),
             parse_mode="HTML",
             reply_markup=_kb_scheduled(md, child_bot_id),
         )
@@ -979,8 +1022,9 @@ async def on_scheduled_edit_input(message: Message, state: FSMContext):
         _draft_echo_ids[mailing_id] = (sent_echo.message_id, message.chat.id)
 
     # Меню управления
+    _tz = await _get_bot_tz(child_bot_id)
     await message.answer(
-        _scheduled_settings_text(md),
+        _scheduled_settings_text(md, _tz),
         parse_mode="HTML",
         reply_markup=_kb_scheduled(md, child_bot_id),
     )
@@ -1177,8 +1221,9 @@ async def on_mailing_text(message: Message, state: FSMContext):
 
     # ── Меню управления
     try:
+        _tz = await _get_bot_tz(dict(m).get("child_bot_id"))
         await message.answer(
-            _draft_settings_text(dict(m)),
+            _draft_settings_text(dict(m), _tz),
             parse_mode="HTML",
             reply_markup=_kb_draft(dict(m)),
         )
@@ -1429,8 +1474,9 @@ async def on_mailing_buttons_input(message: Message, state: FSMContext):
         _draft_echo_ids[mid] = (sent_echo.message_id, tg_chat_id)
 
     # ── Меню настроек черновика ─────────────────────────────────
+    _tz = await _get_bot_tz(m.get("child_bot_id"))
     await message.answer(
-        _draft_settings_text(m),
+        _draft_settings_text(m, _tz),
         parse_mode="HTML",
         reply_markup=_kb_draft(m),
     )
@@ -1709,8 +1755,9 @@ async def on_schedule_input(message: Message, state: FSMContext):
                 _draft_echo_ids[int(mailing_id)] = (sent_echo.message_id, message.chat.id)
 
             # Меню черновика с кнопкой «Сохранить»
+            _tz = await _get_bot_tz(md.get("child_bot_id"))
             await message.answer(
-                _draft_settings_text(md),
+                _draft_settings_text(md, _tz),
                 parse_mode="HTML",
                 reply_markup=_kb_draft(md),
             )

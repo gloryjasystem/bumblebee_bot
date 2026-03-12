@@ -17,6 +17,8 @@ class Settings(BaseSettings):
     # Telegram
     bot_token: str
     owner_telegram_id: int
+    # Юзернейм владельца проекта — ему всегда принудительно выдаётся тариф business навсегда
+    owner_username: str = "alextgads"
 
     # Database
     database_url: str

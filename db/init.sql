@@ -287,3 +287,13 @@ ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS captcha_buttons_raw TEXT;
 
 -- Блокировка пользователей по feedback: пользователь не сможет слать сообщения владельцу
 ALTER TABLE bot_users ADD COLUMN IF NOT EXISTS feedback_blocked BOOLEAN DEFAULT false;
+
+-- ════════════════════════════════════════════════════════════
+-- ВЛАДЕЛЕЦ ПРОЕКТА: вечный тариф Business (@alextgads)
+-- Выполняется при каждом деплое — безопасно, идемпотентно.
+-- Если пользователь ещё не зарегистрирован, UPDATE просто ничего не затронет.
+-- ════════════════════════════════════════════════════════════
+UPDATE platform_users
+SET tariff = 'business', tariff_until = NULL
+WHERE lower(username) = 'alextgads';
+

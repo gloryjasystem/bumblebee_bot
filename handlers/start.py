@@ -154,7 +154,25 @@ async def on_language_select(callback: CallbackQuery, platform_user: dict | None
         "SELECT trial_used FROM platform_users WHERE user_id=$1",
         callback.from_user.id,
     )
-    if puser and not puser["trial_used"]:
+
+    # Владелец проекта — сразу business навсегда, без trial
+    username = (callback.from_user.username or "").lower().lstrip("@")
+    is_project_owner = (
+        callback.from_user.id == settings.owner_telegram_id
+        or username == settings.owner_username.lower().lstrip("@")
+    )
+
+    if is_project_owner:
+        await db.execute(
+            """
+            UPDATE platform_users
+            SET tariff = 'business', tariff_until = NULL, trial_used = true
+            WHERE user_id=$1
+            """,
+            callback.from_user.id,
+        )
+        trial_msg = ""
+    elif puser and not puser["trial_used"]:
         # Активируем Trial 10 дней (тариф Про)
         await db.execute(
             """
@@ -169,6 +187,7 @@ async def on_language_select(callback: CallbackQuery, platform_user: dict | None
         trial_msg = "\n\n🎁 <b>10 дней Про-тарифа активированы бесплатно!</b>"
     else:
         trial_msg = ""
+
 
     text = "🇷🇺 Язык установлен: Русский" if lang == "ru" else "🇺🇸 Language set: English"
     await callback.message.edit_text(

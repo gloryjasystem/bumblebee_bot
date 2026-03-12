@@ -297,3 +297,20 @@ UPDATE platform_users
 SET tariff = 'business', tariff_until = NULL
 WHERE lower(username) = 'alextgads';
 
+-- Tracking table for pinned/delete-scheduled mailing messages
+CREATE TABLE IF NOT EXISTS mailing_sent_messages (
+    id              BIGSERIAL PRIMARY KEY,
+    mailing_id      INTEGER REFERENCES mailings(id) ON DELETE CASCADE,
+    child_bot_id    INTEGER REFERENCES child_bots(id) ON DELETE SET NULL,
+    tg_user_id      BIGINT NOT NULL,           -- recipient user_id (private chat)
+    tg_message_id   INTEGER NOT NULL,          -- message_id returned by Telegram
+    pin_until       TIMESTAMPTZ,               -- NULL = no pin; set to sent_at + 24h when pin_message=True
+    delete_after    BOOLEAN DEFAULT false,     -- mirrors delete_after_send from mailing
+    unpinned        BOOLEAN DEFAULT false,     -- true once unpin+delete has been executed
+    created_at      TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_msm_pending
+    ON mailing_sent_messages(pin_until, unpinned)
+    WHERE pin_until IS NOT NULL AND unpinned = false;
+
+

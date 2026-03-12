@@ -255,32 +255,55 @@ async def run_mailing(mailing_id: int, bot: Bot,
         user_dict["_chat_title"] = chat_title
 
         try:
+            sent_file_id = None
+            sent_msg_id = None
             if _media_bytes is not None and _child_media_id is None:
                 # Первая медиа-отправка: загружаем файл на серверы дочернего бота
                 from aiogram.types import BufferedInputFile
                 filename = f"media.{mailing.get('media_type', 'bin')}"
                 override = BufferedInputFile(_media_bytes, filename=filename)
-                child_id = await _send_message(
+                sent_file_id, sent_msg_id = await _send_message(
                     send_bot, rec["user_id"], mailing, kb, user_dict,
                     media_override=override,
                 )
-                if child_id:
-                    _child_media_id = child_id
+                if sent_file_id:
+                    _child_media_id = sent_file_id
                     logger.info(
                         f"[MAILING {mailing_id}] child_file_id obtained: "
-                        f"{child_id[:20]}..."
+                        f"{sent_file_id[:20]}..."
                     )
             elif _child_media_id is not None:
                 # Все последующие: мгновенно через child file_id
-                await _send_message(
+                sent_file_id, sent_msg_id = await _send_message(
                     send_bot, rec["user_id"], mailing, kb, user_dict,
                     media_override=_child_media_id,
                 )
             else:
                 # Текстовая рассылка или fallback на main bot
-                await _send_message(send_bot, rec["user_id"], mailing, kb, user_dict)
+                sent_file_id, sent_msg_id = await _send_message(send_bot, rec["user_id"], mailing, kb, user_dict)
             sent += 1
             await db.execute("UPDATE mailings SET sent_count=$1 WHERE id=$2", sent, mailing_id)
+            # Сохраняем message_id для будущего открепления/удаления
+            if sent_msg_id and (mailing.get("pin_message") or mailing.get("delete_after_send")):
+                from datetime import timedelta
+                _pin_until = None
+                if mailing.get("pin_message"):
+                    from datetime import datetime, timezone
+                    _pin_until = datetime.now(timezone.utc) + timedelta(hours=24)
+                try:
+                    await db.execute(
+                        """INSERT INTO mailing_sent_messages
+                           (mailing_id, child_bot_id, tg_user_id, tg_message_id, pin_until, delete_after)
+                           VALUES ($1, $2, $3, $4, $5, $6)""",
+                        mailing_id,
+                        mailing.get("child_bot_id"),
+                        rec["user_id"],
+                        sent_msg_id,
+                        _pin_until,
+                        bool(mailing.get("delete_after_send", False)),
+                    )
+                except Exception as _db_err:
+                    logger.debug(f"[MAILING {mailing_id}] msm insert error: {_db_err}")
         except TelegramForbiddenError:
             errors += 1
             await db.execute(
@@ -293,9 +316,29 @@ async def run_mailing(mailing_id: int, bot: Bot,
             try:
                 # При retry тоже используем child_media_id если уже есть
                 override = _child_media_id if _child_media_id else None
-                await _send_message(send_bot, rec["user_id"], mailing, kb, user_dict,
+                _, retry_msg_id = await _send_message(send_bot, rec["user_id"], mailing, kb, user_dict,
                                     media_override=override)
                 sent += 1
+                if retry_msg_id and (mailing.get("pin_message") or mailing.get("delete_after_send")):
+                    from datetime import timedelta
+                    _pin_until = None
+                    if mailing.get("pin_message"):
+                        from datetime import datetime, timezone
+                        _pin_until = datetime.now(timezone.utc) + timedelta(hours=24)
+                    try:
+                        await db.execute(
+                            """INSERT INTO mailing_sent_messages
+                               (mailing_id, child_bot_id, tg_user_id, tg_message_id, pin_until, delete_after)
+                               VALUES ($1, $2, $3, $4, $5, $6)""",
+                            mailing_id,
+                            mailing.get("child_bot_id"),
+                            rec["user_id"],
+                            retry_msg_id,
+                            _pin_until,
+                            bool(mailing.get("delete_after_send", False)),
+                        )
+                    except Exception:
+                        pass
             except Exception:
                 errors += 1
         except Exception as e:
@@ -347,14 +390,15 @@ async def _send_message(
     kb: InlineKeyboardMarkup | None,
     user_dict: dict,
     media_override=None,
-) -> str | None:
+) -> tuple[str | None, int | None]:
     """
     Отправляет одно сообщение рассылки пользователю.
 
     media_override — если передан, используется вместо mailing["media_file_id"].
     Может быть BufferedInputFile (первая отправка) или str (child file_id, все последующие).
 
-    Возвращает file_id медиа из ответа Telegram (для переиспользования) или None.
+    Возвращает (file_id медиа, message_id) — file_id для переиспользования,
+    message_id для закрепления/удаления через 24 часа. Оба могут быть None.
     """
     raw_text    = mailing.get("text") or ""
     media_type  = mailing.get("media_type")
@@ -369,6 +413,7 @@ async def _send_message(
     protect = bool(mailing.get("protect_content", False))
     notify  = bool(mailing.get("notify_users", True))
     no_prev = bool(mailing.get("disable_preview", False))
+    do_pin  = bool(mailing.get("pin_message", False))
 
     common = dict(
         reply_markup=kb,
@@ -425,23 +470,39 @@ async def _send_message(
 
     else:
         from aiogram.types import LinkPreviewOptions
-        await bot.send_message(
+        sent_msg = await bot.send_message(
             user_id, text,
             parse_mode="HTML",
             link_preview_options=LinkPreviewOptions(is_disabled=no_prev),
             **common,
         )
-        return None
+        msg_id = sent_msg.message_id if sent_msg else None
+        # Закрепить текстовое сообщение если нужно
+        if do_pin and msg_id:
+            try:
+                await bot.pin_chat_message(user_id, msg_id, disable_notification=True)
+            except Exception:
+                pass
+        return None, msg_id
 
-    # Возвращаем file_id из ответа дочернего бота для переиспользования
+    msg_id = sent_msg.message_id if sent_msg else None
+
+    # Закрепить медиа-сообщение если нужно
+    if do_pin and msg_id:
+        try:
+            await bot.pin_chat_message(user_id, msg_id, disable_notification=True)
+        except Exception:
+            pass
+
+    # Возвращаем (file_id, message_id) из ответа дочернего бота
     if sent_msg:
         if media_type == "photo" and sent_msg.photo:
-            return sent_msg.photo[-1].file_id
+            return sent_msg.photo[-1].file_id, msg_id
         if media_type == "video" and sent_msg.video:
-            return sent_msg.video.file_id
+            return sent_msg.video.file_id, msg_id
         if media_type == "document" and sent_msg.document:
-            return sent_msg.document.file_id
-    return None
+            return sent_msg.document.file_id, msg_id
+    return None, msg_id
 
 
 

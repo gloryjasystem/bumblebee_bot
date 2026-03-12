@@ -42,7 +42,18 @@ def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
         misfire_grace_time=3600,
     )
 
+    # ── Каждые 15 мин: открепить/удалить истёкшие сообщения рассылки ──
+    scheduler.add_job(
+        cleanup_pinned_mailing_msgs,
+        "interval",
+        minutes=15,
+        id="cleanup_pinned_mailing_msgs",
+        replace_existing=True,
+        misfire_grace_time=300,
+    )
+
     return scheduler
+
 
 
 # ── Снятие тарифа при истечении ───────────────────────────────
@@ -168,3 +179,98 @@ async def _notify_expiring(user_id: int, tariff: str, until, days: int):
         )
     except Exception:
         pass
+
+
+# ── Открепление / удаление сообщений рассылки через 24ч ──────
+
+async def cleanup_pinned_mailing_msgs():
+    """
+    Открепляет и/или удаляет сообщения рассылки у получателей,
+    у которых истёк 24-часовой срок закрепления.
+    Запускается каждые 15 минут.
+    """
+    import db.pool as db
+    from services.security import decrypt_token
+
+    rows = await db.fetch(
+        """
+        SELECT id, child_bot_id, tg_user_id, tg_message_id, delete_after
+        FROM mailing_sent_messages
+        WHERE pin_until IS NOT NULL
+          AND pin_until <= now()
+          AND unpinned = false
+        LIMIT 500
+        """
+    )
+
+    if not rows:
+        return
+
+    logger.info(f"[cleanup_pinned] found {len(rows)} messages to unpin/delete")
+
+    # Группируем по child_bot_id, чтобы создавать бот-инстанс по одному разу
+    from collections import defaultdict
+    by_bot: dict[int | None, list] = defaultdict(list)
+    for row in rows:
+        by_bot[row["child_bot_id"]].append(row)
+
+    for child_bot_id, bot_rows in by_bot.items():
+        send_bot = _bot  # fallback — основной бот
+        child_bot_instance = None
+
+        if child_bot_id:
+            try:
+                bot_row = await db.fetchrow(
+                    "SELECT token_encrypted FROM child_bots WHERE id=$1",
+                    child_bot_id,
+                )
+                if bot_row and bot_row.get("token_encrypted"):
+                    from aiogram import Bot as AioBot
+                    child_bot_instance = AioBot(token=decrypt_token(bot_row["token_encrypted"]))
+                    send_bot = child_bot_instance
+            except Exception as e:
+                logger.warning(f"[cleanup_pinned] child bot {child_bot_id} init error: {e}")
+
+        processed_ids = []
+        for row in bot_rows:
+            user_id  = row["tg_user_id"]
+            msg_id   = row["tg_message_id"]
+            do_delete = bool(row["delete_after"])
+            try:
+                # Откреплять всегда (если pin_until задан)
+                try:
+                    await send_bot.unpin_chat_message(
+                        chat_id=user_id,
+                        message_id=msg_id,
+                    )
+                except Exception:
+                    pass  # боты не могут открепить в ЛС — игнорируем
+
+                # Удалить если надо
+                if do_delete:
+                    try:
+                        await send_bot.delete_message(
+                            chat_id=user_id,
+                            message_id=msg_id,
+                        )
+                    except Exception:
+                        pass
+            except Exception as e:
+                logger.debug(f"[cleanup_pinned] row {row['id']} error: {e}")
+            finally:
+                processed_ids.append(row["id"])
+
+        # Помечаем обработанные строки
+        if processed_ids:
+            await db.execute(
+                "UPDATE mailing_sent_messages SET unpinned=true WHERE id = ANY($1::bigint[])",
+                processed_ids,
+            )
+
+        if child_bot_instance:
+            try:
+                await child_bot_instance.session.close()
+            except Exception:
+                pass
+
+    logger.info(f"[cleanup_pinned] done, processed {len(rows)} rows")

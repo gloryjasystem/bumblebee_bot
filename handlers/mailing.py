@@ -345,7 +345,15 @@ def _kb_draft(m: dict) -> InlineKeyboardMarkup:
         ],
         [
             InlineKeyboardButton(text="🗓 Запланировать", callback_data=f"mailing_schedule:{m['chat_id']}:{mid}"),
-            InlineKeyboardButton(text="➡ Запустить",      callback_data=f"mailing_run:{m['chat_id']}:{mid}"),
+            # Если дата уже запланирована → «Сохранить», иначе «Запустить»
+            InlineKeyboardButton(
+                text="💾 Сохранить" if m.get("scheduled_at") else "➡ Запустить",
+                callback_data=(
+                    f"mailing_save:{m['chat_id']}:{mid}"
+                    if m.get("scheduled_at")
+                    else f"mailing_run:{m['chat_id']}:{mid}"
+                ),
+            ),
         ],
         # Кнопка «Назад»: если chat_id=None — рассылка на уровне бота → возвращаем на bs_mailing
         [InlineKeyboardButton(
@@ -1144,13 +1152,13 @@ async def on_mailing_schedule(callback: CallbackQuery, state: FSMContext, platfo
 @router.message(MailingFSM.waiting_for_schedule)
 async def on_schedule_input(message: Message, state: FSMContext):
     data = await state.get_data()
-    chat_id    = data.get("chat_id")
     mailing_id = data.get("mailing_id")
     raw = (message.text or "").strip()
+    now_utc = datetime.now(timezone.utc)
 
-    # Поддержка "now" — запуск немедленно
+    # ── Поддержка "now" — запуск немедленно ──────────────────────
     if raw.lower() == "now":
-        dt = datetime.now(timezone.utc)
+        dt = now_utc
         tz_offset = 0
     else:
         # Парсим смещение часового пояса: (+3), (-5) и т.п.
@@ -1158,58 +1166,209 @@ async def on_schedule_input(message: Message, state: FSMContext):
         tz_match = re.search(r'\(([+-]?\d{1,2})\)', raw)
         if tz_match:
             tz_offset = int(tz_match.group(1))
-            # Убираем блок с часовым поясом из строки
             raw = re.sub(r'\s*\([+-]?\d{1,2}\)', '', raw).strip()
 
-        # Убираем запятые (01.01.23, 11:24 → 01.01.23 11:24)
+        # Нормализация: убираем запятые, дефисы → точки
         raw = raw.replace(',', '').strip()
-        # Нормализуем разделители дат (01-01-2023 → 01.01.2023)
         raw = re.sub(r'(\d{1,2})-(\d{1,2})-(\d{2,4})', r'\1.\2.\3', raw)
 
         dt = None
-        # Пробуем форматы с 2-значным и 4-значным годом
         for fmt in ("%d.%m.%y %H:%M", "%d.%m.%Y %H:%M", "%d.%m %H:%M"):
             try:
                 dt = datetime.strptime(raw, fmt)
                 if fmt == "%d.%m %H:%M":
-                    dt = dt.replace(year=datetime.now(timezone.utc).year)
+                    dt = dt.replace(year=now_utc.year)
                 break
             except ValueError:
                 continue
 
-        if not dt:
-            await message.answer(
-                "❌ Неверный формат даты.\n\n"
+        if dt is None:
+            err = await message.answer(
+                "❌ <b>Неверный формат даты.</b>\n\n"
                 "Используйте например:\n"
                 "<code>01.03.25 12:00</code>\n"
                 "<code>01.03.2026 14:00 (+3)</code>\n"
                 "<code>now</code> — для немедленной отправки",
                 parse_mode="HTML",
             )
+            # Авто-удаление ошибки через 5 сек
+            await asyncio.sleep(5)
+            try:
+                await err.delete()
+            except Exception:
+                pass
             return
 
-        # Применяем часовой пояс: вычитаем смещение, чтобы получить UTC
+        # Переводим в UTC: вычитаем смещение
         dt = dt - timedelta(hours=tz_offset)
+
+    # ── Проверка: дата должна быть в будущем ─────────────────────
+    if dt <= now_utc:
+        err = await message.answer(
+            "⏰ <b>Дата уже прошла!</b>\n\n"
+            "Укажите дату <b>в будущем</b>.\n"
+            "Например, через час: "
+            f"<code>{(now_utc + timedelta(hours=1)).strftime('%d.%m.%Y %H:%M')}</code>",
+            parse_mode="HTML",
+        )
+        # Авто-удаление ошибки через 5 сек
+        await asyncio.sleep(5)
+        try:
+            await err.delete()
+        except Exception:
+            pass
+        return
+
+    # ── Проверка rate-limit: не чаще 1 рассылки в час ────────────
+    if mailing_id:
+        owner_id_check = data.get("owner_id") or message.from_user.id
+        child_bot_id_check = await db.fetchval(
+            "SELECT child_bot_id FROM mailings WHERE id=$1", int(mailing_id)
+        )
+        conflict = await db.fetchval(
+            """SELECT 1 FROM mailings
+               WHERE owner_id=$1
+                 AND ($2::int IS NULL OR child_bot_id=$2::int)
+                 AND status IN ('scheduled','pending','running')
+                 AND id != $3
+                 AND ABS(EXTRACT(EPOCH FROM (scheduled_at - $4::timestamptz))) < 3600
+               LIMIT 1""",
+            owner_id_check, child_bot_id_check, int(mailing_id), dt,
+        )
+        if conflict:
+            err = await message.answer(
+                "🚫 <b>Слишком часто!</b>\n\n"
+                "Запланированные рассылки можно создавать "
+                "<b>не чаще одного раза в час</b>.\n"
+                "Пожалуйста, выберите другое время.",
+                parse_mode="HTML",
+            )
+            await asyncio.sleep(5)
+            try:
+                await err.delete()
+            except Exception:
+                pass
+            return
 
     await state.clear()
 
     if mailing_id:
         await db.execute(
-            "UPDATE mailings SET scheduled_at=$1, status='scheduled' WHERE id=$2",
+            "UPDATE mailings SET scheduled_at=$1, status='draft' WHERE id=$2",
             dt, int(mailing_id),
         )
-        # Показываем время обратно с учётом (если пользователь указал tz)
-        local_dt = dt + timedelta(hours=tz_offset)
-        tz_str = f" (UTC{'+' if tz_offset >= 0 else ''}{tz_offset})" if tz_offset != 0 else " (UTC)"
-        await message.answer(
-            f"✅ Рассылка запланирована на <b>{local_dt.strftime('%d.%m.%Y %H:%M')}</b>{tz_str}",
-            parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="◀️ К рассылке", callback_data=f"ml_view_draft:{mailing_id}:")],
-            ]),
-        )
+        # Загружаем обновлённый черновик и перерисовываем меню
+        m = await db.fetchrow("SELECT * FROM mailings WHERE id=$1", int(mailing_id))
+        if m:
+            try:
+                await callback_answer_noop(message)
+            except Exception:
+                pass
+            # Удаляем старое эхо и перерисовываем меню черновика
+            await _delete_draft_echo(message.bot, int(mailing_id))
+            # Отправляем обновлённое эхо + меню с кнопкой «Сохранить»
+            local_dt = dt + timedelta(hours=tz_offset)
+            tz_str = f" UTC{'+' if tz_offset >= 0 else ''}{tz_offset}" if tz_offset != 0 else " UTC"
+
+            # Отправляем эхо
+            from services.mailing import _parse_buttons as _pb
+            md = dict(m)
+            text = md.get("text") or ""
+            media = md.get("media_file_id")
+            media_type = md.get("media_type")
+            kb_echo = _pb(md.get("url_buttons_raw") or "", md.get("button_color") or "blue")
+            lpo = LinkPreviewOptions(is_disabled=bool(md.get("disable_preview", False)))
+            sent_echo = None
+            if media:
+                send_fn = {
+                    "photo": message.answer_photo,
+                    "video": message.answer_video,
+                    "document": message.answer_document,
+                }.get(media_type, message.answer_photo)
+                sent_echo = await send_fn(media, caption=text[:1000] or None,
+                                          parse_mode="HTML", reply_markup=kb_echo)
+            elif text:
+                sent_echo = await message.answer(text[:1200], parse_mode="HTML",
+                                                  link_preview_options=lpo)
+            if sent_echo:
+                _draft_echo_ids[int(mailing_id)] = (sent_echo.message_id, message.chat.id)
+
+            # Меню черновика с кнопкой «Сохранить»
+            await message.answer(
+                _draft_settings_text(md),
+                parse_mode="HTML",
+                reply_markup=_kb_draft(md),
+            )
     else:
+        await state.clear()
         await message.answer(f"✅ Запланировано: {dt.strftime('%d.%m.%Y %H:%M')}")
+
+
+async def callback_answer_noop(message: Message) -> None:
+    """Заглушка — нам не нужно отвечать на callback когда мы обрабатываем Message."""
+    pass
+
+
+# ══════════════════════════════════════════════════════════════
+# Сохранение запланированной рассылки
+# ══════════════════════════════════════════════════════════════
+
+@router.callback_query(F.data.startswith("mailing_save:"))
+async def on_mailing_save(callback: CallbackQuery, platform_user: dict | None):
+    """Сохраняет запланированную рассылку (status='scheduled') и показывает экран успеха."""
+    if not platform_user:
+        return
+    parts = callback.data.split(":")
+    mid = int(parts[2]) if len(parts) > 2 and parts[2] else None
+    if not mid:
+        await callback.answer("Черновик не найден", show_alert=True)
+        return
+
+    owner_id = platform_user["user_id"]
+    m = await db.fetchrow(
+        "SELECT * FROM mailings WHERE id=$1 AND owner_id=$2", mid, owner_id
+    )
+    if not m:
+        await callback.answer("Черновик не найден", show_alert=True)
+        return
+
+    scheduled_at = m.get("scheduled_at")
+    if not scheduled_at:
+        await callback.answer("Сначала укажите дату рассылки", show_alert=True)
+        return
+
+    # Сохраняем как 'scheduled'
+    await db.execute(
+        "UPDATE mailings SET status='scheduled' WHERE id=$1 AND owner_id=$2",
+        mid, owner_id,
+    )
+
+    # Удаляем эхо-сообщение черновика
+    await _delete_draft_echo(callback.bot, mid)
+
+    # Определяем child_bot_id для ссылки «В меню рассылки»
+    child_bot_id = m.get("child_bot_id")
+    chat_id_val  = m.get("chat_id")
+    if not child_bot_id and chat_id_val:
+        row = await db.fetchrow(
+            "SELECT child_bot_id FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint",
+            owner_id, chat_id_val,
+        )
+        if row:
+            child_bot_id = row["child_bot_id"]
+
+    back_cb = f"bs_mailing:{child_bot_id}" if child_bot_id else "menu:mailing"
+    dt_str = scheduled_at.strftime("%d.%m.%Y %H:%M") if scheduled_at else "—"
+
+    await callback.message.edit_text(
+        f"✅ <b>Рассылка успешно сохранена.</b>\n\n"
+        f"📅 Дата отправки: <b>{dt_str}</b> (UTC)",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="➡ В меню рассылки", callback_data=back_cb)],
+        ]),
+    )
+    await callback.answer("✅ Рассылка сохранена")
 
 
 # ══════════════════════════════════════════════════════════════

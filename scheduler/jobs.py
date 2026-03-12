@@ -52,6 +52,16 @@ def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
         misfire_grace_time=300,
     )
 
+    # ── Каждые 60 сек: запускаем запланированные рассылки ─────────
+    scheduler.add_job(
+        run_scheduled_mailings,
+        "interval",
+        seconds=60,
+        id="run_scheduled_mailings",
+        replace_existing=True,
+        misfire_grace_time=120,
+    )
+
     return scheduler
 
 
@@ -274,3 +284,38 @@ async def cleanup_pinned_mailing_msgs():
                 pass
 
     logger.info(f"[cleanup_pinned] done, processed {len(rows)} rows")
+
+
+# ── Автозапуск запланированных рассылок ──────────────────────
+
+async def run_scheduled_mailings():
+    """
+    Каждые 60 секунд проверяет запланированные рассылки и запускает те,
+    у которых scheduled_at <= now(). Запускает через services.mailing.run_mailing.
+    """
+    import db.pool as db
+    from services.mailing import run_mailing
+
+    if not _bot:
+        return
+
+    rows = await db.fetch(
+        """
+        UPDATE mailings
+        SET status = 'pending'
+        WHERE status = 'scheduled'
+          AND scheduled_at IS NOT NULL
+          AND scheduled_at <= now()
+        RETURNING id
+        """
+    )
+
+    if not rows:
+        return
+
+    logger.info(f"[scheduled_mailings] launching {len(rows)} mailings")
+    import asyncio
+    for row in rows:
+        mailing_id = row["id"]
+        logger.info(f"[scheduled_mailings] starting mailing id={mailing_id}")
+        asyncio.create_task(run_mailing(mailing_id, _bot))

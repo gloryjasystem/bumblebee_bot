@@ -815,9 +815,7 @@ async def _handle_message(bot: Bot, child_bot_id: int, owner_id: int, message):
                 try:
                     await bot.send_message(
                         user.id,
-                        "✅ <b>Сообщение отправлено!</b>\n"
-                        "👍 Мы получили ваш запрос и скоро ответим.",
-                        parse_mode="HTML",
+                        "Сообщение отправлено!",
                     )
                 except Exception:
                     pass

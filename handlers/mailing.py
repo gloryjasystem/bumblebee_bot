@@ -6,7 +6,8 @@ import logging
 from datetime import datetime, timezone
 from aiogram import Router, F, Bot
 from aiogram.types import (
-    Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+    Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton,
+    LinkPreviewOptions
 )
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -385,14 +386,17 @@ async def _show_draft(callback: CallbackQuery, m: dict):
     При повторном вызове (тогглер) — редактирует эхо и меню на месте.
     """
     from services.mailing import _parse_buttons
-    mid         = m["id"]
-    text        = m.get("text") or ""
-    media       = m.get("media_file_id")
-    media_type  = m.get("media_type")
-    media_below = bool(m.get("media_below", False))
-    tg_chat_id  = callback.message.chat.id
+    mid          = m["id"]
+    text         = m.get("text") or ""
+    media        = m.get("media_file_id")
+    media_type   = m.get("media_type")
+    media_below  = bool(m.get("media_below", False))
+    disable_prev = bool(m.get("disable_preview", False))
+    tg_chat_id   = callback.message.chat.id
     # show_caption_above_media поддерживается только для фото/видео
     supports_above = media_type in ("photo", "video")
+    # link_preview_options для текстовых сообщений
+    lpo = LinkPreviewOptions(is_disabled=disable_prev)
     # Inline-кнопки из url_buttons_raw
     kb = _parse_buttons(m.get("url_buttons_raw") or "", m.get("button_color") or "blue")
 
@@ -420,6 +424,7 @@ async def _show_draft(callback: CallbackQuery, m: dict):
                     message_id=echo_msg_id,
                     text=text or "(без текста)",
                     parse_mode="HTML",
+                    link_preview_options=lpo,
                 )
         except Exception:
             pass
@@ -469,7 +474,10 @@ async def _show_draft(callback: CallbackQuery, m: dict):
         sent_echo = await send_fn(media, caption=text or None, parse_mode="HTML", reply_markup=kb)
     else:
         if text:
-            sent_echo = await callback.message.answer(text, parse_mode="HTML", reply_markup=kb)
+            sent_echo = await callback.message.answer(
+                text, parse_mode="HTML", reply_markup=kb,
+                link_preview_options=lpo,
+            )
 
     # Сохраняем echo message_id для будущего редактирования/удаления
     if sent_echo:
@@ -796,6 +804,7 @@ async def on_mailing_text(message: Message, state: FSMContext):
 
     # ── Эхо: предпросмотр сообщения (без кнопок)
     sent_echo = None
+    _echo_lpo = LinkPreviewOptions(is_disabled=bool(dict(m).get("disable_preview", False)))
     try:
         if media_file_id:
             send_fn = {
@@ -805,7 +814,10 @@ async def on_mailing_text(message: Message, state: FSMContext):
             }.get(media_type, message.answer_photo)
             sent_echo = await send_fn(media_file_id, caption=text[:1000] or None, parse_mode="HTML")
         elif text:
-            sent_echo = await message.answer(text[:1200], parse_mode="HTML")
+            sent_echo = await message.answer(
+                text[:1200], parse_mode="HTML",
+                link_preview_options=_echo_lpo,
+            )
         logger.info(f"[mailing_text] echo sent: msg_id={sent_echo.message_id if sent_echo else None}")
     except Exception as e:
         logger.error(f"[mailing_text] echo send failed: {e}")

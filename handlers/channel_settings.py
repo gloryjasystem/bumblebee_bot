@@ -3534,7 +3534,7 @@ _TZ_GRID = [
     "Atlantic/Azores",        # UTC−1
     "UTC",                    # UTC+0
     "Europe/Berlin",          # UTC+1
-    "Europe/Kiev",            # UTC+2
+    "Europe/Kyiv",            # UTC+2
     "Europe/Moscow",          # UTC+3
     "Asia/Dubai",             # UTC+4
     "Asia/Karachi",           # UTC+5
@@ -3550,7 +3550,8 @@ _TZ_GRID = [
 
 def _tz_grid_buttons(child_bot_id: int) -> list[list[InlineKeyboardButton]]:
     """Строит сетку кнопок с текущим временем в каждой зоне (4 колонки).
-    Время кодируется в callback_data, чтобы экран 2 показал именно нажатое время.
+    Время кодируется в callback_data через тире (HH-MM), чтобы не конфликтовать
+    с разделителем ':' при split.
     """
     now_utc = datetime.now(dt_timezone.utc)
     rows: list[list[InlineKeyboardButton]] = []
@@ -3561,10 +3562,12 @@ def _tz_grid_buttons(child_bot_id: int) -> list[list[InlineKeyboardButton]]:
             label = now_utc.astimezone(zi).strftime("%H:%M")
         except Exception:
             label = now_utc.strftime("%H:%M")
-        # Формат: bs_tz_pick:{child_bot_id}:{tz_name}:{HH:MM}
+        # Время кодируем через тире, чтобы ':' не ломал split при парсинге
+        # Формат: bs_tz_pick:{child_bot_id}:{HH-MM}:{tz_name}
+        time_encoded = label.replace(":", "-")  # «18:29» → «18-29»
         row.append(InlineKeyboardButton(
             text=label,
-            callback_data=f"bs_tz_pick:{child_bot_id}:{tz_name}:{label}",
+            callback_data=f"bs_tz_pick:{child_bot_id}:{time_encoded}:{tz_name}",
         ))
         if len(row) == 4:
             rows.append(row)
@@ -3652,18 +3655,18 @@ async def on_bs_tz_change(callback: CallbackQuery, platform_user: dict | None):
 @router.callback_query(F.data.startswith("bs_tz_pick:"))
 async def on_bs_tz_pick(callback: CallbackQuery, platform_user: dict | None):
     """Пользователь нажал на время — сохраняем часовой пояс и возвращаемся на экран 2.
-    Формат callback_data: bs_tz_pick:{child_bot_id}:{tz_name}:{HH:MM}
+    Формат callback_data: bs_tz_pick:{child_bot_id}:{HH-MM}:{tz_name}
+    Время закодировано через тире, tz_name — всё после времени.
     """
     if not platform_user:
         return
     parts = callback.data.split(":")
-    # parts[0] = 'bs_tz_pick', parts[1] = child_bot_id
-    # parts[2] = region (e.g. 'Europe'), parts[3] = city (e.g. 'Kiev') или время HH:MM
-    # Время всегда последний элемент вида HH:MM (содержит ':')
+    # parts[0]='bs_tz_pick', parts[1]=child_bot_id, parts[2]=HH-MM (время),
+    # parts[3:] = tz_name (например ['Europe', 'Kyiv'] → 'Europe/Kyiv')
     child_bot_id = int(parts[1])
-    # Время — последний элемент (формат ЧЧ:ММ), часовой пояс — всё между child_bot_id и временем
-    selected_time = parts[-1]  # «18:29»
-    tz = ":".join(parts[2:-1])  # «Europe/Kiev» или «UTC»
+    time_encoded = parts[2]                    # «18-29»
+    selected_time = time_encoded.replace("-", ":")  # «18:29»
+    tz = ":".join(parts[3:])                   # «Europe/Kyiv» или «UTC»
     owner_id = platform_user["user_id"]
 
     await db.execute(

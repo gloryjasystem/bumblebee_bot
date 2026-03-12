@@ -1125,10 +1125,10 @@ async def on_mailing_schedule(callback: CallbackQuery, state: FSMContext, platfo
 
     await callback.message.edit_text(
         "<u>Отправьте дату в формате</u>\n"
-        "├ 01.01.25 12:00\n"
-        "├ 01.01.23, 11:24 (+3)\n"
-        "├ 01-01-2023, 11:24 (+3)\n"
-        f"└ {now_str} (+3) [Текущая дата]\n\n"
+        "├ <code>01.01.25 12:00</code>\n"
+        "├ <code>01.01.23, 11:24 (+3)</code>\n"
+        "├ <code>01-01-2023, 11:24 (+3)</code>\n"
+        f"└ <code>{now_str} (+3)</code> [Текущая дата]\n\n"
         "<blockquote>⏱ Если необходимо, то укажите в скобках ваш <a href='https://time.is/UTC'>часовой пояс</a>. </blockquote>\n\n"
         "<blockquote>⏱ Если рассылку необходимо отправить сейчас, пришлите: <code>now</code></blockquote>\n\n"
         "Выберите действие ⬇️",

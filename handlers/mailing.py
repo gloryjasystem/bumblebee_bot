@@ -1597,25 +1597,25 @@ async def on_schedule_input(message: Message, state: FSMContext):
         except ValueError:
             continue
 
-        if dt is None:
-            err = await message.answer(
-                "❌ <b>Неверный формат даты.</b>\n\n"
-                "Используйте например:\n"
-                "<code>01.03.25 12:00</code>\n"
-                "<code>01.03.2026 14:00 (+3)</code>\n"
-                "<code>now</code> — для немедленной отправки",
-                parse_mode="HTML",
-            )
-            # Авто-удаление ошибки через 5 сек
-            await asyncio.sleep(5)
-            try:
-                await err.delete()
-            except Exception:
-                pass
-            return
+    if dt is None:
+        err = await message.answer(
+            "❌ <b>Неверный формат даты.</b>\n\n"
+            "Используйте например:\n"
+            "<code>01.03.25 12:00</code>\n"
+            "<code>01.03.2026 14:00 (+3)</code>\n"
+            "<code>now</code> — для немедленной отправки",
+            parse_mode="HTML",
+        )
+        # Авто-удаление ошибки через 5 сек
+        await asyncio.sleep(5)
+        try:
+            await err.delete()
+        except Exception:
+            pass
+        return
 
-        # Переводим в UTC: вычитаем смещение и делаем aware
-        dt = (dt - timedelta(hours=tz_offset)).replace(tzinfo=timezone.utc)
+    # Переводим в UTC: вычитаем смещение и делаем aware
+    dt = (dt - timedelta(hours=tz_offset)).replace(tzinfo=timezone.utc)
 
     # ── Проверка: дата должна быть в будущем ─────────────────────
     if dt <= now_utc:

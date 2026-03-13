@@ -960,11 +960,22 @@ async def on_ch_ar_btns_global(
     await state.set_state(MessagesFSM.waiting_for_general_reply_buttons)
     await state.update_data(chat_id=chat_id, owner_id=owner_id)
     await callback.message.edit_text(
-        "⛓ <b>Кнопки общего ответа</b>\n\n"
-        "Отправьте кнопки в формате:\n"
-        "<code>Текст кнопки | https://example.com</code>\n"
-        "По одной кнопке на строку.\n\n"
-        "Для удаления всех кнопок — отправьте <code>-</code>",
+        "📎 Отправьте <b>кнопки</b>, которые будут добавлены к сообщению.\n\n"
+        "🔗 <b>URL-кнопки</b>\n\n"
+        "<b>Одна кнопка в ряду:</b>\n"
+        "<code>Кнопка 1 — ссылка</code>\n"
+        "<code>Кнопка 2 — ссылка</code>\n\n"
+        "<b>Несколько кнопок в ряду:</b>\n"
+        "<code>Кнопка 1 — ссылка | Кнопка 2 — ссылка</code>\n\n"
+        "🟩 <b>Цветные кнопки (добавь emoji перед названием):</b>\n"
+        "<code>🟦 Кнопка — ссылка</code> — синяя\n"
+        "<code>🟩 Кнопка — ссылка</code> — зелёная\n"
+        "<code>🟥 Кнопка — ссылка</code> — красная\n\n"
+        "*** <b>Другие виды кнопок</b>\n\n"
+        "<b>WebApp кнопки:</b>\n"
+        "<code>Кнопка 1 — ссылка (webapp)</code>\n\n"
+        "ℹ️ Нажмите, чтобы скопировать.",
+        parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="◀️ Отмена", callback_data=f"ch_autoreply:{chat_id}")],
         ]),
@@ -983,15 +994,30 @@ async def on_general_reply_buttons_input(message: Message, state: FSMContext):
         buttons_json = None
     else:
         import json as _json
-        parsed = []
+        rows = []
         for line in raw.splitlines():
-            if "|" in line:
-                parts = line.split("|", 1)
-                btn_text = parts[0].strip()
-                btn_url  = parts[1].strip()
-                if btn_text and btn_url:
-                    parsed.append({"text": btn_text, "url": btn_url})
-        buttons_json = _json.dumps(parsed, ensure_ascii=False) if parsed else None
+            line = line.strip()
+            if not line:
+                continue
+            row = []
+            for btn_raw in line.split("|"):
+                btn_raw = btn_raw.strip()
+                sep = None
+                if " — " in btn_raw:
+                    sep = " — "
+                elif " – " in btn_raw:
+                    sep = " – "
+                elif " - " in btn_raw:
+                    sep = " - "
+                if sep:
+                    idx = btn_raw.index(sep)
+                    btn_text = btn_raw[:idx].strip()
+                    btn_url  = btn_raw[idx + len(sep):].strip()
+                    if btn_text and btn_url:
+                        row.append({"text": btn_text, "url": btn_url})
+            if row:
+                rows.append(row)
+        buttons_json = _json.dumps(rows, ensure_ascii=False) if rows else None
 
     await db.execute(
         "UPDATE bot_chats SET general_reply_buttons=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
@@ -1381,20 +1407,20 @@ async def on_ch_ar_kw_btns(
     await state.set_state(MessagesFSM.waiting_for_autoreply_buttons)
     await state.update_data(chat_id=chat_id, owner_id=owner_id, ar_id=ar_id)
     await callback.message.edit_text(
-        "📩 Отправьте <b>кнопки</b>, которые будут добавлены к сообщению.\n\n"
+        "� Отправьте <b>кнопки</b>, которые будут добавлены к сообщению.\n\n"
         "🔗 <b>URL-кнопки</b>\n\n"
-        "<u>Одна кнопка в ряду</u>\n"
-        "<code>Кнопка 1 – ссылка</code>\n"
-        "<code>Кнопка 2 – ссылка</code>\n\n"
-        "<u>Несколько кнопок</u>\n"
-        "<code>Кнопка 1 – ссылка | Кнопка 2 – ссылка</code>\n"
-        "<code>Кнопка 3 – ссылка | Кнопка 4 – ссылка</code>\n\n"
-        "✳️ <b>Другие виды кнопок</b>\n\n"
-        "<u>WebApp кнопки</u>\n"
-        "<code>Кнопка 1 – ссылка (webapp)</code>\n\n"
-        "<u>Кнопки опроса</u>\n"
-        "<code>Кнопка 1 – (poll)</code>\n\n"
-        "Цвет кнопок: <code>🟦</code> <code>🟩</code> <code>🟥</code>\n\n"
+        "<b>Одна кнопка в ряду:</b>\n"
+        "<code>Кнопка 1 — ссылка</code>\n"
+        "<code>Кнопка 2 — ссылка</code>\n\n"
+        "<b>Несколько кнопок в ряду:</b>\n"
+        "<code>Кнопка 1 — ссылка | Кнопка 2 — ссылка</code>\n\n"
+        "🟩 <b>Цветные кнопки (добавь emoji перед названием):</b>\n"
+        "<code>🟦 Кнопка — ссылка</code> — синяя\n"
+        "<code>🟩 Кнопка — ссылка</code> — зелёная\n"
+        "<code>🟥 Кнопка — ссылка</code> — красная\n\n"
+        "*** <b>Другие виды кнопок</b>\n\n"
+        "<b>WebApp кнопки:</b>\n"
+        "<code>Кнопка 1 — ссылка (webapp)</code>\n\n"
         "ℹ️ Нажмите, чтобы скопировать.",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[

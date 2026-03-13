@@ -1120,7 +1120,7 @@ _kw_echo_ids: dict[tuple, int] = {}
 async def _show_keyword_mgmt(message, chat_id: int, owner_id: int, ar_id: int):
     """Показывает панель управления keyword-ответом (2 сообщения: эхо + управление)."""
     row = await db.fetchrow(
-        "SELECT keyword, reply_text, reply_media, reply_media_type, reply_preview FROM autoreplies "
+        "SELECT keyword, reply_text, reply_media, reply_media_type, reply_preview, reply_buttons FROM autoreplies "
         "WHERE id=$1 AND owner_id=$2",
         ar_id, owner_id,
     )
@@ -1141,15 +1141,37 @@ async def _show_keyword_mgmt(message, chat_id: int, owner_id: int, ar_id: int):
         except Exception:
             pass
 
+    # -- Строим инлайн-клавиатуру из сохранённых кнопок
+    import json as _json
+    raw_btns = row["reply_buttons"] if row else None
+    echo_kb = None
+    if raw_btns:
+        try:
+            parsed = _json.loads(raw_btns)
+            # Новый формат: [[{text, url}, ...], ...]
+            # Старый формат (плоский): [{text, url}, ...]
+            if parsed and isinstance(parsed[0], dict):
+                parsed = [parsed]  # совместимость со старым форматом
+            kb_rows = []
+            for btn_row in parsed:
+                kb_rows.append([
+                    InlineKeyboardButton(text=b["text"], url=b["url"])
+                    for b in btn_row if b.get("text") and b.get("url")
+                ])
+            if kb_rows:
+                echo_kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
+        except Exception:
+            pass
+
     # -- Эхо сохранённого ответа
     if media_id and media_type == "photo":
-        echo_msg = await message.answer_photo(media_id, caption=text or None, parse_mode="HTML")
+        echo_msg = await message.answer_photo(media_id, caption=text or None, parse_mode="HTML", reply_markup=echo_kb)
     elif media_id and media_type == "video":
-        echo_msg = await message.answer_video(media_id, caption=text or None, parse_mode="HTML")
+        echo_msg = await message.answer_video(media_id, caption=text or None, parse_mode="HTML", reply_markup=echo_kb)
     elif media_id and media_type == "document":
-        echo_msg = await message.answer_document(media_id, caption=text or None, parse_mode="HTML")
+        echo_msg = await message.answer_document(media_id, caption=text or None, parse_mode="HTML", reply_markup=echo_kb)
     else:
-        echo_msg = await message.answer(text or "—", parse_mode="HTML")
+        echo_msg = await message.answer(text or "—", parse_mode="HTML", reply_markup=echo_kb)
 
     _kw_echo_ids[key] = echo_msg.message_id
 

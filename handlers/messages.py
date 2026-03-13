@@ -74,7 +74,7 @@ async def _show_ch_messages(callback: CallbackQuery, chat_id: int, owner_id: int
 
     captcha_type   = ch.get("captcha_type") or "off"
     typing_on      = ch.get("typing_action", False)
-    reaction       = ch.get("reaction_emoji") or "👍"
+    reaction       = ch.get("reaction_emoji") or ""
     delete_min     = ch.get("auto_delete_min") or 0
 
     # Куда вернуться: главный экран бота
@@ -84,7 +84,7 @@ async def _show_ch_messages(callback: CallbackQuery, chat_id: int, owner_id: int
     captcha_label = {"off": "🔒 Капча: выкл", "simple": "🔒 Капча: простая",
                      "random": "🔒 Капча: рандомная"}.get(captcha_type, "🔒 Капча")
     typing_label  = f"🖨 Печать: {'вкл' if typing_on else 'выкл'}"
-    reaction_label = f"❤️ Реакции: {reaction if reaction else 'нету'}"
+    reaction_label = f"❤️ Реакции: {reaction if reaction else 'выкл'}"
     delete_label  = f"🗑 Удаление: {'выкл' if delete_min == 0 else f'{delete_min} мин'}"
 
     await callback.message.edit_text(
@@ -157,7 +157,7 @@ async def on_ch_reactions(callback: CallbackQuery, platform_user: dict | None):
     # Кнопка «Нету» — самая первая
     no_reaction_check = " ✅" if current == "" else ""
     buttons = [[InlineKeyboardButton(
-        text=f"Нету{no_reaction_check}",
+        text=f"Выкл{no_reaction_check}",
         callback_data=f"ch_set_reaction:{chat_id}:none",
     )]]
     buttons += [[InlineKeyboardButton(
@@ -186,7 +186,7 @@ async def on_ch_set_reaction(callback: CallbackQuery, platform_user: dict | None
         "UPDATE bot_chats SET reaction_emoji=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
         save_val, owner_id, chat_id,
     )
-    answer_text = "🚫 Без реакции" if emoji == "none" else f"Реакция: {emoji}"
+    answer_text = "Реакции: выкл" if emoji == "none" else f"Реакция: {emoji}"
     await callback.answer(answer_text)
     callback.data = f"ch_reactions:{chat_id}"
     await on_ch_reactions(callback, platform_user)

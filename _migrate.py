@@ -23,8 +23,10 @@ async def main():
     conn = await asyncpg.connect(url, ssl=ssl)
     try:
         await conn.execute("""
-            ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS captcha_media       TEXT;
-            ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS captcha_buttons_raw TEXT;
+            ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS captcha_media              TEXT;
+            ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS captcha_buttons_raw        TEXT;
+            ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS general_reply_media_top    BOOLEAN DEFAULT TRUE;
+            ALTER TABLE autoreplies ADD COLUMN IF NOT EXISTS reply_media_top          BOOLEAN DEFAULT TRUE;
         """)
         print("✅ Миграция применена успешно!")
     finally:

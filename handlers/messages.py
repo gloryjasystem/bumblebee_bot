@@ -628,43 +628,41 @@ async def _show_autoreply(callback: CallbackQuery, chat_id: int, owner_id: int):
 
     buttons = []
 
+    # Кнопка «Общий ответ»
     if general_on:
-        # Общий ответ настроен — кнопка «вкл» открывает панель управления
         buttons.append([InlineKeyboardButton(
             text="Общий ответ: вкл",
             callback_data=f"ch_ar_toggle_global:{chat_id}",
         )])
-        buttons.append([InlineKeyboardButton(
-            text="+ Добавить ответ",
-            callback_data=f"ch_ar_add:{chat_id}",
-        )])
     else:
-        # Список keyword-ответов
-        rows = await db.fetch(
-            "SELECT id, keyword FROM autoreplies "
-            "WHERE owner_id=$1 AND chat_id=$2::bigint LIMIT 20",
-            owner_id, chat_id,
-        )
-        for r in rows:
-            buttons.append([InlineKeyboardButton(
-                text=f"💬 {r['keyword'][:25]}",
-                callback_data=f"ch_ar_del:{chat_id}:{r['id']}",
-            )])
         buttons.append([InlineKeyboardButton(
             text="Общий ответ: выкл",
             callback_data=f"ch_ar_toggle_global:{chat_id}",
         )])
+
+    # Keyword-ответы всегда показываем между «Общий ответ» и «+ Добавить ответ»
+    rows = await db.fetch(
+        "SELECT id, keyword FROM autoreplies "
+        "WHERE owner_id=$1 AND chat_id=$2::bigint LIMIT 20",
+        owner_id, chat_id,
+    )
+    for r in rows:
         buttons.append([InlineKeyboardButton(
-            text="+ Добавить ответ",
-            callback_data=f"ch_ar_add:{chat_id}",
+            text=r['keyword'][:30],
+            callback_data=f"ch_ar_del:{chat_id}:{r['id']}",
         )])
 
+    buttons.append([InlineKeyboardButton(
+        text="+ Добавить ответ",
+        callback_data=f"ch_ar_add:{chat_id}",
+    )])
     buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"ch_messages:{chat_id}")])
 
     await callback.message.edit_text(
         "<blockquote>Вы можете установить <b>автоматические ответы</b> бота на "
         "любой текст или команду от пользователей.</blockquote>\n\n"
         "Выберите действие ⬇️",
+        parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
     )
     await callback.answer()
@@ -1018,8 +1016,12 @@ async def on_ch_ar_add(callback: CallbackQuery, state: FSMContext, platform_user
     await state.set_state(MessagesFSM.waiting_for_autoreply_kw)
     await state.update_data(chat_id=chat_id, owner_id=platform_user["user_id"])
     await callback.message.edit_text(
-        "💬 <b>Автоответчик — ключевое слово</b>\n\n"
-        "Отправьте слово или фразу, на которую бот будет реагировать:",
+        "Отправьте триггер.\n\n"
+        "<blockquote>① Триггер — это сообщение для вызова автоматического ответа.</blockquote>\n\n"
+        "<b>Пример:</b>\n"
+        "├ Бонус\n"
+        "└ /bonus",
+        parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="◀️ Отмена", callback_data=f"ch_autoreply:{chat_id}")],
         ]),
@@ -1034,9 +1036,19 @@ async def on_ar_kw_input(message: Message, state: FSMContext):
     await state.set_state(MessagesFSM.waiting_for_autoreply_text)
     data = await state.get_data()
     await message.answer(
-        f"✅ Ключевое слово: <code>{kw}</code>\n\nТеперь отправьте текст ответа:",
+        "🔔 <b>Автоответчик</b>\n\n"
+        "<blockquote>⟲ Пришлите сообщение, которое будет "
+        "использоваться для автоматического ответа.</blockquote>\n\n"
+        "<b>Переменные:</b>\n"
+        "├ Имя: <code>{name}</code>\n"
+        "├ ФИО: <code>{allname}</code>\n"
+        "├ Юзер: <code>{username}</code>\n"
+        "├ Площадка: <code>{chat}</code>\n"
+        "└ Текущая дата: <code>{day}</code>\n\n"
+        "ⓘ Можно прикрепить медиа.",
+        parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="◀️ Отмена", callback_data=f"ch_autoreply:{data['chat_id']}")],
+            [InlineKeyboardButton(text="◀️ Назад", callback_data=f"ch_autoreply:{data['chat_id']}")],
         ]),
     )
 
@@ -1047,20 +1059,66 @@ async def on_ar_text_input(message: Message, state: FSMContext):
     chat_id  = data["chat_id"]
     owner_id = data["owner_id"]
     keyword  = data.get("keyword", "")
-    reply    = sanitize(message.text or "", max_len=1024)
+
+    # Поддержка медиа
+    if message.photo:
+        reply      = sanitize(message.caption or "", max_len=1024)
+        media_id   = message.photo[-1].file_id
+        media_type = "photo"
+    elif message.video:
+        reply      = sanitize(message.caption or "", max_len=1024)
+        media_id   = message.video.file_id
+        media_type = "video"
+    elif message.document:
+        reply      = sanitize(message.caption or "", max_len=1024)
+        media_id   = message.document.file_id
+        media_type = "document"
+    else:
+        reply      = sanitize(message.text or "", max_len=1024)
+        media_id   = None
+        media_type = None
 
     await db.execute(
-        """INSERT INTO autoreplies (owner_id, chat_id, keyword, reply_text)
-           VALUES ($1, $2, $3, $4)
-           ON CONFLICT (owner_id, chat_id, keyword) DO UPDATE SET reply_text=EXCLUDED.reply_text""",
-        owner_id, chat_id, keyword, reply,
+        """INSERT INTO autoreplies (owner_id, chat_id, keyword, reply_text, reply_media, reply_media_type)
+           VALUES ($1, $2, $3, $4, $5, $6)
+           ON CONFLICT (owner_id, chat_id, keyword)
+           DO UPDATE SET reply_text=EXCLUDED.reply_text,
+                         reply_media=EXCLUDED.reply_media,
+                         reply_media_type=EXCLUDED.reply_media_type""",
+        owner_id, chat_id, keyword, reply, media_id, media_type,
     )
     await state.clear()
+
+    # Показываем главный экран автоответчика через answer (не edit)
+    rows = await db.fetch(
+        "SELECT id, keyword FROM autoreplies "
+        "WHERE owner_id=$1 AND chat_id=$2::bigint LIMIT 20",
+        owner_id, chat_id,
+    )
+    ch = await db.fetchrow(
+        "SELECT general_reply_text FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint",
+        owner_id, chat_id,
+    )
+    has_text = bool((ch["general_reply_text"] or "").strip()) if ch else False
+
+    btns = []
+    # Кнопка «Общий ответ»
+    if has_text:
+        btns.append([InlineKeyboardButton(text="Общий ответ: вкл", callback_data=f"ch_ar_toggle_global:{chat_id}")])
+    else:
+        btns.append([InlineKeyboardButton(text="Общий ответ: выкл", callback_data=f"ch_ar_toggle_global:{chat_id}")])
+    # Keyword-ответы всегда между «Общий ответ» и «+ Добавить ответ»
+    for r in rows:
+        btns.append([InlineKeyboardButton(text=r['keyword'][:30], callback_data=f"ch_ar_del:{chat_id}:{r['id']}")])
+    btns.append([InlineKeyboardButton(text="+ Добавить ответ", callback_data=f"ch_ar_add:{chat_id}")])
+    btns.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"ch_messages:{chat_id}")])
+
     await message.answer(
-        f"✅ Автоответ <code>{keyword}</code> → сохранён.",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="◀️ К автоответчику", callback_data=f"ch_autoreply:{chat_id}")],
-        ]),
+        "<blockquote>Вы можете установить <b>автоматические ответы</b> бота на "
+        "любой текст или команду от пользователей.</blockquote>\n\n"
+        "Выберите действие ⬇️",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=btns),
     )
 
 

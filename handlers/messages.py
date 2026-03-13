@@ -1061,9 +1061,7 @@ async def on_ar_kw_input(message: Message, state: FSMContext):
     await state.set_state(MessagesFSM.waiting_for_autoreply_text)
     data = await state.get_data()
     await message.answer(
-```python
         "💬 <b>Автоответчик</b>\n\n"
-```
         "<blockquote>⟲ Пришлите сообщение, которое будет "
         "использоваться для автоматического ответа.</blockquote>\n\n"
         "<b>Переменные:</b>\n"
@@ -1236,12 +1234,7 @@ async def _show_keyword_mgmt(message, chat_id: int, owner_id: int, ar_id: int):
         [InlineKeyboardButton(text="◀️ Назад",               callback_data=f"ch_ar_kw_back:{chat_id}:{ar_id}")],
     ])
     await message.answer(
-        "💬 " + f"<b>Автоответчик</b>\n\nТриггер: <code>{keyword}</code>",
-        parse_mode="HTML",
-        reply_markup=mgmt_kb,
-    )
-    await message.answer(
-        f"� <b>Автоответчик</b>\n\nТриггер: <code>{keyword}</code>",
+        f"💬 <b>Автоответчик</b>\n\nТриггер: <code>{keyword}</code>",
         parse_mode="HTML",
         reply_markup=mgmt_kb,
     )

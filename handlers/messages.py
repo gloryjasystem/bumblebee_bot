@@ -1158,7 +1158,6 @@ async def _show_keyword_mgmt(message, chat_id: int, owner_id: int, ar_id: int):
     preview_on   = bool(row["reply_preview"]) if row else False
     preview_label = "есть" if preview_on else "нет"
     mgmt_kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="� Автоответчик",         callback_data=f"ch_ar_view:{chat_id}:{ar_id}")],
         [InlineKeyboardButton(text="✏️ Редактировать",       callback_data=f"ch_ar_kw_edit:{chat_id}:{ar_id}")],
         [InlineKeyboardButton(text="🎛 Кнопки",              callback_data=f"ch_ar_kw_btns:{chat_id}:{ar_id}")],
         [InlineKeyboardButton(text=f"🎬 Медиа: {media_icon}", callback_data=f"ch_ar_kw_media:{chat_id}:{ar_id}")],

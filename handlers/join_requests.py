@@ -188,6 +188,24 @@ async def on_member_update(event: ChatMemberUpdated, bot: Bot):
 
         await _register_user(owner_id, event.chat.id, user,
                              invite_link=event.invite_link)
+
+        # Для обычных ссылок с auto_accept='off' — кикаем сразу после вступления
+        raw_invite_url = event.invite_link.invite_link if event.invite_link else None
+        if raw_invite_url:
+            link_aa_row = await db.fetchrow(
+                "SELECT auto_accept FROM invite_links WHERE link=$1",
+                raw_invite_url,
+            )
+            link_aa = (link_aa_row["auto_accept"] if link_aa_row else None) or "base"
+            if link_aa == "off":
+                try:
+                    await bot.ban_chat_member(event.chat.id, user.id)
+                    await bot.unban_chat_member(event.chat.id, user.id, only_if_banned=True)
+                except Exception as _e:
+                    logger.warning(f"[AUTO_OFF] kick failed for user={user.id}: {_e}")
+                logger.info(f"[AUTO_OFF] Kicked user={user.id} — link auto_accept=off")
+                return
+
         await _send_welcome(bot, event.chat.id, user, settings_row)
 
     # Пользователь ушёл

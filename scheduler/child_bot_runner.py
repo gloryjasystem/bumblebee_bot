@@ -1247,10 +1247,27 @@ async def _handle_chat_member(bot: Bot, child_bot_id: int, event: ChatMemberUpda
                 logger.info(f"[FILTER-LANG-GROUP] Kicked user={user.id} lang={user_lang} from chat={chat_id}")
                 return
 
+        # ── Проверяем auto_accept конкретной ссылки ─────────────────────────
+        # Для обычных ссылок (не creates_join_request): если auto_accept='off' —
+        # кикаем пользователя сразу после вступления (ban+unban).
+        raw_invite = event.invite_link.invite_link if event.invite_link else None
+        if raw_invite:
+            link_aa_row = await db.fetchrow(
+                "SELECT auto_accept FROM invite_links WHERE link=$1",
+                raw_invite,
+            )
+            link_aa = (link_aa_row["auto_accept"] if link_aa_row else None) or "base"
+            if link_aa == "off":
+                try:
+                    await bot.ban_chat_member(chat_id, user.id)
+                    await bot.unban_chat_member(chat_id, user.id, only_if_banned=True)
+                except Exception as _e:
+                    logger.warning(f"[AUTO_OFF] kick failed for user={user.id}: {_e}")
+                logger.info(f"[AUTO_OFF] Kicked user={user.id} — link auto_accept=off")
+                return
 
         # Ищем ссылку по invite_link из события
         link_id = None
-        raw_invite = event.invite_link.invite_link if event.invite_link else None
         logger.info(f"[LINK DBG] user={user.id} chat={chat_id} invite_link={raw_invite}")
         if raw_invite:
             row = await db.fetchrow(

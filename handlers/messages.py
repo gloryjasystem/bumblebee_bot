@@ -901,7 +901,7 @@ async def on_ch_ar_media_global(
     chat_id  = int(callback.data.split(":")[1])
     owner_id = platform_user["user_id"]
     ch = await db.fetchrow(
-        "SELECT general_reply_media_top FROM bot_chats "
+        "SELECT general_reply_media_top, general_reply_preview FROM bot_chats "
         "WHERE owner_id=$1 AND chat_id=$2::bigint",
         owner_id, chat_id,
     )
@@ -911,8 +911,19 @@ async def on_ch_ar_media_global(
         "UPDATE bot_chats SET general_reply_media_top=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
         new_top, owner_id, chat_id,
     )
+    media_icon    = "⬆️" if new_top else "⬇️"
+    preview_on    = bool(ch["general_reply_preview"]) if ch else False
+    preview_label = "есть" if preview_on else "нет"
+    new_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✏️ Редактировать",    callback_data=f"ch_ar_edit_global:{chat_id}")],
+        [InlineKeyboardButton(text="🎛 Кнопки",           callback_data=f"ch_ar_btns_global:{chat_id}")],
+        [InlineKeyboardButton(text=f"🎬 Медиа: {media_icon}", callback_data=f"ch_ar_media_global:{chat_id}")],
+        [InlineKeyboardButton(text=f"👁 Превью: {preview_label}", callback_data=f"ch_ar_preview_global:{chat_id}")],
+        [InlineKeyboardButton(text="🗑 Удалить",          callback_data=f"ch_ar_delete_global:{chat_id}")],
+        [InlineKeyboardButton(text="◀️ Назад",            callback_data=f"ch_ar_back_global:{chat_id}")],
+    ])
+    await callback.message.edit_reply_markup(reply_markup=new_kb)
     await callback.answer("Медиа: " + ("сверху ⬆️" if new_top else "снизу ⬇️"))
-    await _show_global_mgmt(callback.message, chat_id, owner_id)
 
 
 # ── Управление: Превью ────────────────────────────────────────
@@ -1307,7 +1318,7 @@ async def on_ch_ar_kw_edit(
 async def on_ch_ar_kw_media(
     callback: CallbackQuery, state: FSMContext, platform_user: dict | None
 ):
-    """Кнопка Медиа — всегда переключает позицию ⬆️/⬇️, не открывает FSM."""
+    """Кнопка Медиа — всегда переключает стрелку ⬆️/⬇️ прямо на месте (без новых сообщений)."""
     if not platform_user:
         return
     parts    = callback.data.split(":")
@@ -1316,7 +1327,7 @@ async def on_ch_ar_kw_media(
     owner_id = platform_user["user_id"]
 
     row = await db.fetchrow(
-        "SELECT reply_media_top FROM autoreplies WHERE id=$1 AND owner_id=$2",
+        "SELECT reply_media_top, reply_preview FROM autoreplies WHERE id=$1 AND owner_id=$2",
         ar_id, owner_id,
     )
     if not row:
@@ -1329,9 +1340,19 @@ async def on_ch_ar_kw_media(
         "UPDATE autoreplies SET reply_media_top=$1 WHERE id=$2 AND owner_id=$3",
         new_top, ar_id, owner_id,
     )
+    media_icon    = "⬆️" if new_top else "⬇️"
+    preview_on    = bool(row["reply_preview"]) if row else False
+    preview_label = "есть" if preview_on else "нет"
+    new_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✏️ Редактировать",       callback_data=f"ch_ar_kw_edit:{chat_id}:{ar_id}")],
+        [InlineKeyboardButton(text="🎛 Кнопки",              callback_data=f"ch_ar_kw_btns:{chat_id}:{ar_id}")],
+        [InlineKeyboardButton(text=f"🎬 Медиа: {media_icon}", callback_data=f"ch_ar_kw_media:{chat_id}:{ar_id}")],
+        [InlineKeyboardButton(text=f"👁 Превью: {preview_label}", callback_data=f"ch_ar_kw_preview:{chat_id}:{ar_id}")],
+        [InlineKeyboardButton(text="🗑 Удалить",              callback_data=f"ch_ar_del:{chat_id}:{ar_id}")],
+        [InlineKeyboardButton(text="◀️ Назад",               callback_data=f"ch_ar_kw_back:{chat_id}:{ar_id}")],
+    ])
+    await callback.message.edit_reply_markup(reply_markup=new_kb)
     await callback.answer("Медиа: " + ("сверху ⬆️" if new_top else "снизу ⬇️"))
-    await callback.message.delete()
-    await _show_keyword_mgmt(callback.message, chat_id, owner_id, ar_id)
 
 
 # ── Управление: Кнопки keyword-ответа ────────────────────────

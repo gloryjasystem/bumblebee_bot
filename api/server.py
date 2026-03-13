@@ -107,6 +107,12 @@ def create_app(bot: Bot, dp: Dispatcher) -> FastAPI:
                     UNIQUE (owner_id, chat_id, keyword)
                 )
             """)
+            # Новые колонки autoreplies (медиа)
+            for migration in [
+                "ALTER TABLE autoreplies ADD COLUMN IF NOT EXISTS reply_media      TEXT",
+                "ALTER TABLE autoreplies ADD COLUMN IF NOT EXISTS reply_media_type TEXT",
+            ]:
+                await conn.execute(migration)
             # Таблица событий капчи
             await conn.execute("""
                 CREATE TABLE IF NOT EXISTS captcha_events (

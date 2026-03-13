@@ -1299,17 +1299,37 @@ async def on_ch_ar_kw_btns(
     chat_id  = int(parts[1])
     ar_id    = int(parts[2])
     owner_id = platform_user["user_id"]
+
+    # Удаляем эхо-сообщение
+    key = (owner_id, chat_id, ar_id)
+    echo_id = _kw_echo_ids.pop(key, None)
+    if echo_id:
+        try:
+            await callback.message.bot.delete_message(callback.message.chat.id, echo_id)
+        except Exception:
+            pass
+
     await state.set_state(MessagesFSM.waiting_for_autoreply_buttons)
     await state.update_data(chat_id=chat_id, owner_id=owner_id, ar_id=ar_id)
     await callback.message.edit_text(
-        "⛓ <b>Кнопки ответа</b>\n\n"
-        "Отправьте кнопки в формате:\n"
-        "<code>Текст кнопки | https://example.com</code>\n"
-        "По одной кнопке на строку.\n\n"
-        "Для удаления всех кнопок — отправьте <code>-</code>",
+        "📩 Отправьте <b>кнопки</b>, которые будут добавлены к сообщению.\n\n"
+        "🔗 <b>URL-кнопки</b>\n\n"
+        "<u>Одна кнопка в ряду</u>\n"
+        "<code>Кнопка 1 – ссылка</code>\n"
+        "<code>Кнопка 2 – ссылка</code>\n\n"
+        "<u>Несколько кнопок</u>\n"
+        "<code>Кнопка 1 – ссылка | Кнопка 2 – ссылка</code>\n"
+        "<code>Кнопка 3 – ссылка | Кнопка 4 – ссылка</code>\n\n"
+        "✳️ <b>Другие виды кнопок</b>\n\n"
+        "<u>WebApp кнопки</u>\n"
+        "<code>Кнопка 1 – ссылка (webapp)</code>\n\n"
+        "<u>Кнопки опроса</u>\n"
+        "<code>Кнопка 1 – (poll)</code>\n\n"
+        "Цвет кнопок: <code>🟦</code> <code>🟩</code> <code>🟥</code>\n\n"
+        "ℹ️ Нажмите, чтобы скопировать.",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="◀️ Отмена", callback_data=f"ch_ar_view:{chat_id}:{ar_id}")],
+            [InlineKeyboardButton(text="◀️ Назад", callback_data=f"ch_ar_view:{chat_id}:{ar_id}")],
         ]),
     )
     await callback.answer()
@@ -1327,15 +1347,32 @@ async def on_ar_buttons_input(message: Message, state: FSMContext):
     if raw == "-":
         buttons_json = None
     else:
-        parsed = []
+        # Формат: каждая строка — ряд кнопок.
+        # Кнопки в ряду разделены " | ".
+        # Текст и ссылка разделены " – " или " - ".
+        rows = []
         for line in raw.splitlines():
-            if "|" in line:
-                parts = line.split("|", 1)
-                btn_text = parts[0].strip()
-                btn_url  = parts[1].strip()
-                if btn_text and btn_url:
-                    parsed.append({"text": btn_text, "url": btn_url})
-        buttons_json = _json.dumps(parsed, ensure_ascii=False) if parsed else None
+            line = line.strip()
+            if not line:
+                continue
+            row = []
+            for btn_raw in line.split("|"):
+                btn_raw = btn_raw.strip()
+                # Поддерживаем en-dash (–) и обычный дефис (-)
+                sep = None
+                if " – " in btn_raw:
+                    sep = " – "
+                elif " - " in btn_raw:
+                    sep = " - "
+                if sep:
+                    idx = btn_raw.index(sep)
+                    btn_text = btn_raw[:idx].strip()
+                    btn_url  = btn_raw[idx + len(sep):].strip()
+                    if btn_text and btn_url:
+                        row.append({"text": btn_text, "url": btn_url})
+            if row:
+                rows.append(row)
+        buttons_json = _json.dumps(rows, ensure_ascii=False) if rows else None
 
     await db.execute(
         "UPDATE autoreplies SET reply_buttons=$1 WHERE id=$2 AND owner_id=$3",
@@ -1343,6 +1380,7 @@ async def on_ar_buttons_input(message: Message, state: FSMContext):
     )
     await state.clear()
     await _show_keyword_mgmt(message, chat_id, owner_id, ar_id)
+
 
 
 # ── Управление: Превью keyword-ответа ─────────────────────────

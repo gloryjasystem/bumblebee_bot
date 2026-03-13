@@ -649,7 +649,7 @@ async def _show_autoreply(callback: CallbackQuery, chat_id: int, owner_id: int):
     for r in rows:
         buttons.append([InlineKeyboardButton(
             text=r['keyword'][:30],
-            callback_data=f"ch_ar_del:{chat_id}:{r['id']}",
+            callback_data=f"ch_ar_view:{chat_id}:{r['id']}",
         )])
 
     buttons.append([InlineKeyboardButton(
@@ -1059,6 +1059,7 @@ async def on_ar_text_input(message: Message, state: FSMContext):
     chat_id  = data["chat_id"]
     owner_id = data["owner_id"]
     keyword  = data.get("keyword", "")
+    ar_id    = data.get("ar_id")  # есть при редактировании, нет при создании
 
     # Поддержка медиа
     if message.photo:
@@ -1078,48 +1079,207 @@ async def on_ar_text_input(message: Message, state: FSMContext):
         media_id   = None
         media_type = None
 
-    await db.execute(
-        """INSERT INTO autoreplies (owner_id, chat_id, keyword, reply_text, reply_media, reply_media_type)
-           VALUES ($1, $2, $3, $4, $5, $6)
-           ON CONFLICT (owner_id, chat_id, keyword)
-           DO UPDATE SET reply_text=EXCLUDED.reply_text,
-                         reply_media=EXCLUDED.reply_media,
-                         reply_media_type=EXCLUDED.reply_media_type""",
-        owner_id, chat_id, keyword, reply, media_id, media_type,
-    )
-    await state.clear()
-
-    # Показываем главный экран автоответчика через answer (не edit)
-    rows = await db.fetch(
-        "SELECT id, keyword FROM autoreplies "
-        "WHERE owner_id=$1 AND chat_id=$2::bigint LIMIT 20",
-        owner_id, chat_id,
-    )
-    ch = await db.fetchrow(
-        "SELECT general_reply_text FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint",
-        owner_id, chat_id,
-    )
-    has_text = bool((ch["general_reply_text"] or "").strip()) if ch else False
-
-    btns = []
-    # Кнопка «Общий ответ»
-    if has_text:
-        btns.append([InlineKeyboardButton(text="Общий ответ: вкл", callback_data=f"ch_ar_toggle_global:{chat_id}")])
+    if ar_id:
+        # Режим редактирования — обновляем конкретную запись по ID
+        await db.execute(
+            """UPDATE autoreplies
+               SET reply_text=$1, reply_media=$2, reply_media_type=$3
+               WHERE id=$4 AND owner_id=$5""",
+            reply, media_id, media_type, ar_id, owner_id,
+        )
+        await state.clear()
+        # Возвращаем панель управления keyword-ответом
+        await _show_keyword_mgmt(message, chat_id, owner_id, ar_id)
     else:
-        btns.append([InlineKeyboardButton(text="Общий ответ: выкл", callback_data=f"ch_ar_toggle_global:{chat_id}")])
-    # Keyword-ответы всегда между «Общий ответ» и «+ Добавить ответ»
-    for r in rows:
-        btns.append([InlineKeyboardButton(text=r['keyword'][:30], callback_data=f"ch_ar_del:{chat_id}:{r['id']}")])
-    btns.append([InlineKeyboardButton(text="+ Добавить ответ", callback_data=f"ch_ar_add:{chat_id}")])
-    btns.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"ch_messages:{chat_id}")])
+        # Режим создания — INSERT/ON CONFLICT, получаем id новой записи
+        saved = await db.fetchrow(
+            """INSERT INTO autoreplies (owner_id, chat_id, keyword, reply_text, reply_media, reply_media_type)
+               VALUES ($1, $2, $3, $4, $5, $6)
+               ON CONFLICT (owner_id, chat_id, keyword)
+               DO UPDATE SET reply_text=EXCLUDED.reply_text,
+                             reply_media=EXCLUDED.reply_media,
+                             reply_media_type=EXCLUDED.reply_media_type
+               RETURNING id""",
+            owner_id, chat_id, keyword, reply, media_id, media_type,
+        )
+        await state.clear()
+        new_ar_id = saved["id"] if saved else None
 
-    await message.answer(
-        "<blockquote>Вы можете установить <b>автоматические ответы</b> бота на "
-        "любой текст или команду от пользователей.</blockquote>\n\n"
-        "Выберите действие ⬇️",
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=btns),
+        if new_ar_id:
+            # Открываем панель управления свежесозданным ответом
+            await _show_keyword_mgmt(message, chat_id, owner_id, new_ar_id)
+
+
+# ── Просмотр и управление keyword-ответом ──────────────────────
+
+# Хранит message_id эхо-сообщения панели keyword-ответа: (owner_id, chat_id, ar_id) -> echo_msg_id
+_kw_echo_ids: dict[tuple, int] = {}
+
+
+async def _show_keyword_mgmt(message, chat_id: int, owner_id: int, ar_id: int):
+    """Показывает панель управления keyword-ответом (2 сообщения: эхо + управление)."""
+    row = await db.fetchrow(
+        "SELECT keyword, reply_text, reply_media, reply_media_type FROM autoreplies "
+        "WHERE id=$1 AND owner_id=$2",
+        ar_id, owner_id,
     )
+    if not row:
+        return
+
+    keyword    = row["keyword"] or ""
+    text       = row["reply_text"] or ""
+    media_id   = row["reply_media"] or ""
+    media_type = row["reply_media_type"] or ""
+
+    # Удалить старое эхо, если есть
+    key = (owner_id, chat_id, ar_id)
+    old_echo_id = _kw_echo_ids.pop(key, None)
+    if old_echo_id:
+        try:
+            await message.bot.delete_message(message.chat.id, old_echo_id)
+        except Exception:
+            pass
+
+    # -- Эхо сохранённого ответа
+    if media_id and media_type == "photo":
+        echo_msg = await message.answer_photo(media_id, caption=text or None, parse_mode="HTML")
+    elif media_id and media_type == "video":
+        echo_msg = await message.answer_video(media_id, caption=text or None, parse_mode="HTML")
+    elif media_id and media_type == "document":
+        echo_msg = await message.answer_document(media_id, caption=text or None, parse_mode="HTML")
+    else:
+        echo_msg = await message.answer(text or "—", parse_mode="HTML")
+
+    _kw_echo_ids[key] = echo_msg.message_id
+
+    # -- Панель управления
+    media_icon = "✅" if media_id else "⬆️"
+    mgmt_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💬 Автоответчик",      callback_data=f"ch_ar_view:{chat_id}:{ar_id}")],
+        [InlineKeyboardButton(text="✏️ Редактировать",    callback_data=f"ch_ar_kw_edit:{chat_id}:{ar_id}")],
+        [InlineKeyboardButton(text=f"🎬 Медиа: {media_icon}", callback_data=f"ch_ar_kw_media:{chat_id}:{ar_id}")],
+        [InlineKeyboardButton(text="🗑 Удалить",           callback_data=f"ch_ar_del:{chat_id}:{ar_id}")],
+        [InlineKeyboardButton(text="◀️ Назад",             callback_data=f"ch_ar_kw_back:{chat_id}:{ar_id}")],
+    ])
+    await message.answer(
+        f"🔔 <b>Автоответчик</b>\n\nТриггер: <code>{keyword}</code>",
+        parse_mode="HTML",
+        reply_markup=mgmt_kb,
+    )
+
+
+@router.callback_query(F.data.startswith("ch_ar_view:"))
+async def on_ch_ar_view(callback: CallbackQuery, platform_user: dict | None):
+    """Открывает панель управления keyword-ответом."""
+    if not platform_user:
+        return
+    parts   = callback.data.split(":")
+    chat_id = int(parts[1])
+    ar_id   = int(parts[2])
+    owner_id = platform_user["user_id"]
+    await callback.message.delete()
+    await _show_keyword_mgmt(callback.message, chat_id, owner_id, ar_id)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("ch_ar_kw_back:"))
+async def on_ch_ar_kw_back(callback: CallbackQuery, platform_user: dict | None):
+    """Назад из панели управления keyword-ответом — удаляем эхо и возвращаемся."""
+    if not platform_user:
+        return
+    parts    = callback.data.split(":")
+    chat_id  = int(parts[1])
+    ar_id    = int(parts[2])
+    owner_id = platform_user["user_id"]
+
+    key = (owner_id, chat_id, ar_id)
+    echo_id = _kw_echo_ids.pop(key, None)
+    if echo_id:
+        try:
+            await callback.message.bot.delete_message(callback.message.chat.id, echo_id)
+        except Exception:
+            pass
+
+    await callback.answer()
+    await _show_autoreply(callback, chat_id, owner_id)
+
+
+@router.callback_query(F.data.startswith("ch_ar_kw_edit:"))
+async def on_ch_ar_kw_edit(
+    callback: CallbackQuery, state: FSMContext, platform_user: dict | None
+):
+    """Редактирование текста keyword-ответа."""
+    if not platform_user:
+        return
+    parts    = callback.data.split(":")
+    chat_id  = int(parts[1])
+    ar_id    = int(parts[2])
+    owner_id = platform_user["user_id"]
+
+    # Получаем текущий keyword для контекста
+    row = await db.fetchrow(
+        "SELECT keyword FROM autoreplies WHERE id=$1 AND owner_id=$2", ar_id, owner_id
+    )
+    keyword = (row["keyword"] if row else "") or ""
+
+    await state.set_state(MessagesFSM.waiting_for_autoreply_text)
+    await state.update_data(chat_id=chat_id, owner_id=owner_id, keyword=keyword, ar_id=ar_id)
+    await callback.message.edit_text(
+        f"✏️ <b>Редактирование ответа</b>\n\nТриггер: <code>{keyword}</code>\n\n"
+        "<blockquote>⟲ Пришлите новое сообщение для автоматического ответа.</blockquote>\n\n"
+        "<b>Переменные:</b>\n"
+        "├ Имя: <code>{name}</code>\n"
+        "├ ФИО: <code>{allname}</code>\n"
+        "├ Юзер: <code>{username}</code>\n"
+        "├ Площадка: <code>{chat}</code>\n"
+        "└ Текущая дата: <code>{day}</code>\n\n"
+        "ⓘ Можно прикрепить медиа.",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="◀️ Отмена", callback_data=f"ch_ar_view:{chat_id}:{ar_id}")],
+        ]),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("ch_ar_kw_media:"))
+async def on_ch_ar_kw_media(
+    callback: CallbackQuery, state: FSMContext, platform_user: dict | None
+):
+    """Медиа для keyword-ответа: если уже есть — удалить, иначе запросить."""
+    if not platform_user:
+        return
+    parts    = callback.data.split(":")
+    chat_id  = int(parts[1])
+    ar_id    = int(parts[2])
+    owner_id = platform_user["user_id"]
+
+    row = await db.fetchrow(
+        "SELECT keyword, reply_media FROM autoreplies WHERE id=$1 AND owner_id=$2", ar_id, owner_id
+    )
+    if not row:
+        return
+    keyword = (row["keyword"] or "")
+
+    if row["reply_media"]:
+        await db.execute(
+            "UPDATE autoreplies SET reply_media=NULL, reply_media_type=NULL WHERE id=$1 AND owner_id=$2",
+            ar_id, owner_id,
+        )
+        await callback.answer("Медиа удалено")
+        await callback.message.delete()
+        await _show_keyword_mgmt(callback.message, chat_id, owner_id, ar_id)
+    else:
+        await state.set_state(MessagesFSM.waiting_for_autoreply_text)
+        await state.update_data(chat_id=chat_id, owner_id=owner_id, keyword=keyword, ar_id=ar_id)
+        await callback.message.edit_text(
+            "<blockquote>⟲ Пришлите медиа (фото, видео, документ).\n"
+            "Текст подписи сохранится как ответ.</blockquote>",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="◀️ Отмена", callback_data=f"ch_ar_view:{chat_id}:{ar_id}")],
+            ]),
+        )
+        await callback.answer()
 
 
 # ── Удаление keyword-ответа ────────────────────────────────────
@@ -1128,15 +1288,25 @@ async def on_ar_text_input(message: Message, state: FSMContext):
 async def on_ch_ar_del(callback: CallbackQuery, platform_user: dict | None):
     if not platform_user:
         return
-    parts   = callback.data.split(":")
-    chat_id = int(parts[1])
-    ar_id   = int(parts[2])
+    parts    = callback.data.split(":")
+    chat_id  = int(parts[1])
+    ar_id    = int(parts[2])
+    owner_id = platform_user["user_id"]
+
+    # Удаляем эхо-сообщение панели управления, если есть
+    key = (owner_id, chat_id, ar_id)
+    echo_id = _kw_echo_ids.pop(key, None)
+    if echo_id:
+        try:
+            await callback.message.bot.delete_message(callback.message.chat.id, echo_id)
+        except Exception:
+            pass
+
     await db.execute(
         "DELETE FROM autoreplies WHERE id=$1 AND owner_id=$2",
-        ar_id, platform_user["user_id"],
+        ar_id, owner_id,
     )
     await callback.answer("🗑 Удалено")
-    callback.data = f"ch_autoreply:{chat_id}"
-    await on_ch_autoreply(callback, platform_user)
+    await _show_autoreply(callback, chat_id, owner_id)
 
 

@@ -690,7 +690,7 @@ async def _show_global_mgmt(message, chat_id: int, owner_id: int):
     preview_label = "нет" if not preview_on else "есть"
 
     mgmt_kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✎ Редактировать",    callback_data=f"ch_ar_edit_global:{chat_id}")],
+        [InlineKeyboardButton(text="✏️ Редактировать",    callback_data=f"ch_ar_edit_global:{chat_id}")],
         [InlineKeyboardButton(text="🎛 Кнопки",           callback_data=f"ch_ar_btns_global:{chat_id}")],
         [InlineKeyboardButton(text=f"� Медиа: {media_icon}", callback_data=f"ch_ar_media_global:{chat_id}")],
         [InlineKeyboardButton(text=f"👁 Превью: {preview_label}", callback_data=f"ch_ar_preview_global:{chat_id}")],

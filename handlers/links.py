@@ -119,7 +119,7 @@ def kb_link_detail(link_id: int, chat_id: int, child_bot_id: int,
         [InlineKeyboardButton(text=auto_label,
                               callback_data=f"link_auto_accept:{link_id}:{chat_id}:{child_bot_id}")],
         [InlineKeyboardButton(text="🗑 Удалить",
-                              callback_data=f"link_delete:{link_id}:{chat_id}:{child_bot_id}")],
+                              callback_data=f"link_delete_ask:{link_id}:{chat_id}:{child_bot_id}")],
         [InlineKeyboardButton(text="◀️ Назад",
                               callback_data=f"ch_links:{chat_id}:{child_bot_id}")],
     ])
@@ -631,6 +631,34 @@ async def on_link_auto_accept(callback: CallbackQuery, platform_user: dict | Non
     await callback.answer()
 
 
+# ── Подтверждение удаления ────────────────────────────────────
+
+@router.callback_query(F.data.startswith("link_delete_ask:"))
+async def on_link_delete_ask(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    parts = callback.data.split(":")
+    link_id = int(parts[1])
+    chat_id = int(parts[2]) if len(parts) > 2 else 0
+    child_bot_id = int(parts[3]) if len(parts) > 3 else 0
+
+    await callback.message.edit_text(
+        "🗑 <b>Удалить ссылку?</b>",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(
+                text="✅ Удалить",
+                callback_data=f"link_delete:{link_id}:{chat_id}:{child_bot_id}",
+            )],
+            [InlineKeyboardButton(
+                text="✖️ Отменить",
+                callback_data=f"link_detail:{link_id}:{chat_id}:{child_bot_id}",
+            )],
+        ]),
+    )
+    await callback.answer()
+
+
 # ── Удаление ссылки ───────────────────────────────────────────
 
 @router.callback_query(F.data.startswith("link_delete:"))
@@ -646,7 +674,16 @@ async def on_link_delete(callback: CallbackQuery, platform_user: dict | None):
         "UPDATE invite_links SET is_active=false WHERE id=$1 AND owner_id=$2",
         link_id, platform_user["user_id"],
     )
-    await callback.answer("✅ Ссылка удалена")
-    # Возвращаемся к Экрану 1
-    callback.data = f"ch_links:{chat_id}:{child_bot_id}"
+    await callback.message.edit_text(
+        "✅ <b>Ссылка удалена</b>",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(
+                text="➡ Перейти к ссылкам",
+                callback_data=f"ch_links:{chat_id}:{child_bot_id}",
+            )],
+        ]),
+    )
+    await callback.answer()
+
     await on_links_list(callback, platform_user)

@@ -820,7 +820,7 @@ async def on_ch_msg_btns(callback: CallbackQuery, state: FSMContext, platform_us
         "<code>Кнопка 2 — ссылка</code>\n\n"
         "<b>Несколько кнопок в ряду:</b>\n"
         "<code>Кнопка 1 — ссылка | Кнопка 2 — ссылка</code>\n\n"
-        "🟩 <b>Цветные кнопки (добавь emoji перед названием):</b>\n"
+        "🎨 <b>Цветные кнопки (добавь emoji перед названием):</b>\n"
         "<code>🟦 Кнопка — ссылка</code> — синяя\n"
         "<code>🟩 Кнопка — ссылка</code> — зелёная\n"
         "<code>🟥 Кнопка — ссылка</code> — красная\n\n"

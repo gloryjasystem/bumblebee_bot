@@ -545,6 +545,15 @@ async def _handle_group_message(bot: Bot, child_bot_id: int, message):
     if not settings:
         return
 
+    # ── 0. Статистика сообщений ──────────────────────────────────
+    try:
+        await db.execute(
+            "INSERT INTO message_events (owner_id, chat_id, user_id) VALUES ($1, $2, $3)",
+            settings["owner_id"], chat_id, user.id,
+        )
+    except Exception as _me:
+        logger.debug(f"[MSG_STAT] insert failed: {_me}")
+
     text = message.text or message.caption or ""
 
     # ── 1. Автоответчик ─────────────────────────────────────────

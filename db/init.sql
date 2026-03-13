@@ -329,3 +329,14 @@ ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS general_reply_buttons    JSONB;  
 ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS general_reply_media      TEXT;         -- file_id
 ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS general_reply_media_type VARCHAR(16);  -- photo | video | document
 ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS general_reply_preview    BOOLEAN DEFAULT false;
+
+-- Статистика сообщений: каждое сообщение в группе/супергруппе
+CREATE TABLE IF NOT EXISTS message_events (
+    id          BIGSERIAL PRIMARY KEY,
+    owner_id    BIGINT NOT NULL REFERENCES platform_users(user_id) ON DELETE CASCADE,
+    chat_id     BIGINT NOT NULL,
+    user_id     BIGINT NOT NULL,
+    created_at  TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_msg_events_owner_chat_date
+    ON message_events(owner_id, chat_id, created_at);

@@ -216,6 +216,32 @@ async def on_bot_settings(callback: CallbackQuery, platform_user: dict | None):
         child_bot_id, owner_id,
     ) or 0
 
+    # Статистика сообщений (из message_events)
+    msg_today = msg_yesterday = msg_total = 0
+    try:
+        msg_today = await db.fetchval(
+            """SELECT COUNT(*) FROM message_events me
+               JOIN bot_chats bc ON me.chat_id=bc.chat_id AND me.owner_id=bc.owner_id
+               WHERE bc.child_bot_id=$1 AND me.owner_id=$2
+                 AND me.created_at::date=$3""",
+            child_bot_id, owner_id, today,
+        ) or 0
+        msg_yesterday = await db.fetchval(
+            """SELECT COUNT(*) FROM message_events me
+               JOIN bot_chats bc ON me.chat_id=bc.chat_id AND me.owner_id=bc.owner_id
+               WHERE bc.child_bot_id=$1 AND me.owner_id=$2
+                 AND me.created_at::date=$3""",
+            child_bot_id, owner_id, yesterday,
+        ) or 0
+        msg_total = await db.fetchval(
+            """SELECT COUNT(*) FROM message_events me
+               JOIN bot_chats bc ON me.chat_id=bc.chat_id AND me.owner_id=bc.owner_id
+               WHERE bc.child_bot_id=$1 AND me.owner_id=$2""",
+            child_bot_id, owner_id,
+        ) or 0
+    except Exception as _e:
+        logger.debug(f"message_events query failed (bot_settings): {_e}")
+
     username = bot["bot_username"]
     captcha_block = ""
     if captcha_total_all > 0:
@@ -234,9 +260,9 @@ async def on_bot_settings(callback: CallbackQuery, platform_user: dict | None):
         f"└ Заявок в очереди ≈ {pending}"
         f"{captcha_block}\n\n"
         f"<u>\U0001f4ac Сообщений</u>\n"
-        f"├ Сегодня ≈ 0\n"
-        f"├ Вчера ≈ 0\n"
-        f"├ Всего ≈ 0\n"
+        f"├ Сегодня ≈ {msg_today}\n"
+        f"├ Вчера ≈ {msg_yesterday}\n"
+        f"├ Всего ≈ {msg_total}\n"
         f"🟢 Живые ≈ {alive_users}\n"
         f"🔴 Мёртвые ≈ {dead_users}"
     )
@@ -789,6 +815,24 @@ async def _show_channel_detail(callback: CallbackQuery, platform_user: dict, ch_
         owner_id, chat_id,
     ) or 0
 
+    # Статистика сообщений по конкретной площадке
+    ch_msg_today = ch_msg_yesterday = ch_msg_total = 0
+    try:
+        ch_msg_today = await db.fetchval(
+            "SELECT COUNT(*) FROM message_events WHERE owner_id=$1 AND chat_id=$2::bigint AND created_at::date=$3",
+            owner_id, chat_id, today,
+        ) or 0
+        ch_msg_yesterday = await db.fetchval(
+            "SELECT COUNT(*) FROM message_events WHERE owner_id=$1 AND chat_id=$2::bigint AND created_at::date=$3",
+            owner_id, chat_id, yesterday,
+        ) or 0
+        ch_msg_total = await db.fetchval(
+            "SELECT COUNT(*) FROM message_events WHERE owner_id=$1 AND chat_id=$2::bigint",
+            owner_id, chat_id,
+        ) or 0
+    except Exception as _e:
+        logger.debug(f"message_events query failed (channel_detail): {_e}")
+
     # ── Формируем текст ───────────────────────────────────────
     captcha_block = ""
     if captcha_total_all > 0:
@@ -807,9 +851,9 @@ async def _show_channel_detail(callback: CallbackQuery, platform_user: dict, ch_
         f"└ Заявок в очереди ≈ {pending_requests}"
         f"{captcha_block}\n\n"
         f"<u>\U0001f4ac Сообщений</u>\n"
-        f"├ Сегодня ≈ 0\n"
-        f"├ Вчера ≈ 0\n"
-        f"├ Всего ≈ 0\n"
+        f"├ Сегодня ≈ {ch_msg_today}\n"
+        f"├ Вчера ≈ {ch_msg_yesterday}\n"
+        f"├ Всего ≈ {ch_msg_total}\n"
         f"🟢 Живые ≈ {alive_users}\n"
         f"🔴 Мёртвые ≈ {dead_users}"
     )

@@ -813,12 +813,21 @@ async def on_ch_msg_btns(callback: CallbackQuery, state: FSMContext, platform_us
     await state.update_data(chat_id=int(chat_id_str), owner_id=platform_user["user_id"],
                              msg_type=msg_type, scope="ch")
     await callback.message.edit_text(
-        "🎛 <b>Кнопки под сообщением</b>\n\n"
-        "Отправьте список кнопок в формате:\n"
-        "<code>Текст кнопки — https://ссылка.com</code>\n\n"
-        "Каждая кнопка на новой строке. Пример:\n"
-        "<code>📢 Наш канал — https://t.me/channel\n"
-        "🌐 Сайт — https://site.com</code>",
+        "📎 Отправьте <b>кнопки</b>, которые будут добавлены к сообщению.\n\n"
+        "🔗 <b>URL-кнопки</b>\n\n"
+        "<b>Одна кнопка в ряду:</b>\n"
+        "<code>Кнопка 1 — ссылка</code>\n"
+        "<code>Кнопка 2 — ссылка</code>\n\n"
+        "<b>Несколько кнопок в ряду:</b>\n"
+        "<code>Кнопка 1 — ссылка | Кнопка 2 — ссылка</code>\n\n"
+        "🟩 <b>Цветные кнопки (добавь emoji перед названием):</b>\n"
+        "<code>🟦 Кнопка — ссылка</code> — синяя\n"
+        "<code>🟩 Кнопка — ссылка</code> — зелёная\n"
+        "<code>🟥 Кнопка — ссылка</code> — красная\n\n"
+        "*** <b>Другие виды кнопок</b>\n\n"
+        "<b>WebApp кнопки:</b>\n"
+        "<code>Кнопка 1 — ссылка (webapp)</code>\n\n"
+        "ℹ️ Нажмите, чтобы скопировать.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="◀️ Отмена", callback_data=f"ch_msg_back:{chat_id_str}:{msg_type}")],
         ]),

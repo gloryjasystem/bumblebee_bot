@@ -323,5 +323,9 @@ CREATE TABLE IF NOT EXISTS invite_link_members (
 CREATE INDEX IF NOT EXISTS idx_ilm_link_id ON invite_link_members(link_id);
 
 -- Общий автоответ: отвечать на любое сообщение одним текстом
-ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS general_reply_enabled BOOLEAN DEFAULT false;
-ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS general_reply_text    TEXT;
+ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS general_reply_enabled   BOOLEAN DEFAULT false;
+ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS general_reply_text       TEXT;
+ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS general_reply_buttons    JSONB;        -- [{text, url}, ...]
+ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS general_reply_media      TEXT;         -- file_id
+ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS general_reply_media_type VARCHAR(16);  -- photo | video | document
+ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS general_reply_preview    BOOLEAN DEFAULT false;

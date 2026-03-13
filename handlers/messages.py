@@ -21,11 +21,12 @@ router = Router()
 
 
 class MessagesFSM(StatesGroup):
-    waiting_for_captcha_text       = State()
-    waiting_for_captcha_buttons    = State()
-    waiting_for_autoreply_kw       = State()
-    waiting_for_autoreply_text     = State()
-    waiting_for_general_reply_text = State()
+    waiting_for_captcha_text           = State()
+    waiting_for_captcha_buttons        = State()
+    waiting_for_autoreply_kw           = State()
+    waiting_for_autoreply_text         = State()
+    waiting_for_general_reply_text     = State()
+    waiting_for_general_reply_buttons  = State()
 
 
 # ── Константы ──────────────────────────────────────────────────
@@ -602,19 +603,18 @@ async def on_captcha_btns_input(message: Message, state: FSMContext):
 # ══════════════════════════════════════════════════════════════
 
 async def _show_autoreply(callback: CallbackQuery, chat_id: int, owner_id: int):
-    """Рендерит экран автоответчика."""
+    """Рендерит главный экран автоответчика."""
     ch = await db.fetchrow(
         "SELECT general_reply_enabled, general_reply_text FROM bot_chats "
         "WHERE owner_id=$1 AND chat_id=$2::bigint",
         owner_id, chat_id,
     )
-    general_on   = bool(ch["general_reply_enabled"]) if ch else False
-    general_text = (ch["general_reply_text"] or "") if ch else ""
+    general_on = bool(ch["general_reply_enabled"]) if ch else False
 
     buttons = []
 
     if general_on:
-        # Общий ответ включён — показываем только toggle (ключевые слова не нужны)
+        # Общий ответ включён — только toggle
         buttons.append([InlineKeyboardButton(
             text="Общий ответ: вкл",
             callback_data=f"ch_ar_toggle_global:{chat_id}",
@@ -622,7 +622,7 @@ async def _show_autoreply(callback: CallbackQuery, chat_id: int, owner_id: int):
     else:
         # Список keyword-ответов
         rows = await db.fetch(
-            "SELECT id, keyword, reply_text FROM autoreplies "
+            "SELECT id, keyword FROM autoreplies "
             "WHERE owner_id=$1 AND chat_id=$2::bigint LIMIT 20",
             owner_id, chat_id,
         )
@@ -659,7 +659,48 @@ async def on_ch_autoreply(callback: CallbackQuery, platform_user: dict | None):
     await _show_autoreply(callback, chat_id, platform_user["user_id"])
 
 
-# ── Toggle: Общий ответ ────────────────────────────────────────
+# ── Панель управления общим ответом ───────────────────────────
+
+async def _show_global_mgmt(message, chat_id: int, owner_id: int):
+    """Показывает панель управления общим ответом (2 сообщения: эхо + управление)."""
+    ch = await db.fetchrow(
+        "SELECT general_reply_text, general_reply_media, general_reply_media_type, "
+        "general_reply_preview, general_reply_buttons FROM bot_chats "
+        "WHERE owner_id=$1 AND chat_id=$2::bigint",
+        owner_id, chat_id,
+    )
+    text       = (ch["general_reply_text"] or "") if ch else ""
+    media_id   = (ch["general_reply_media"] or "") if ch else ""
+    media_type = (ch["general_reply_media_type"] or "") if ch else ""
+    preview_on = bool(ch["general_reply_preview"]) if ch else False
+
+    # -- Эхо сохранённого сообщения (как пользователь его отправил)
+    if media_id and media_type == "photo":
+        await message.answer_photo(media_id, caption=text or None, parse_mode="HTML")
+    elif media_id and media_type == "video":
+        await message.answer_video(media_id, caption=text or None, parse_mode="HTML")
+    elif media_id and media_type == "document":
+        await message.answer_document(media_id, caption=text or None, parse_mode="HTML")
+    else:
+        await message.answer(text or "—", parse_mode="HTML",
+                             disable_web_page_preview=not preview_on)
+
+    # -- Панель управления
+    media_icon = "⬆️" if not media_id else "✅"
+    preview_label = "нет" if not preview_on else "есть"
+
+    mgmt_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✎ Редактировать",    callback_data=f"ch_ar_edit_global:{chat_id}")],
+        [InlineKeyboardButton(text="⛓ Кнопки",           callback_data=f"ch_ar_btns_global:{chat_id}")],
+        [InlineKeyboardButton(text=f"🎞 Медиа: {media_icon}", callback_data=f"ch_ar_media_global:{chat_id}")],
+        [InlineKeyboardButton(text=f"⊙ Превью: {preview_label}", callback_data=f"ch_ar_preview_global:{chat_id}")],
+        [InlineKeyboardButton(text="🗑 Удалить",          callback_data=f"ch_ar_delete_global:{chat_id}")],
+        [InlineKeyboardButton(text="◀️ Назад",            callback_data=f"ch_autoreply:{chat_id}")],
+    ])
+    await message.answer("📣 <b>Автоответчик</b>", parse_mode="HTML", reply_markup=mgmt_kb)
+
+
+# ── Toggle: Общий ответ (вкл ↔ выкл) ─────────────────────────
 
 @router.callback_query(F.data.startswith("ch_ar_toggle_global:"))
 async def on_ch_ar_toggle_global(
@@ -688,21 +729,27 @@ async def on_ch_ar_toggle_global(
         await _show_autoreply(callback, chat_id, owner_id)
     else:
         if has_text:
-            # Текст уже есть — просто включаем
+            # Текст уже есть — показываем панель управления
+            await callback.answer("Общий ответ: вкл")
             await db.execute(
                 "UPDATE bot_chats SET general_reply_enabled=true WHERE owner_id=$1 AND chat_id=$2::bigint",
                 owner_id, chat_id,
             )
-            await callback.answer("Общий ответ: вкл")
-            await _show_autoreply(callback, chat_id, owner_id)
+            await _show_global_mgmt(callback.message, chat_id, owner_id)
         else:
-            # Текста нет — просим ввести
+            # Текста нет — FSM-ввод
             await state.set_state(MessagesFSM.waiting_for_general_reply_text)
             await state.update_data(chat_id=chat_id, owner_id=owner_id)
             await callback.message.edit_text(
-                "💬 <b>Общий ответ</b>\n\n"
-                "Отправьте текст, которым бот будет отвечать на <u>любое</u> "
-                "сообщение или команду от пользователей:",
+                "<blockquote>⟲ Пришлите сообщение, которое будет "
+                "использоваться для автоматического ответа.</blockquote>\n\n"
+                "<b>Переменные:</b>\n"
+                "├ Имя: <code>{name}</code>\n"
+                "├ ФИО: <code>{allname}</code>\n"
+                "├ Юзер: <code>{username}</code>\n"
+                "├ Площадка: <code>{chat}</code>\n"
+                "└ Текущая дата: <code>{day}</code>\n\n"
+                "ⓘ Можно прикрепить медиа.",
                 reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                     [InlineKeyboardButton(text="◀️ Отмена", callback_data=f"ch_autoreply:{chat_id}")],
                 ]),
@@ -715,20 +762,196 @@ async def on_general_reply_text_input(message: Message, state: FSMContext):
     data     = await state.get_data()
     chat_id  = data["chat_id"]
     owner_id = data["owner_id"]
-    text     = sanitize(message.text or "", max_len=1024)
+
+    # Поддержка медиа
+    if message.photo:
+        text     = sanitize(message.caption or "", max_len=1024)
+        media_id  = message.photo[-1].file_id
+        media_type = "photo"
+    elif message.video:
+        text     = sanitize(message.caption or "", max_len=1024)
+        media_id  = message.video.file_id
+        media_type = "video"
+    elif message.document:
+        text     = sanitize(message.caption or "", max_len=1024)
+        media_id  = message.document.file_id
+        media_type = "document"
+    else:
+        text     = sanitize(message.text or "", max_len=1024)
+        media_id  = None
+        media_type = None
 
     await db.execute(
-        "UPDATE bot_chats SET general_reply_text=$1, general_reply_enabled=true "
-        "WHERE owner_id=$2 AND chat_id=$3::bigint",
-        text, owner_id, chat_id,
+        "UPDATE bot_chats "
+        "SET general_reply_text=$1, general_reply_media=$2, general_reply_media_type=$3, "
+        "    general_reply_enabled=true "
+        "WHERE owner_id=$4 AND chat_id=$5::bigint",
+        text, media_id, media_type, owner_id, chat_id,
     )
     await state.clear()
-    await message.answer(
-        "✅ Общий ответ сохранён и включён.",
+    # Показываем эхо + панель управления
+    await _show_global_mgmt(message, chat_id, owner_id)
+
+
+# ── Управление: Редактировать ──────────────────────────────────
+
+@router.callback_query(F.data.startswith("ch_ar_edit_global:"))
+async def on_ch_ar_edit_global(
+    callback: CallbackQuery, state: FSMContext, platform_user: dict | None
+):
+    if not platform_user:
+        return
+    chat_id  = int(callback.data.split(":")[1])
+    owner_id = platform_user["user_id"]
+    await state.set_state(MessagesFSM.waiting_for_general_reply_text)
+    await state.update_data(chat_id=chat_id, owner_id=owner_id)
+    await callback.message.edit_text(
+        "<blockquote>⟲ Пришлите сообщение, которое будет "
+        "использоваться для автоматического ответа.</blockquote>\n\n"
+        "<b>Переменные:</b>\n"
+        "├ Имя: <code>{name}</code>\n"
+        "├ ФИО: <code>{allname}</code>\n"
+        "├ Юзер: <code>{username}</code>\n"
+        "├ Площадка: <code>{chat}</code>\n"
+        "└ Текущая дата: <code>{day}</code>\n\n"
+        "ⓘ Можно прикрепить медиа.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="◀️ К автоответчику", callback_data=f"ch_autoreply:{chat_id}")],
+            [InlineKeyboardButton(text="◀️ Отмена", callback_data=f"ch_autoreply:{chat_id}")],
         ]),
     )
+    await callback.answer()
+
+
+# ── Управление: Медиа ─────────────────────────────────────────
+
+@router.callback_query(F.data.startswith("ch_ar_media_global:"))
+async def on_ch_ar_media_global(
+    callback: CallbackQuery, state: FSMContext, platform_user: dict | None
+):
+    if not platform_user:
+        return
+    chat_id  = int(callback.data.split(":")[1])
+    owner_id = platform_user["user_id"]
+    # Если медиа уже есть — удаляем его (toggle)
+    ch = await db.fetchrow(
+        "SELECT general_reply_media FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint",
+        owner_id, chat_id,
+    )
+    if ch and ch["general_reply_media"]:
+        await db.execute(
+            "UPDATE bot_chats SET general_reply_media=NULL, general_reply_media_type=NULL "
+            "WHERE owner_id=$1 AND chat_id=$2::bigint",
+            owner_id, chat_id,
+        )
+        await callback.answer("Медиа удалено")
+        await _show_global_mgmt(callback.message, chat_id, owner_id)
+    else:
+        # Просим прислать медиа через тот же FSM (медиа + подпись)
+        await state.set_state(MessagesFSM.waiting_for_general_reply_text)
+        await state.update_data(chat_id=chat_id, owner_id=owner_id)
+        await callback.message.edit_text(
+            "<blockquote>⟲ Пришлите медиа (фото, видео, документ).\n"
+            "Текст подписи сохранится как ответ.</blockquote>",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="◀️ Отмена", callback_data=f"ch_autoreply:{chat_id}")],
+            ]),
+        )
+        await callback.answer()
+
+
+# ── Управление: Превью ────────────────────────────────────────
+
+@router.callback_query(F.data.startswith("ch_ar_preview_global:"))
+async def on_ch_ar_preview_global(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    chat_id  = int(callback.data.split(":")[1])
+    owner_id = platform_user["user_id"]
+    ch = await db.fetchrow(
+        "SELECT general_reply_preview FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint",
+        owner_id, chat_id,
+    )
+    new_val = not bool(ch["general_reply_preview"] if ch else False)
+    await db.execute(
+        "UPDATE bot_chats SET general_reply_preview=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
+        new_val, owner_id, chat_id,
+    )
+    await callback.answer("Превью: " + ("есть" if new_val else "нет"))
+    await _show_global_mgmt(callback.message, chat_id, owner_id)
+
+
+# ── Управление: Кнопки ────────────────────────────────────────
+
+@router.callback_query(F.data.startswith("ch_ar_btns_global:"))
+async def on_ch_ar_btns_global(
+    callback: CallbackQuery, state: FSMContext, platform_user: dict | None
+):
+    if not platform_user:
+        return
+    chat_id  = int(callback.data.split(":")[1])
+    owner_id = platform_user["user_id"]
+    await state.set_state(MessagesFSM.waiting_for_general_reply_buttons)
+    await state.update_data(chat_id=chat_id, owner_id=owner_id)
+    await callback.message.edit_text(
+        "⛓ <b>Кнопки общего ответа</b>\n\n"
+        "Отправьте кнопки в формате:\n"
+        "<code>Текст кнопки | https://example.com</code>\n"
+        "По одной кнопке на строку.\n\n"
+        "Для удаления всех кнопок — отправьте <code>-</code>",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="◀️ Отмена", callback_data=f"ch_autoreply:{chat_id}")],
+        ]),
+    )
+    await callback.answer()
+
+
+@router.message(MessagesFSM.waiting_for_general_reply_buttons)
+async def on_general_reply_buttons_input(message: Message, state: FSMContext):
+    data     = await state.get_data()
+    chat_id  = data["chat_id"]
+    owner_id = data["owner_id"]
+    raw      = (message.text or "").strip()
+
+    if raw == "-":
+        buttons_json = None
+    else:
+        import json as _json
+        parsed = []
+        for line in raw.splitlines():
+            if "|" in line:
+                parts = line.split("|", 1)
+                btn_text = parts[0].strip()
+                btn_url  = parts[1].strip()
+                if btn_text and btn_url:
+                    parsed.append({"text": btn_text, "url": btn_url})
+        buttons_json = _json.dumps(parsed, ensure_ascii=False) if parsed else None
+
+    await db.execute(
+        "UPDATE bot_chats SET general_reply_buttons=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
+        buttons_json, owner_id, chat_id,
+    )
+    await state.clear()
+    await _show_global_mgmt(message, chat_id, owner_id)
+
+
+# ── Управление: Удалить ───────────────────────────────────────
+
+@router.callback_query(F.data.startswith("ch_ar_delete_global:"))
+async def on_ch_ar_delete_global(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    chat_id  = int(callback.data.split(":")[1])
+    owner_id = platform_user["user_id"]
+    await db.execute(
+        "UPDATE bot_chats "
+        "SET general_reply_enabled=false, general_reply_text=NULL, "
+        "    general_reply_media=NULL, general_reply_media_type=NULL, "
+        "    general_reply_buttons=NULL, general_reply_preview=false "
+        "WHERE owner_id=$1 AND chat_id=$2::bigint",
+        owner_id, chat_id,
+    )
+    await callback.answer("🗑 Общий ответ удалён")
+    await _show_autoreply(callback, chat_id, owner_id)
 
 
 # ── Добавление keyword-ответа ──────────────────────────────────
@@ -803,4 +1026,5 @@ async def on_ch_ar_del(callback: CallbackQuery, platform_user: dict | None):
     await callback.answer("🗑 Удалено")
     callback.data = f"ch_autoreply:{chat_id}"
     await on_ch_autoreply(callback, platform_user)
+
 

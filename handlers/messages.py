@@ -53,6 +53,11 @@ _DELETE_CYCLE = [0, 5, 10, 15, 30, 60]
 _REACTION_OPTIONS = ["👍", "❤️", "🔥", "🎉", "👏", "😍", "🤩", "💯"]
 
 
+# Хранит message_id эхо-сообщения панели «Общий ответ»
+# ключ: (owner_id, chat_id) → message_id
+_gr_echo_ids: dict = {}
+
+
 # ══════════════════════════════════════════════════════════════
 # Экран 3: меню сообщений канала
 # ══════════════════════════════════════════════════════════════
@@ -674,16 +679,28 @@ async def _show_global_mgmt(message, chat_id: int, owner_id: int):
     media_type = (ch["general_reply_media_type"] or "") if ch else ""
     preview_on = bool(ch["general_reply_preview"]) if ch else False
 
+    # Удалить старое эхо, если оно уже есть (обновление панели)
+    key = (owner_id, chat_id)
+    old_echo_id = _gr_echo_ids.pop(key, None)
+    if old_echo_id:
+        try:
+            await message.bot.delete_message(message.chat.id, old_echo_id)
+        except Exception:
+            pass
+
     # -- Эхо сохранённого сообщения (как пользователь его отправил)
     if media_id and media_type == "photo":
-        await message.answer_photo(media_id, caption=text or None, parse_mode="HTML")
+        echo_msg = await message.answer_photo(media_id, caption=text or None, parse_mode="HTML")
     elif media_id and media_type == "video":
-        await message.answer_video(media_id, caption=text or None, parse_mode="HTML")
+        echo_msg = await message.answer_video(media_id, caption=text or None, parse_mode="HTML")
     elif media_id and media_type == "document":
-        await message.answer_document(media_id, caption=text or None, parse_mode="HTML")
+        echo_msg = await message.answer_document(media_id, caption=text or None, parse_mode="HTML")
     else:
-        await message.answer(text or "—", parse_mode="HTML",
-                             disable_web_page_preview=not preview_on)
+        echo_msg = await message.answer(text or "—", parse_mode="HTML",
+                                        disable_web_page_preview=not preview_on)
+
+    # Сохраняем ID эхо-сообщения
+    _gr_echo_ids[key] = echo_msg.message_id
 
     # -- Панель управления
     media_icon = "⬆️" if not media_id else "✅"
@@ -695,9 +712,37 @@ async def _show_global_mgmt(message, chat_id: int, owner_id: int):
         [InlineKeyboardButton(text=f"🎬 Медиа: {media_icon}", callback_data=f"ch_ar_media_global:{chat_id}")],
         [InlineKeyboardButton(text=f"👁 Превью: {preview_label}", callback_data=f"ch_ar_preview_global:{chat_id}")],
         [InlineKeyboardButton(text="🗑 Удалить",          callback_data=f"ch_ar_delete_global:{chat_id}")],
-        [InlineKeyboardButton(text="◀️ Назад",            callback_data=f"ch_autoreply:{chat_id}")],
+        [InlineKeyboardButton(text="◀️ Назад",            callback_data=f"ch_ar_back_global:{chat_id}")],
     ])
     await message.answer("💬 <b>Автоответчик</b>", parse_mode="HTML", reply_markup=mgmt_kb)
+
+
+# ── «◀️ Назад» из панели управления общим ответом ───────────────
+
+@router.callback_query(F.data.startswith("ch_ar_back_global:"))
+async def on_ch_ar_back_global(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    chat_id  = int(callback.data.split(":")[1])
+    owner_id = platform_user["user_id"]
+
+    # Удалить эхо-сообщение, если оно зарегистрировано
+    key = (owner_id, chat_id)
+    echo_id = _gr_echo_ids.pop(key, None)
+    if echo_id:
+        try:
+            await callback.message.bot.delete_message(callback.message.chat.id, echo_id)
+        except Exception:
+            pass
+
+    # Текст в БД НЕ трогаем — только выключаем флаг
+    await db.execute(
+        "UPDATE bot_chats SET general_reply_enabled=false "
+        "WHERE owner_id=$1 AND chat_id=$2::bigint",
+        owner_id, chat_id,
+    )
+    await callback.answer()
+    await _show_autoreply(callback, chat_id, owner_id)
 
 
 # ── Toggle: Общий ответ (вкл ↔ выкл) ─────────────────────────
@@ -720,7 +765,14 @@ async def on_ch_ar_toggle_global(
     has_text     = bool((ch["general_reply_text"] or "").strip()) if ch else False
 
     if currently_on:
-        # Выключаем
+        # Выключаем — удаляем эхо если есть
+        key = (owner_id, chat_id)
+        echo_id = _gr_echo_ids.pop(key, None)
+        if echo_id:
+            try:
+                await callback.message.bot.delete_message(callback.message.chat.id, echo_id)
+            except Exception:
+                pass
         await db.execute(
             "UPDATE bot_chats SET general_reply_enabled=false WHERE owner_id=$1 AND chat_id=$2::bigint",
             owner_id, chat_id,
@@ -942,6 +994,16 @@ async def on_ch_ar_delete_global(callback: CallbackQuery, platform_user: dict | 
         return
     chat_id  = int(callback.data.split(":")[1])
     owner_id = platform_user["user_id"]
+
+    # Удалить эхо-сообщение из чата
+    key = (owner_id, chat_id)
+    echo_id = _gr_echo_ids.pop(key, None)
+    if echo_id:
+        try:
+            await callback.message.bot.delete_message(callback.message.chat.id, echo_id)
+        except Exception:
+            pass
+
     await db.execute(
         "UPDATE bot_chats "
         "SET general_reply_enabled=false, general_reply_text=NULL, "

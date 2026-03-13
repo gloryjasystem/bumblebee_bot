@@ -22,3 +22,4 @@ cryptography==43.0.3
 # Utils
 python-dotenv==1.0.1
 pydantic-settings==2.6.1
+gender-guesser==0.4.0

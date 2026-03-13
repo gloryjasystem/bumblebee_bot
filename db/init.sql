@@ -313,4 +313,11 @@ CREATE INDEX IF NOT EXISTS idx_msm_pending
     ON mailing_sent_messages(pin_until, unpinned)
     WHERE pin_until IS NOT NULL AND unpinned = false;
 
-
+-- Реестр уникальных участников по каждой ссылке для дедупликации статистики
+CREATE TABLE IF NOT EXISTS invite_link_members (
+    link_id         INTEGER   NOT NULL REFERENCES invite_links(id) ON DELETE CASCADE,
+    user_id         BIGINT    NOT NULL,
+    joined_counted  BOOLEAN   DEFAULT false,  -- был ли учтён в invite_links.joined
+    PRIMARY KEY (link_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_ilm_link_id ON invite_link_members(link_id);

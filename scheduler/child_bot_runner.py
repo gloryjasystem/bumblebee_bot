@@ -62,13 +62,31 @@ async def _try_send_dm(child_bot: Bot, user_id: int, text: str,
 
 
 async def _track_invite_link(invite_link_url: str, user) -> int | None:
-    """Обновляет статистику ссылки-приглашения. Возвращает link_id или None."""
+    """Обновляет статистику ссылки-приглашения. Возвращает link_id или None.
+    Дедупликация: один пользователь считается только один раз для каждой ссылки.
+    """
     if not invite_link_url:
         return None
     row = await db.fetchrow("SELECT id FROM invite_links WHERE link=$1", invite_link_url)
     if not row:
         return None
     link_id = row["id"]
+
+    # Проверяем, не учитывали ли мы уже этого пользователя по этой ссылке
+    already = await db.fetchrow(
+        "SELECT joined_counted FROM invite_link_members WHERE link_id=$1 AND user_id=$2",
+        link_id, user.id,
+    )
+    if already and already["joined_counted"]:
+        # Уже учтён — не считаем повторно, но обновляем joined_via_link_id
+        logger.info(f"[LINK] User {user.id} already counted for link_id={link_id}, skipping")
+        return link_id
+
+    # Определяем пол
+    from services.gender import guess_gender
+    gender = guess_gender(user.first_name or "")
+    males_inc   = 1 if gender == "M" else 0
+    females_inc = 1 if gender == "F" else 0
 
     full_name = f"{user.first_name or ''} {user.last_name or ''}".strip()
     from services.security import detect_rtl, detect_hieroglyph
@@ -95,31 +113,47 @@ async def _track_invite_link(invite_link_url: str, user) -> int | None:
             """
             UPDATE invite_links SET
                 joined           = joined + 1,
-                rtl_count        = rtl_count + $2::int,
-                hieroglyph_count = hieroglyph_count + $3::int,
-                premium_count    = premium_count + $4::int,
+                males            = males + $2::int,
+                females          = females + $3::int,
+                rtl_count        = rtl_count + $4::int,
+                hieroglyph_count = hieroglyph_count + $5::int,
+                premium_count    = premium_count + $6::int,
                 countries        = jsonb_set(
                     COALESCE(countries, '{}'),
-                    ARRAY[$5],
-                    (COALESCE(countries->$5, '0')::int + 1)::text::jsonb
+                    ARRAY[$7],
+                    (COALESCE(countries->$7, '0')::int + 1)::text::jsonb
                 )
             WHERE id = $1
             """,
-            link_id, int(has_rtl), int(has_hieroglyph), int(is_premium), country_code,
+            link_id, males_inc, females_inc,
+            int(has_rtl), int(has_hieroglyph), int(is_premium), country_code,
         )
     else:
         await db.execute(
             """
             UPDATE invite_links SET
                 joined           = joined + 1,
-                rtl_count        = rtl_count + $2::int,
-                hieroglyph_count = hieroglyph_count + $3::int,
-                premium_count    = premium_count + $4::int
+                males            = males + $2::int,
+                females          = females + $3::int,
+                rtl_count        = rtl_count + $4::int,
+                hieroglyph_count = hieroglyph_count + $5::int,
+                premium_count    = premium_count + $6::int
             WHERE id = $1
             """,
-            link_id, int(has_rtl), int(has_hieroglyph), int(is_premium),
+            link_id, males_inc, females_inc,
+            int(has_rtl), int(has_hieroglyph), int(is_premium),
         )
-    logger.info(f"[LINK] Tracked join via link_id={link_id} for user {user.id}")
+
+    # Помечаем пользователя как учтённого (INSERT-or-UPDATE)
+    await db.execute(
+        """
+        INSERT INTO invite_link_members (link_id, user_id, joined_counted)
+        VALUES ($1, $2, true)
+        ON CONFLICT (link_id, user_id) DO UPDATE SET joined_counted = true
+        """,
+        link_id, user.id,
+    )
+    logger.info(f"[LINK] Tracked join via link_id={link_id} for user {user.id} gender={gender}")
     return link_id
 
 
@@ -1226,38 +1260,68 @@ async def _handle_chat_member(bot: Bot, child_bot_id: int, event: ChatMemberUpda
             logger.info(f"[LINK DBG] db row found: {row is not None}")
             if row:
                 link_id = row["id"]
-                if country_code:
+
+                # Проверяем дедупликацию
+                already = await db.fetchrow(
+                    "SELECT joined_counted FROM invite_link_members WHERE link_id=$1 AND user_id=$2",
+                    link_id, user.id,
+                )
+                if not (already and already["joined_counted"]):
+                    from services.gender import guess_gender
+                    gender = guess_gender(user.first_name or "")
+                    males_inc   = 1 if gender == "M" else 0
+                    females_inc = 1 if gender == "F" else 0
+
+                    if country_code:
+                        await db.execute(
+                            """
+                            UPDATE invite_links SET
+                                joined           = joined + 1,
+                                males            = males + $2::int,
+                                females          = females + $3::int,
+                                rtl_count        = rtl_count + $4::int,
+                                hieroglyph_count = hieroglyph_count + $5::int,
+                                premium_count    = premium_count + $6::int,
+                                countries        = jsonb_set(
+                                    COALESCE(countries, '{}'),
+                                    ARRAY[$7],
+                                    (COALESCE(countries->$7, '0')::int + 1)::text::jsonb
+                                )
+                            WHERE id = $1
+                            """,
+                            link_id,
+                            males_inc, females_inc,
+                            int(has_rtl), int(has_hieroglyph), int(is_premium),
+                            country_code,
+                        )
+                    else:
+                        await db.execute(
+                            """
+                            UPDATE invite_links SET
+                                joined           = joined + 1,
+                                males            = males + $2::int,
+                                females          = females + $3::int,
+                                rtl_count        = rtl_count + $4::int,
+                                hieroglyph_count = hieroglyph_count + $5::int,
+                                premium_count    = premium_count + $6::int
+                            WHERE id = $1
+                            """,
+                            link_id,
+                            males_inc, females_inc,
+                            int(has_rtl), int(has_hieroglyph), int(is_premium),
+                        )
+
                     await db.execute(
                         """
-                        UPDATE invite_links SET
-                            joined           = joined + 1,
-                            rtl_count        = rtl_count + $2::int,
-                            hieroglyph_count = hieroglyph_count + $3::int,
-                            premium_count    = premium_count + $4::int,
-                            countries        = jsonb_set(
-                                COALESCE(countries, '{}'),
-                                ARRAY[$5],
-                                (COALESCE(countries->$5, '0')::int + 1)::text::jsonb
-                            )
-                        WHERE id = $1
+                        INSERT INTO invite_link_members (link_id, user_id, joined_counted)
+                        VALUES ($1, $2, true)
+                        ON CONFLICT (link_id, user_id) DO UPDATE SET joined_counted = true
                         """,
-                        link_id,
-                        int(has_rtl), int(has_hieroglyph), int(is_premium),
-                        country_code,
+                        link_id, user.id,
                     )
+                    logger.info(f"[LINK] Tracked join via link_id={link_id} user={user.id} gender={gender}")
                 else:
-                    await db.execute(
-                        """
-                        UPDATE invite_links SET
-                            joined           = joined + 1,
-                            rtl_count        = rtl_count + $2::int,
-                            hieroglyph_count = hieroglyph_count + $3::int,
-                            premium_count    = premium_count + $4::int
-                        WHERE id = $1
-                        """,
-                        link_id,
-                        int(has_rtl), int(has_hieroglyph), int(is_premium),
-                    )
+                    logger.info(f"[LINK] User {user.id} already counted for link_id={link_id}, skipping")
 
         await db.execute(
             """
@@ -1316,14 +1380,16 @@ async def _handle_chat_member(bot: Bot, child_bot_id: int, event: ChatMemberUpda
             logger.info(f"[CAPTCHA KICK] Skip left-event for captcha-kicked user={user.id} chat={chat_id}")
             return
 
-        # Обновляем счётчик отписок для ссылки (через joined_via_link_id)
+        # Обновляем счётчик отписок для ссылки (только если этот пользователь был учтён в joined)
         await db.execute(
             """
             UPDATE invite_links SET unsubscribed = unsubscribed + 1
             WHERE id = (
-                SELECT joined_via_link_id FROM bot_users
-                WHERE owner_id=$1 AND chat_id=$2 AND user_id=$3
-                  AND joined_via_link_id IS NOT NULL
+                SELECT ilm.link_id FROM invite_link_members ilm
+                JOIN bot_users bu ON bu.joined_via_link_id = ilm.link_id
+                WHERE bu.owner_id=$1 AND bu.chat_id=$2 AND bu.user_id=$3
+                  AND ilm.user_id=$3 AND ilm.joined_counted = true
+                LIMIT 1
             )
             """,
             owner_id, chat_id, user.id,

@@ -98,7 +98,41 @@ async def on_join_request(event: ChatJoinRequest, bot: Bot):
         except Exception as e:
             logger.warning(f"[FILTER] get_user_profile_photos failed for {user.id}: {e}")
 
-    # 6. Автопринятие / капча / отложенное / ручное
+    # 6. Проверяем auto_accept конкретной ссылки (приоритет над настройками бота)
+    raw_invite_url = event.invite_link.invite_link if event.invite_link else None
+    link_auto_accept = None
+    if raw_invite_url:
+        link_row = await db.fetchrow(
+            "SELECT auto_accept FROM invite_links WHERE link=$1",
+            raw_invite_url,
+        )
+        if link_row:
+            link_auto_accept = link_row["auto_accept"]  # "base" | "on" | "off"
+
+    if link_auto_accept == "on":
+        # Ссылка: автопринятие включено — принимаем немедленно
+        await event.approve()
+        await _save_pending(owner_id, event.chat.id, user)
+        await db.execute(
+            "UPDATE join_requests SET status='approved', resolved_at=now() "
+            "WHERE owner_id=$1 AND chat_id=$2 AND user_id=$3",
+            owner_id, event.chat.id, user.id,
+        )
+        await _register_user(owner_id, event.chat.id, user,
+                             invite_link=event.invite_link)
+        await _send_welcome(bot, event.chat.id, user, settings_row)
+        await _log_action(owner_id, event.chat.id, "approve", user.id)
+        logger.info(f"[LINK AUTO=on] Approved {user.id} via link {raw_invite_url}")
+        return
+
+    if link_auto_accept == "off":
+        # Ссылка: автопринятие выключено — только ручная проверка администратором
+        await _save_pending(owner_id, event.chat.id, user)
+        logger.info(f"[LINK AUTO=off] Saved {user.id} for manual review, link={raw_invite_url}")
+        return
+
+    # link_auto_accept == "base" или ссылка неизвестна → стандартная логика бота
+    # 7. Автопринятие / капча / отложенное / ручное
     if settings_row["autoaccept"]:
         delay = settings_row["autoaccept_delay"] or 0
         if delay > 0:
@@ -124,6 +158,7 @@ async def on_join_request(event: ChatJoinRequest, bot: Bot):
         # Ручной режим — сохраняем в очередь для ревью владельцем
         await _save_pending(owner_id, event.chat.id, user)
         logger.info(f"[JOIN] Request from {user.id} saved for manual review in {event.chat.id}")
+
 
 
 

@@ -634,6 +634,10 @@ async def _show_autoreply(callback: CallbackQuery, chat_id: int, owner_id: int):
             text="Общий ответ: вкл",
             callback_data=f"ch_ar_toggle_global:{chat_id}",
         )])
+        buttons.append([InlineKeyboardButton(
+            text="+ Добавить ответ",
+            callback_data=f"ch_ar_add:{chat_id}",
+        )])
     else:
         # Список keyword-ответов
         rows = await db.fetch(

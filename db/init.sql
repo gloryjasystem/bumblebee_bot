@@ -321,3 +321,7 @@ CREATE TABLE IF NOT EXISTS invite_link_members (
     PRIMARY KEY (link_id, user_id)
 );
 CREATE INDEX IF NOT EXISTS idx_ilm_link_id ON invite_link_members(link_id);
+
+-- Общий автоответ: отвечать на любое сообщение одним текстом
+ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS general_reply_enabled BOOLEAN DEFAULT false;
+ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS general_reply_text    TEXT;

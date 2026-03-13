@@ -21,10 +21,11 @@ router = Router()
 
 
 class MessagesFSM(StatesGroup):
-    waiting_for_captcha_text    = State()
-    waiting_for_captcha_buttons = State()
-    waiting_for_autoreply_kw    = State()
-    waiting_for_autoreply_text  = State()
+    waiting_for_captcha_text       = State()
+    waiting_for_captcha_buttons    = State()
+    waiting_for_autoreply_kw       = State()
+    waiting_for_autoreply_text     = State()
+    waiting_for_general_reply_text = State()
 
 
 # ── Константы ──────────────────────────────────────────────────
@@ -600,36 +601,137 @@ async def on_captcha_btns_input(message: Message, state: FSMContext):
 # Автоответчик
 # ══════════════════════════════════════════════════════════════
 
+async def _show_autoreply(callback: CallbackQuery, chat_id: int, owner_id: int):
+    """Рендерит экран автоответчика."""
+    ch = await db.fetchrow(
+        "SELECT general_reply_enabled, general_reply_text FROM bot_chats "
+        "WHERE owner_id=$1 AND chat_id=$2::bigint",
+        owner_id, chat_id,
+    )
+    general_on   = bool(ch["general_reply_enabled"]) if ch else False
+    general_text = (ch["general_reply_text"] or "") if ch else ""
+
+    buttons = []
+
+    if general_on:
+        # Общий ответ включён — показываем только toggle (ключевые слова не нужны)
+        buttons.append([InlineKeyboardButton(
+            text="Общий ответ: вкл",
+            callback_data=f"ch_ar_toggle_global:{chat_id}",
+        )])
+    else:
+        # Список keyword-ответов
+        rows = await db.fetch(
+            "SELECT id, keyword, reply_text FROM autoreplies "
+            "WHERE owner_id=$1 AND chat_id=$2::bigint LIMIT 20",
+            owner_id, chat_id,
+        )
+        for r in rows:
+            buttons.append([InlineKeyboardButton(
+                text=f"💬 {r['keyword'][:25]}",
+                callback_data=f"ch_ar_del:{chat_id}:{r['id']}",
+            )])
+        buttons.append([InlineKeyboardButton(
+            text="Общий ответ: выкл",
+            callback_data=f"ch_ar_toggle_global:{chat_id}",
+        )])
+        buttons.append([InlineKeyboardButton(
+            text="+ Добавить ответ",
+            callback_data=f"ch_ar_add:{chat_id}",
+        )])
+
+    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"ch_messages:{chat_id}")])
+
+    await callback.message.edit_text(
+        "<blockquote>Вы можете установить <b>автоматические ответы</b> бота на "
+        "любой текст или команду от пользователей.</blockquote>\n\n"
+        "Выберите действие ⬇️",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+    )
+    await callback.answer()
+
+
 @router.callback_query(F.data.startswith("ch_autoreply:"))
 async def on_ch_autoreply(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    chat_id = int(callback.data.split(":")[1])
+    await _show_autoreply(callback, chat_id, platform_user["user_id"])
+
+
+# ── Toggle: Общий ответ ────────────────────────────────────────
+
+@router.callback_query(F.data.startswith("ch_ar_toggle_global:"))
+async def on_ch_ar_toggle_global(
+    callback: CallbackQuery, state: FSMContext, platform_user: dict | None
+):
     if not platform_user:
         return
     chat_id  = int(callback.data.split(":")[1])
     owner_id = platform_user["user_id"]
 
-    rows = await db.fetch(
-        "SELECT id, keyword, reply_text FROM autoreplies WHERE owner_id=$1 AND chat_id=$2::bigint LIMIT 20",
+    ch = await db.fetchrow(
+        "SELECT general_reply_enabled, general_reply_text FROM bot_chats "
+        "WHERE owner_id=$1 AND chat_id=$2::bigint",
         owner_id, chat_id,
     )
+    currently_on = bool(ch["general_reply_enabled"]) if ch else False
+    has_text     = bool((ch["general_reply_text"] or "").strip()) if ch else False
 
-    buttons = []
-    for r in rows:
-        buttons.append([InlineKeyboardButton(
-            text=f"💬 {r['keyword'][:25]}",
-            callback_data=f"ch_ar_del:{chat_id}:{r['id']}",
-        )])
-    buttons.append([InlineKeyboardButton(text="➕ Добавить ответ", callback_data=f"ch_ar_add:{chat_id}")])
-    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"ch_messages:{chat_id}")])
+    if currently_on:
+        # Выключаем
+        await db.execute(
+            "UPDATE bot_chats SET general_reply_enabled=false WHERE owner_id=$1 AND chat_id=$2::bigint",
+            owner_id, chat_id,
+        )
+        await callback.answer("Общий ответ: выкл")
+        await _show_autoreply(callback, chat_id, owner_id)
+    else:
+        if has_text:
+            # Текст уже есть — просто включаем
+            await db.execute(
+                "UPDATE bot_chats SET general_reply_enabled=true WHERE owner_id=$1 AND chat_id=$2::bigint",
+                owner_id, chat_id,
+            )
+            await callback.answer("Общий ответ: вкл")
+            await _show_autoreply(callback, chat_id, owner_id)
+        else:
+            # Текста нет — просим ввести
+            await state.set_state(MessagesFSM.waiting_for_general_reply_text)
+            await state.update_data(chat_id=chat_id, owner_id=owner_id)
+            await callback.message.edit_text(
+                "💬 <b>Общий ответ</b>\n\n"
+                "Отправьте текст, которым бот будет отвечать на <u>любое</u> "
+                "сообщение или команду от пользователей:",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="◀️ Отмена", callback_data=f"ch_autoreply:{chat_id}")],
+                ]),
+            )
+            await callback.answer()
 
-    empty_note = "" if rows else "\n\n<i>Нет настроенных автоответов.</i>"
-    await callback.message.edit_text(
-        "💬 <b>Автоответчик</b>\n\n"
-        "Бот автоматически отвечает на сообщения, содержащие заданные слова.\n"
-        "Нажмите на ответ, чтобы удалить его." + empty_note,
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+
+@router.message(MessagesFSM.waiting_for_general_reply_text)
+async def on_general_reply_text_input(message: Message, state: FSMContext):
+    data     = await state.get_data()
+    chat_id  = data["chat_id"]
+    owner_id = data["owner_id"]
+    text     = sanitize(message.text or "", max_len=1024)
+
+    await db.execute(
+        "UPDATE bot_chats SET general_reply_text=$1, general_reply_enabled=true "
+        "WHERE owner_id=$2 AND chat_id=$3::bigint",
+        text, owner_id, chat_id,
     )
-    await callback.answer()
+    await state.clear()
+    await message.answer(
+        "✅ Общий ответ сохранён и включён.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="◀️ К автоответчику", callback_data=f"ch_autoreply:{chat_id}")],
+        ]),
+    )
 
+
+# ── Добавление keyword-ответа ──────────────────────────────────
 
 @router.callback_query(F.data.startswith("ch_ar_add:"))
 async def on_ch_ar_add(callback: CallbackQuery, state: FSMContext, platform_user: dict | None):
@@ -684,6 +786,8 @@ async def on_ar_text_input(message: Message, state: FSMContext):
         ]),
     )
 
+
+# ── Удаление keyword-ответа ────────────────────────────────────
 
 @router.callback_query(F.data.startswith("ch_ar_del:"))
 async def on_ch_ar_del(callback: CallbackQuery, platform_user: dict | None):

@@ -547,30 +547,49 @@ async def _handle_group_message(bot: Bot, child_bot_id: int, message):
 
     text = message.text or message.caption or ""
 
-    # ── 1. Автоответчик (ключевые слова) ────────────────────
+    # ── 1. Автоответчик ─────────────────────────────────────────
     if text:
         owner_id = settings["owner_id"]
-        rules = await db.fetch(
-            "SELECT keyword, reply_text FROM autoreplies "
-            "WHERE owner_id=$1 AND chat_id=$2::bigint",
-            owner_id, chat_id,
-        )
-        for rule in rules:
-            kw = (rule["keyword"] or "").lower().strip()
-            if kw and kw in text.lower():
-                try:
-                    reply = await message.reply(rule["reply_text"])
-                    # Авто-удаление ответа бота
-                    delete_min = int(settings.get("auto_delete_min") or 0)
-                    if delete_min > 0:
-                        import asyncio as _asyncio
-                        _asyncio.create_task(
-                            _delete_later(bot, chat_id, reply.message_id, delete_min)
-                        )
-                    logger.info(f"[AUTOREPLY] keyword='{kw}' matched in chat {chat_id}")
-                except Exception as e:
-                    logger.warning(f"[AUTOREPLY] failed in chat {chat_id}: {e}")
-                break  # только первое совпадение
+
+        # Проверяем общий ответ (отвечает на ЛЮБОЕ сообщение)
+        general_on   = bool(settings.get("general_reply_enabled", False))
+        general_text = (settings.get("general_reply_text") or "").strip()
+
+        if general_on and general_text:
+            try:
+                reply = await message.reply(general_text)
+                delete_min = int(settings.get("auto_delete_min") or 0)
+                if delete_min > 0:
+                    import asyncio as _asyncio
+                    _asyncio.create_task(
+                        _delete_later(bot, chat_id, reply.message_id, delete_min)
+                    )
+                logger.info(f"[AUTOREPLY] general reply sent in chat {chat_id}")
+            except Exception as e:
+                logger.warning(f"[AUTOREPLY] general reply failed in chat {chat_id}: {e}")
+        else:
+            # Keyword-ответы
+            rules = await db.fetch(
+                "SELECT keyword, reply_text FROM autoreplies "
+                "WHERE owner_id=$1 AND chat_id=$2::bigint",
+                owner_id, chat_id,
+            )
+            for rule in rules:
+                kw = (rule["keyword"] or "").lower().strip()
+                if kw and kw in text.lower():
+                    try:
+                        reply = await message.reply(rule["reply_text"])
+                        # Авто-удаление ответа бота
+                        delete_min = int(settings.get("auto_delete_min") or 0)
+                        if delete_min > 0:
+                            import asyncio as _asyncio
+                            _asyncio.create_task(
+                                _delete_later(bot, chat_id, reply.message_id, delete_min)
+                            )
+                        logger.info(f"[AUTOREPLY] keyword='{kw}' matched in chat {chat_id}")
+                    except Exception as e:
+                        logger.warning(f"[AUTOREPLY] failed in chat {chat_id}: {e}")
+                    break  # только первое совпадение
 
     # ── 2. Реакции (только на сообщения с текстом, не системные) ───
     emoji = settings.get("reaction_emoji")

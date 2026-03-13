@@ -25,6 +25,7 @@ class MessagesFSM(StatesGroup):
     waiting_for_captcha_buttons        = State()
     waiting_for_autoreply_kw           = State()
     waiting_for_autoreply_text         = State()
+    waiting_for_autoreply_buttons      = State()
     waiting_for_general_reply_text     = State()
     waiting_for_general_reply_buttons  = State()
 
@@ -1119,7 +1120,7 @@ _kw_echo_ids: dict[tuple, int] = {}
 async def _show_keyword_mgmt(message, chat_id: int, owner_id: int, ar_id: int):
     """Показывает панель управления keyword-ответом (2 сообщения: эхо + управление)."""
     row = await db.fetchrow(
-        "SELECT keyword, reply_text, reply_media, reply_media_type FROM autoreplies "
+        "SELECT keyword, reply_text, reply_media, reply_media_type, reply_preview FROM autoreplies "
         "WHERE id=$1 AND owner_id=$2",
         ar_id, owner_id,
     )
@@ -1153,13 +1154,17 @@ async def _show_keyword_mgmt(message, chat_id: int, owner_id: int, ar_id: int):
     _kw_echo_ids[key] = echo_msg.message_id
 
     # -- Панель управления
-    media_icon = "✅" if media_id else "⬆️"
+    media_icon   = "✅" if media_id else "⬆️"
+    preview_on   = bool(row["reply_preview"]) if row else False
+    preview_label = "есть" if preview_on else "нет"
     mgmt_kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💬 Автоответчик",      callback_data=f"ch_ar_view:{chat_id}:{ar_id}")],
-        [InlineKeyboardButton(text="✏️ Редактировать",    callback_data=f"ch_ar_kw_edit:{chat_id}:{ar_id}")],
+        [InlineKeyboardButton(text="� Автоответчик",         callback_data=f"ch_ar_view:{chat_id}:{ar_id}")],
+        [InlineKeyboardButton(text="✏️ Редактировать",       callback_data=f"ch_ar_kw_edit:{chat_id}:{ar_id}")],
+        [InlineKeyboardButton(text="🎛 Кнопки",              callback_data=f"ch_ar_kw_btns:{chat_id}:{ar_id}")],
         [InlineKeyboardButton(text=f"🎬 Медиа: {media_icon}", callback_data=f"ch_ar_kw_media:{chat_id}:{ar_id}")],
-        [InlineKeyboardButton(text="🗑 Удалить",           callback_data=f"ch_ar_del:{chat_id}:{ar_id}")],
-        [InlineKeyboardButton(text="◀️ Назад",             callback_data=f"ch_ar_kw_back:{chat_id}:{ar_id}")],
+        [InlineKeyboardButton(text=f"👁 Превью: {preview_label}", callback_data=f"ch_ar_kw_preview:{chat_id}:{ar_id}")],
+        [InlineKeyboardButton(text="🗑 Удалить",              callback_data=f"ch_ar_del:{chat_id}:{ar_id}")],
+        [InlineKeyboardButton(text="◀️ Назад",               callback_data=f"ch_ar_kw_back:{chat_id}:{ar_id}")],
     ])
     await message.answer(
         f"🔔 <b>Автоответчик</b>\n\nТриггер: <code>{keyword}</code>",
@@ -1280,6 +1285,89 @@ async def on_ch_ar_kw_media(
             ]),
         )
         await callback.answer()
+
+
+# ── Управление: Кнопки keyword-ответа ────────────────────────
+
+@router.callback_query(F.data.startswith("ch_ar_kw_btns:"))
+async def on_ch_ar_kw_btns(
+    callback: CallbackQuery, state: FSMContext, platform_user: dict | None
+):
+    """Кнопки для keyword-ответа."""
+    if not platform_user:
+        return
+    parts    = callback.data.split(":")
+    chat_id  = int(parts[1])
+    ar_id    = int(parts[2])
+    owner_id = platform_user["user_id"]
+    await state.set_state(MessagesFSM.waiting_for_autoreply_buttons)
+    await state.update_data(chat_id=chat_id, owner_id=owner_id, ar_id=ar_id)
+    await callback.message.edit_text(
+        "⛓ <b>Кнопки ответа</b>\n\n"
+        "Отправьте кнопки в формате:\n"
+        "<code>Текст кнопки | https://example.com</code>\n"
+        "По одной кнопке на строку.\n\n"
+        "Для удаления всех кнопок — отправьте <code>-</code>",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="◀️ Отмена", callback_data=f"ch_ar_view:{chat_id}:{ar_id}")],
+        ]),
+    )
+    await callback.answer()
+
+
+@router.message(MessagesFSM.waiting_for_autoreply_buttons)
+async def on_ar_buttons_input(message: Message, state: FSMContext):
+    import json as _json
+    data     = await state.get_data()
+    chat_id  = data["chat_id"]
+    owner_id = data["owner_id"]
+    ar_id    = data["ar_id"]
+    raw      = (message.text or "").strip()
+
+    if raw == "-":
+        buttons_json = None
+    else:
+        parsed = []
+        for line in raw.splitlines():
+            if "|" in line:
+                parts = line.split("|", 1)
+                btn_text = parts[0].strip()
+                btn_url  = parts[1].strip()
+                if btn_text and btn_url:
+                    parsed.append({"text": btn_text, "url": btn_url})
+        buttons_json = _json.dumps(parsed, ensure_ascii=False) if parsed else None
+
+    await db.execute(
+        "UPDATE autoreplies SET reply_buttons=$1 WHERE id=$2 AND owner_id=$3",
+        buttons_json, ar_id, owner_id,
+    )
+    await state.clear()
+    await _show_keyword_mgmt(message, chat_id, owner_id, ar_id)
+
+
+# ── Управление: Превью keyword-ответа ─────────────────────────
+
+@router.callback_query(F.data.startswith("ch_ar_kw_preview:"))
+async def on_ch_ar_kw_preview(callback: CallbackQuery, platform_user: dict | None):
+    """Превью ссылок для keyword-ответа."""
+    if not platform_user:
+        return
+    parts    = callback.data.split(":")
+    chat_id  = int(parts[1])
+    ar_id    = int(parts[2])
+    owner_id = platform_user["user_id"]
+    row = await db.fetchrow(
+        "SELECT reply_preview FROM autoreplies WHERE id=$1 AND owner_id=$2", ar_id, owner_id
+    )
+    new_val = not bool(row["reply_preview"] if row else False)
+    await db.execute(
+        "UPDATE autoreplies SET reply_preview=$1 WHERE id=$2 AND owner_id=$3",
+        new_val, ar_id, owner_id,
+    )
+    await callback.answer("Превью: " + ("есть" if new_val else "нет"))
+    await callback.message.delete()
+    await _show_keyword_mgmt(callback.message, chat_id, owner_id, ar_id)
 
 
 # ── Удаление keyword-ответа ────────────────────────────────────

@@ -107,10 +107,12 @@ def create_app(bot: Bot, dp: Dispatcher) -> FastAPI:
                     UNIQUE (owner_id, chat_id, keyword)
                 )
             """)
-            # Новые колонки autoreplies (медиа)
+            # Новые колонки autoreplies (медиа, кнопки, превью)
             for migration in [
                 "ALTER TABLE autoreplies ADD COLUMN IF NOT EXISTS reply_media      TEXT",
                 "ALTER TABLE autoreplies ADD COLUMN IF NOT EXISTS reply_media_type TEXT",
+                "ALTER TABLE autoreplies ADD COLUMN IF NOT EXISTS reply_buttons    TEXT",
+                "ALTER TABLE autoreplies ADD COLUMN IF NOT EXISTS reply_preview    BOOLEAN DEFAULT false",
             ]:
                 await conn.execute(migration)
             # Таблица событий капчи

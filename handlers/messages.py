@@ -901,32 +901,18 @@ async def on_ch_ar_media_global(
     chat_id  = int(callback.data.split(":")[1])
     owner_id = platform_user["user_id"]
     ch = await db.fetchrow(
-        "SELECT general_reply_media, general_reply_media_top FROM bot_chats "
+        "SELECT general_reply_media_top FROM bot_chats "
         "WHERE owner_id=$1 AND chat_id=$2::bigint",
         owner_id, chat_id,
     )
-    if ch and ch["general_reply_media"]:
-        # Медиа есть — переключаем позицию (⬆️ ↔ ⬇️)
-        current_top = ch["general_reply_media_top"] if ch["general_reply_media_top"] is not None else True
-        new_top = not current_top
-        await db.execute(
-            "UPDATE bot_chats SET general_reply_media_top=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
-            new_top, owner_id, chat_id,
-        )
-        await callback.answer("Медиа: " + ("сверху ⬆️" if new_top else "снизу ⬇️"))
-        await _show_global_mgmt(callback.message, chat_id, owner_id)
-    else:
-        # Медиа нет — просим прислать через FSM
-        await state.set_state(MessagesFSM.waiting_for_general_reply_text)
-        await state.update_data(chat_id=chat_id, owner_id=owner_id)
-        await callback.message.edit_text(
-            "<blockquote>⟲ Пришлите медиа (фото, видео, документ).\n"
-            "Текст подписи сохранится как ответ.</blockquote>",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="◀️ Отмена", callback_data=f"ch_autoreply:{chat_id}")],
-            ]),
-        )
-        await callback.answer()
+    current_top = (ch["general_reply_media_top"] if ch and ch["general_reply_media_top"] is not None else True)
+    new_top = not current_top
+    await db.execute(
+        "UPDATE bot_chats SET general_reply_media_top=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
+        new_top, owner_id, chat_id,
+    )
+    await callback.answer("Медиа: " + ("сверху ⬆️" if new_top else "снизу ⬇️"))
+    await _show_global_mgmt(callback.message, chat_id, owner_id)
 
 
 # ── Управление: Превью ────────────────────────────────────────
@@ -1321,7 +1307,7 @@ async def on_ch_ar_kw_edit(
 async def on_ch_ar_kw_media(
     callback: CallbackQuery, state: FSMContext, platform_user: dict | None
 ):
-    """Медиа для keyword-ответа: если есть — переключить позицию ⬆️/⬇️, иначе запросить."""
+    """Кнопка Медиа — всегда переключает позицию ⬆️/⬇️, не открывает FSM."""
     if not platform_user:
         return
     parts    = callback.data.split(":")
@@ -1330,35 +1316,22 @@ async def on_ch_ar_kw_media(
     owner_id = platform_user["user_id"]
 
     row = await db.fetchrow(
-        "SELECT keyword, reply_media, reply_media_top FROM autoreplies WHERE id=$1 AND owner_id=$2",
+        "SELECT reply_media_top FROM autoreplies WHERE id=$1 AND owner_id=$2",
         ar_id, owner_id,
     )
     if not row:
-        return
-    keyword = (row["keyword"] or "")
-
-    if row["reply_media"]:
-        # Медиа есть — переключаем позицию (⬆️ ↔ ⬇️)
-        current_top = row["reply_media_top"] if row["reply_media_top"] is not None else True
-        new_top = not current_top
-        await db.execute(
-            "UPDATE autoreplies SET reply_media_top=$1 WHERE id=$2 AND owner_id=$3",
-            new_top, ar_id, owner_id,
-        )
-        await callback.answer("Медиа: " + ("сверху ⬆️" if new_top else "снизу ⬇️"))
-        await callback.message.delete()
-        await _show_keyword_mgmt(callback.message, chat_id, owner_id, ar_id)
-    else:
-        await state.set_state(MessagesFSM.waiting_for_autoreply_text)
-        await state.update_data(chat_id=chat_id, owner_id=owner_id, keyword=keyword, ar_id=ar_id)
-        await callback.message.edit_text(
-            "<blockquote>⟲ Пришлите медиа (фото, видео, документ).\n"
-            "Текст подписи сохранится как ответ.</blockquote>",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="◀️ Отмена", callback_data=f"ch_ar_view:{chat_id}:{ar_id}")],
-            ]),
-        )
         await callback.answer()
+        return
+
+    current_top = row["reply_media_top"] if row["reply_media_top"] is not None else True
+    new_top = not current_top
+    await db.execute(
+        "UPDATE autoreplies SET reply_media_top=$1 WHERE id=$2 AND owner_id=$3",
+        new_top, ar_id, owner_id,
+    )
+    await callback.answer("Медиа: " + ("сверху ⬆️" if new_top else "снизу ⬇️"))
+    await callback.message.delete()
+    await _show_keyword_mgmt(callback.message, chat_id, owner_id, ar_id)
 
 
 # ── Управление: Кнопки keyword-ответа ────────────────────────

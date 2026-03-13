@@ -623,12 +623,13 @@ async def _show_autoreply(callback: CallbackQuery, chat_id: int, owner_id: int):
         "WHERE owner_id=$1 AND chat_id=$2::bigint",
         owner_id, chat_id,
     )
-    general_on = bool(ch["general_reply_enabled"]) if ch else False
+    has_text   = bool((ch["general_reply_text"] or "").strip()) if ch else False
+    general_on = has_text  # Считаем «вкл» если сохранён текст
 
     buttons = []
 
     if general_on:
-        # Общий ответ включён — только toggle
+        # Общий ответ настроен — кнопка «вкл» открывает панель управления
         buttons.append([InlineKeyboardButton(
             text="Общий ответ: вкл",
             callback_data=f"ch_ar_toggle_global:{chat_id}",
@@ -744,12 +745,7 @@ async def on_ch_ar_back_global(callback: CallbackQuery, platform_user: dict | No
         except Exception:
             pass
 
-    # Текст в БД НЕ трогаем — только выключаем флаг
-    await db.execute(
-        "UPDATE bot_chats SET general_reply_enabled=false "
-        "WHERE owner_id=$1 AND chat_id=$2::bigint",
-        owner_id, chat_id,
-    )
+    # Текст и флаг в БД НЕ трогаем — просто возвращаемся в меню
     await callback.answer()
     await _show_autoreply(callback, chat_id, owner_id)
 
@@ -770,52 +766,35 @@ async def on_ch_ar_toggle_global(
         "WHERE owner_id=$1 AND chat_id=$2::bigint",
         owner_id, chat_id,
     )
-    currently_on = bool(ch["general_reply_enabled"]) if ch else False
-    has_text     = bool((ch["general_reply_text"] or "").strip()) if ch else False
+    has_text = bool((ch["general_reply_text"] or "").strip()) if ch else False
 
-    if currently_on:
-        # Выключаем — удаляем эхо если есть
-        key = (owner_id, chat_id)
-        echo_id = _gr_echo_ids.pop(key, None)
-        if echo_id:
-            try:
-                await callback.message.bot.delete_message(callback.message.chat.id, echo_id)
-            except Exception:
-                pass
+    if has_text:
+        # Текст уже есть — открываем панель управления (и включаем флаг)
         await db.execute(
-            "UPDATE bot_chats SET general_reply_enabled=false WHERE owner_id=$1 AND chat_id=$2::bigint",
+            "UPDATE bot_chats SET general_reply_enabled=true WHERE owner_id=$1 AND chat_id=$2::bigint",
             owner_id, chat_id,
         )
-        await callback.answer("Общий ответ: выкл")
-        await _show_autoreply(callback, chat_id, owner_id)
+        await callback.answer("Общий ответ: вкл")
+        await _show_global_mgmt(callback.message, chat_id, owner_id)
     else:
-        if has_text:
-            # Текст уже есть — показываем панель управления
-            await callback.answer("Общий ответ: вкл")
-            await db.execute(
-                "UPDATE bot_chats SET general_reply_enabled=true WHERE owner_id=$1 AND chat_id=$2::bigint",
-                owner_id, chat_id,
-            )
-            await _show_global_mgmt(callback.message, chat_id, owner_id)
-        else:
-            # Текста нет — FSM-ввод
-            await state.set_state(MessagesFSM.waiting_for_general_reply_text)
-            await state.update_data(chat_id=chat_id, owner_id=owner_id)
-            await callback.message.edit_text(
-                "<blockquote>⟲ Пришлите сообщение, которое будет "
-                "использоваться для автоматического ответа.</blockquote>\n\n"
-                "<b>Переменные:</b>\n"
-                "├ Имя: <code>{name}</code>\n"
-                "├ ФИО: <code>{allname}</code>\n"
-                "├ Юзер: <code>{username}</code>\n"
-                "├ Площадка: <code>{chat}</code>\n"
-                "└ Текущая дата: <code>{day}</code>\n\n"
-                "ⓘ Можно прикрепить медиа.",
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                    [InlineKeyboardButton(text="◀️ Отмена", callback_data=f"ch_autoreply:{chat_id}")],
-                ]),
-            )
-            await callback.answer()
+        # Текста нет — FSM-ввод
+        await state.set_state(MessagesFSM.waiting_for_general_reply_text)
+        await state.update_data(chat_id=chat_id, owner_id=owner_id)
+        await callback.message.edit_text(
+            "<blockquote>⟲ Пришлите сообщение, которое будет "
+            "использоваться для автоматического ответа.</blockquote>\n\n"
+            "<b>Переменные:</b>\n"
+            "├ Имя: <code>{name}</code>\n"
+            "├ ФИО: <code>{allname}</code>\n"
+            "├ Юзер: <code>{username}</code>\n"
+            "├ Площадка: <code>{chat}</code>\n"
+            "└ Текущая дата: <code>{day}</code>\n\n"
+            "ⓘ Можно прикрепить медиа.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="◀️ Отмена", callback_data=f"ch_autoreply:{chat_id}")],
+            ]),
+        )
+        await callback.answer()
 
 
 @router.message(MessagesFSM.waiting_for_general_reply_text)

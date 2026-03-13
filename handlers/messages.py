@@ -691,13 +691,13 @@ async def _show_global_mgmt(message, chat_id: int, owner_id: int):
 
     mgmt_kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✎ Редактировать",    callback_data=f"ch_ar_edit_global:{chat_id}")],
-        [InlineKeyboardButton(text="⛓ Кнопки",           callback_data=f"ch_ar_btns_global:{chat_id}")],
-        [InlineKeyboardButton(text=f"🎞 Медиа: {media_icon}", callback_data=f"ch_ar_media_global:{chat_id}")],
-        [InlineKeyboardButton(text=f"⊙ Превью: {preview_label}", callback_data=f"ch_ar_preview_global:{chat_id}")],
+        [InlineKeyboardButton(text="🎛 Кнопки",           callback_data=f"ch_ar_btns_global:{chat_id}")],
+        [InlineKeyboardButton(text=f"� Медиа: {media_icon}", callback_data=f"ch_ar_media_global:{chat_id}")],
+        [InlineKeyboardButton(text=f"👁 Превью: {preview_label}", callback_data=f"ch_ar_preview_global:{chat_id}")],
         [InlineKeyboardButton(text="🗑 Удалить",          callback_data=f"ch_ar_delete_global:{chat_id}")],
         [InlineKeyboardButton(text="◀️ Назад",            callback_data=f"ch_autoreply:{chat_id}")],
     ])
-    await message.answer("📣 <b>Автоответчик</b>", parse_mode="HTML", reply_markup=mgmt_kb)
+    await message.answer("� <b>Автоответчик</b>", parse_mode="HTML", reply_markup=mgmt_kb)
 
 
 # ── Toggle: Общий ответ (вкл ↔ выкл) ─────────────────────────

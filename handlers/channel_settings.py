@@ -2452,7 +2452,7 @@ async def on_bs_base_edit(callback: CallbackQuery, state: FSMContext,
     owner_id = platform_user["user_id"]
 
     total = await db.fetchval(
-        """SELECT COUNT(*) FROM bot_users bu
+        """SELECT COUNT(DISTINCT bu.user_id) FROM bot_users bu
            JOIN bot_chats bc ON bu.chat_id=bc.chat_id AND bu.owner_id=bc.owner_id
            WHERE bc.child_bot_id=$1 AND bc.owner_id=$2 AND bu.user_id != $2""",
         child_bot_id, owner_id,

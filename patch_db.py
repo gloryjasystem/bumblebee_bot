@@ -3,11 +3,9 @@ import db.pool as db
 
 async def main():
     await db.init()
-    print("DB Initialized")
     try:
-        await db.execute("ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS captcha_anim_file_id TEXT;")
-        await db.execute("ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS captcha_anim_type VARCHAR(16);")
-        print("Columns added successfully")
+        await db.execute('ALTER TABLE autoreplies ADD COLUMN IF NOT EXISTS media_bottom BOOLEAN DEFAULT false;')
+        print('Added column media_bottom to autoreplies')
     except Exception as e:
         print(f"Error: {e}")
     finally:

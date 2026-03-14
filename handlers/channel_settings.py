@@ -2392,10 +2392,11 @@ async def on_bs_base(callback: CallbackQuery, platform_user: dict | None):
     owner_id = platform_user["user_id"]
 
     bot_row = await db.fetchrow(
-        "SELECT bot_username FROM child_bots WHERE id=$1 AND owner_id=$2",
+        "SELECT bot_username, blacklist_enabled FROM child_bots WHERE id=$1 AND owner_id=$2",
         child_bot_id, owner_id,
     )
     bot_username = bot_row["bot_username"] if bot_row else "—"
+    bl_enabled = bot_row["blacklist_enabled"] if bot_row else True
 
     total = await db.fetchval(
         """SELECT COUNT(DISTINCT bu.user_id) FROM bot_users bu
@@ -2410,15 +2411,18 @@ async def on_bs_base(callback: CallbackQuery, platform_user: dict | None):
         owner_id,
     ) or 0
 
+    bl_status = "Включена 🟢" if bl_enabled else "Выключена 🔴"
+
     await callback.message.edit_text(
         "≡ <b>База</b>\n\n"
         f"🤖 Бот: @{bot_username}\n"
         f"👥 Пользователей в базе: {total:,}\n"
-        f"⛔️ Заблокированных: {blocked:,}",
+        f"⛔️ Заблокированных: {blocked:,}\n"
+        f"🛡 Авто-блокировка по ЧС: {bl_status}",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="📥 Скачать Excel-отчет",       callback_data=f"bs_base_export_menu:{child_bot_id}")],
-            [InlineKeyboardButton(text="⛔️ ЧС пользователей",         callback_data=f"bs_blacklist:{child_bot_id}")],
-            [InlineKeyboardButton(text="⚙️ Управление подписчиками",   callback_data=f"bs_base_edit:{child_bot_id}")],
+            [InlineKeyboardButton(text="⚙️ Управление подписчиками", callback_data=f"bs_base_edit:{child_bot_id}")],
+            [InlineKeyboardButton(text="⛔️ ЧС пользователей", callback_data=f"bs_blacklist:{child_bot_id}")],
+            [InlineKeyboardButton(text="📥 Выгрузить базу подписчиков", callback_data=f"bs_base_export_menu:{child_bot_id}")],
             [InlineKeyboardButton(text="◀️ Назад",                    callback_data=f"bs_settings:{child_bot_id}")],
         ]),
     )

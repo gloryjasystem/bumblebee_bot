@@ -506,80 +506,195 @@ async def on_ch_cap_set_emoji(callback: CallbackQuery, platform_user: dict | Non
 # ── Анимация капчи (загрузка) ───────────────────────────────────
 
 @router.callback_query(F.data.startswith("ch_cap_anim_menu:"))
-async def on_ch_cap_anim_menu(callback: CallbackQuery, state: FSMContext, platform_user: dict | None):
+async def on_ch_cap_anim_menu(call: CallbackQuery, state: FSMContext, platform_user: dict | None):
     if not platform_user:
         return
-    chat_id  = int(callback.data.split(":")[1])
+    chat_id = int(call.data.split(":")[1])
     owner_id = platform_user["user_id"]
-
+    
+    # check permissions
     ch = await db.fetchrow(
-        "SELECT captcha_anim_file_id FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint",
+        "SELECT captcha_anim_file_id, captcha_anim_type FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint",
         owner_id, chat_id,
     )
+    if not ch: # or ch["owner_id"] != owner_id: (already filtered by owner_id in query)
+        await call.answer("Нет прав", show_alert=True)
+        return
+
     has_anim = bool(ch and ch.get("captcha_anim_file_id"))
+    anim_file_id = ch.get("captcha_anim_file_id")
+    anim_type = ch.get("captcha_anim_type")
     
+    # Text menu content
     if has_anim:
         status_text = "🟢 Активна"
+        text = (
+            "🎬 <b>Анимация капчи</b>\n\n"
+            f"<b>Статус:</b> {status_text}\n\n"
+        )
     else:
         status_text = "🔴 Не задана"
-
-    text = (
-        "🎞 <b>Анимация капчи</b>\n\n"
-        f"<b>Статус:</b> {status_text}\n\n"
-        "ℹ️ Отправьте в этот чат GIF-файл или короткое видео. "
-        "Загруженный медиа-файл будет автоматически отображаться над текстом капчи, привлекая внимание пользователей."
-    )
+        text = (
+            "🎬 <b>Анимация капчи</b>\n\n"
+            f"<b>Статус:</b> {status_text}\n\n"
+            "ℹ️ Отправьте в этот чат GIF-файл или короткое видео.\n"
+            "Загруженный медиа-файл будет автоматически отображаться над текстом капчи, привлекая внимание пользователей."
+        )
 
     kb = []
+    
+    anim_msg = None
+    menu_msg = None
     if has_anim:
-        kb.append([InlineKeyboardButton(text="🗑 Удалить анимацию", callback_data=f"ch_cap_anim_del:{chat_id}")])
-    kb.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"ch_captcha:{chat_id}")])
-    
-    await state.set_state(MessagesFSM.waiting_captcha_anim_msg)
-    await state.update_data(chat_id=chat_id, owner_id=owner_id)
-    
-    await callback.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
-    await callback.answer()
+        # We need to send a new message with the animation, so we delete the current menu
+        try:
+            await call.message.delete()
+        except Exception:
+            pass # Message might have been deleted already or not exist
 
-@router.callback_query(F.data.startswith("ch_cap_anim_del:"))
-async def on_ch_cap_anim_del(callback: CallbackQuery, state: FSMContext, platform_user: dict | None):
+        # Send the "echo" animation first
+        try:
+            if anim_type == "video":
+                anim_msg = await call.message.answer_video(video=anim_file_id)
+            else:
+                anim_msg = await call.message.answer_animation(animation=anim_file_id)
+        except Exception as e:
+            logger.error(f"Failed to echo captcha animation for chat {chat_id}: {e}")
+            
+        # Add buttons for existing animation
+        kb.append([InlineKeyboardButton(text="🔄 Изменить анимацию", callback_data=f"ch_cap_anim_change:{chat_id}")])
+        kb.append([InlineKeyboardButton(text="🗑 Удалить анимацию", callback_data=f"ch_cap_anim_del:{chat_id}")])
+        
+        # Send text menu as a new message
+        menu_msg = await call.message.answer(
+            text,
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=kb + [[InlineKeyboardButton(text="◀️ Назад", callback_data=f"ch_captcha:{chat_id}")]]),
+        )
+    else:
+        # No animation yet, just edit the existing text
+        kb.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"ch_captcha:{chat_id}")])
+        menu_msg = await call.message.edit_text(
+            text,
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=kb),
+        )
+
+    await state.set_state(MessagesFSM.waiting_captcha_anim_msg)
+    
+    # Store message IDs so we can clean them up later
+    await state.update_data(
+        chat_id=chat_id, 
+        owner_id=owner_id, 
+        menu_msg_id=menu_msg.message_id,
+        anim_msg_id=anim_msg.message_id if anim_msg else None
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("ch_cap_anim_change:"))
+async def on_ch_cap_anim_change(call: CallbackQuery, state: FSMContext, platform_user: dict | None):
     if not platform_user:
         return
-    chat_id  = int(callback.data.split(":")[1])
-    owner_id = platform_user["user_id"]
+    chat_id = int(call.data.split(":")[1])
+    # data = await state.get_data() # Not strictly needed here, but good practice if more data was used
+    
+    text = (
+        "🎬 <b>Анимация капчи</b>\n\n"
+        "ℹ️ Отправьте в этот чат новый GIF-файл или короткое видео, чтобы заменить текущую анимацию."
+    )
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="❌ Отмена", callback_data=f"ch_cap_anim_menu:{chat_id}")]
+    ])
+    
+    await call.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+    await state.set_state(MessagesFSM.waiting_captcha_anim_msg)
+    await call.answer()
 
-    await db.execute(
-        "UPDATE bot_chats SET captcha_anim_file_id=NULL, captcha_anim_type=NULL, captcha_animation=false "
-        "WHERE owner_id=$1 AND chat_id=$2::bigint",
+
+@router.callback_query(F.data.startswith("ch_cap_anim_del:"))
+async def on_ch_cap_anim_del(call: CallbackQuery, state: FSMContext, platform_user: dict | None):
+    if not platform_user:
+        return
+    chat_id = int(call.data.split(":")[1])
+    owner_id = platform_user["user_id"]
+    # check permissions
+    ch = await db.fetchrow(
+        "SELECT * FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint",
         owner_id, chat_id,
     )
-    await callback.answer("✅ Анимация удалена")
-    await state.clear()
-    await _show_captcha(callback, chat_id, owner_id)
+    if not ch: # or ch["owner_id"] != owner_id: (already filtered by owner_id in query)
+        await call.answer("Нет прав", show_alert=True)
+        return
 
-@router.message(MessagesFSM.waiting_captcha_anim_msg, F.animation | F.video)
+    await db.execute(
+        "UPDATE bot_chats SET captcha_anim_file_id=NULL, captcha_anim_type=NULL WHERE owner_id=$1 AND chat_id=$2::bigint",
+        owner_id, chat_id,
+    )
+
+    data = await state.get_data()
+    anim_msg_id = data.get("anim_msg_id")
+    if anim_msg_id:
+        try:
+            await call.message.chat.delete_message(anim_msg_id)
+        except Exception:
+            pass
+
+    await call.answer("Анимация удалена!", show_alert=True)
+    # Redirect back to the menu (which will now show "Не задана")
+    await on_ch_cap_anim_menu(call, state, platform_user)
+
+
+@router.message(MessagesFSM.waiting_captcha_anim_msg, F.content_type.in_({'animation', 'video'}))
 async def on_captcha_anim_upload(message: Message, state: FSMContext):
-    data     = await state.get_data()
-    chat_id  = data["chat_id"]
-    owner_id = data["owner_id"]
+    data = await state.get_data()
+    chat_id = data.get("chat_id")
+    owner_id = data.get("owner_id")
+    menu_msg_id = data.get("menu_msg_id")
+    anim_msg_id = data.get("anim_msg_id")
+
+    if not chat_id or not owner_id:
+        await state.clear()
+        return
+
+    # Delete the user's uploaded message to keep chat clean
+    try:
+        await message.delete()
+    except Exception:
+        pass
 
     if message.animation:
         file_id = message.animation.file_id
-        file_type = "animation"
-    else:
+        atype = "animation"
+    elif message.video:
         file_id = message.video.file_id
-        file_type = "video"
+        atype = "video"
+    else:
+        return
 
     await db.execute(
-        "UPDATE bot_chats SET captcha_anim_file_id=$1, captcha_anim_type=$2, captcha_animation=true "
-        "WHERE owner_id=$3 AND chat_id=$4::bigint",
-        file_id, file_type, owner_id, chat_id,
+        "UPDATE bot_chats SET captcha_anim_file_id=$1, captcha_anim_type=$2 WHERE owner_id=$3 AND chat_id=$4::bigint",
+        file_id, atype, owner_id, chat_id,
     )
+
+    # Clean up old messages
+    if menu_msg_id:
+        try:
+            await message.chat.delete_message(menu_msg_id)
+        except Exception:
+            pass
+    if anim_msg_id:
+        try:
+            await message.chat.delete_message(anim_msg_id)
+        except Exception:
+            pass
+
     await state.clear()
     await message.answer(
         "✅ Анимация успешно установлена!",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="◀️ Назад", callback_data=f"ch_captcha:{chat_id}")],
+            [InlineKeyboardButton(text="◀️ Назад", callback_data=f"ch_cap_anim_menu:{chat_id}")],
         ]),
     )
 

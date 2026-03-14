@@ -142,6 +142,38 @@ async def sweep_after_import(owner_id: int, bot: Bot) -> int:
     return total_banned
 
 
+async def sweep_unban_after_disable(owner_id: int, bot: Bot) -> int:
+    """
+    Разбанивает всех пользователей, которые есть в базе ЧС (если ЧС выключили).
+    """
+    chats = await db.fetch(
+        "SELECT chat_id FROM bot_chats WHERE owner_id=$1 AND is_active=true",
+        owner_id,
+    )
+    total_unbanned = 0
+
+    for chat in chats:
+        # Находим всех, кто есть в blacklist
+        violators = await db.fetch(
+            """
+            SELECT bl.user_id
+            FROM blacklist bl
+            WHERE bl.owner_id = $1 AND bl.user_id IS NOT NULL
+            """,
+            owner_id,
+        )
+
+        for v in violators:
+            try:
+                await bot.unban_chat_member(chat["chat_id"], v["user_id"], only_if_banned=True)
+                total_unbanned += 1
+            except Exception as e:
+                logger.debug(f"Unban failed for {v['user_id']} in {chat['chat_id']}: {e}")
+            await asyncio.sleep(0.05)  # 20 анбанов/сек
+
+    return total_unbanned
+
+
 async def get_blacklist_count(owner_id: int) -> int:
     return await db.fetchval(
         "SELECT COUNT(*) FROM blacklist WHERE owner_id=$1", owner_id

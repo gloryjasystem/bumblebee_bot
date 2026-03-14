@@ -248,7 +248,7 @@ async def _show_captcha(callback: CallbackQuery, chat_id: int, owner_id: int):
     type_label = type_labels.get(ctype, "🔒 Капча")
 
     # Иконки зависящие от состояния
-    anim_icon     = "📸" if anim_on else "📷"
+    anim_icon     = "🎞" if anim_on else "🎞" # Используем одну и ту же строгую иконку для обоих состояний
     greet_icon    = "📩" if greet_on else "✉️"
     accept_icon   = "🔋" if accept_now else "🪫"
     accept_a_icon = "✅" if accept_all else "❎"
@@ -518,20 +518,22 @@ async def on_ch_cap_anim_menu(callback: CallbackQuery, state: FSMContext, platfo
     )
     has_anim = bool(ch and ch.get("captcha_anim_file_id"))
     
-    text = (
-        "📸 <b>Анимация капчи</b>\n\n"
-        "Отправьте в этот чат GIF или короткое видео, чтобы установить его над текстом капчи. "
-        "Если загружена анимация, она будет автоматически проигрываться.\n\n"
-    )
     if has_anim:
-        text += "<b>Текущая анимация: Установлена ✅</b>"
+        status_text = "🟢 Активна"
     else:
-        text += "<b>Текущая анимация: Нет ❌</b>"
+        status_text = "🔴 Не задана"
+
+    text = (
+        "🎞 <b>Анимация капчи</b>\n\n"
+        f"<b>Статус:</b> {status_text}\n\n"
+        "ℹ️ Отправьте в этот чат GIF-файл или короткое видео. "
+        "Загруженный медиа-файл будет автоматически отображаться над текстом капчи, привлекая внимание пользователей."
+    )
 
     kb = []
     if has_anim:
-        kb.append([InlineKeyboardButton(text="❌ Удалить анимацию", callback_data=f"ch_cap_anim_del:{chat_id}")])
-    kb.append([InlineKeyboardButton(text="↩ В меню капчи", callback_data=f"ch_captcha:{chat_id}")])
+        kb.append([InlineKeyboardButton(text="🗑 Удалить анимацию", callback_data=f"ch_cap_anim_del:{chat_id}")])
+    kb.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"ch_captcha:{chat_id}")])
     
     await state.set_state(MessagesFSM.waiting_captcha_anim_msg)
     await state.update_data(chat_id=chat_id, owner_id=owner_id)
@@ -577,7 +579,7 @@ async def on_captcha_anim_upload(message: Message, state: FSMContext):
     await message.answer(
         "✅ Анимация успешно установлена!",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="↩ В меню капчи", callback_data=f"ch_captcha:{chat_id}")],
+            [InlineKeyboardButton(text="◀️ Назад", callback_data=f"ch_captcha:{chat_id}")],
         ]),
     )
 

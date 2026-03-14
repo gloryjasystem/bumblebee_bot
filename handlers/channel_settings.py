@@ -2444,12 +2444,15 @@ async def on_bs_base_edit(callback: CallbackQuery, state: FSMContext,
 
     await callback.message.edit_text(
         "⚙️ <b>Управление подписчиками</b>\n\n"
-        f"<blockquote>В базе сейчас: <b>{total:,}</b> пользователей.\n\n"
-        "Вы можете безвозвратно удалить историю конкретного подписчика из базы бота по Telegram ID или @username. \n"
-        "При следующем вступлении бот забудет о нем и воспримет его как нового участника (потребует пройти капчу и т.д.).</blockquote>\n\n"
+        f"<blockquote>В базе сейчас: <b>{total:,}</b> пользователей.</blockquote>\n\n"
+        "Здесь вы можете найти пользователя вашей группы/канала для просмотра его карточки, откуда можно:\n\n"
+        "• Писать личные сообщения от лица бота\n"
+        "• Выдавать или снимать Мут (Read-only)\n"
+        "• Назначать права Администратора\n"
+        "• Кикать или заносить в Черный список бота\n\n"
         "<b>Выберите действие:</b>",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🧹 Сбросить данные участника",    callback_data=f"bs_base_del:{child_bot_id}")],
+            [InlineKeyboardButton(text="🔎 Найти / Вызвать карточку",    callback_data=f"bs_base_del:{child_bot_id}")],
             [InlineKeyboardButton(text="◀️ Назад",                    callback_data=f"bs_base:{child_bot_id}")],
         ]),
     )
@@ -2466,10 +2469,8 @@ async def on_bs_base_del(callback: CallbackQuery, state: FSMContext,
     await state.update_data(child_bot_id=child_bot_id)
     await state.set_state(SettingsFSM.bs_base_waiting_del)
     await callback.message.edit_text(
-        "🧹 <b>Сброс данных участника</b>\n\n"
-        "Отправьте <b>@username</b> или <b>Telegram ID</b> тех, чью историю вы хотите очистить.\n"
-        "Можно несколько через пробел или с новой строки.\n"
-        "Или загрузите <b>TXT/CSV файл</b>.\n\n"
+        "🔎 <b>Поиск подписчика</b>\n\n"
+        "Отправьте <b>@username</b>, <b>Telegram ID</b> или просто перешлите любое сообщение пользователя, чью карточку вы хотите открыть.\n\n"
         "<b>Пример:</b>\n"
         "<code>@spammer1\n111222333</code>",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[

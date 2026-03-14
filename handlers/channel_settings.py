@@ -3009,8 +3009,17 @@ async def _refresh_user_card(callback: CallbackQuery, child_bot_id: int, uid: in
         # FSMContext не нужен для перерисовки callback'a, передаем пустой
         from aiogram.fsm.context import FSMContext
         from aiogram.fsm.storage.memory import MemoryStorage
-        # Просто используем message_edit
-        await _show_user_card(callback, FSMContext(storage=MemoryStorage(), key=None), child_bot_id, user_row)
+        from aiogram.exceptions import TelegramBadRequest
+        
+        try:
+            # Просто используем message_edit
+            await _show_user_card(callback, FSMContext(storage=MemoryStorage(), key=None), child_bot_id, user_row)
+        except TelegramBadRequest as e:
+            if "message is not modified" in str(e):
+                pass # Игнорируем ошибку, если статус (кнопки) визуально не изменился
+            else:
+                import logging
+                logging.getLogger(__name__).error(f"Error refreshing user card: {e}")
 
 
 @router.callback_query(F.data.startswith("bs_blacklist:"))

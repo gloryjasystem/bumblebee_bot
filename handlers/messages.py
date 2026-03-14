@@ -1550,15 +1550,11 @@ async def on_ch_ar_kw_media(
     owner_id = platform_user["user_id"]
 
     row = await db.fetchrow(
-        "SELECT reply_media, reply_media_top, reply_preview FROM autoreplies WHERE id=$1 AND owner_id=$2",
+        "SELECT reply_media, reply_media_top, reply_preview, reply_text, reply_buttons, reply_media_type FROM autoreplies WHERE id=$1 AND owner_id=$2",
         ar_id, owner_id,
     )
     if not row:
         await callback.answer()
-        return
-
-    if not row["reply_media"]:
-        await callback.answer("Медиа не прикреплено", show_alert=True)
         return
 
     current_top = row["reply_media_top"] if row["reply_media_top"] is not None else True
@@ -1568,43 +1564,44 @@ async def on_ch_ar_kw_media(
         new_top, ar_id, owner_id,
     )
     
-    # Редактируем эхо-сообщение
-    key = (owner_id, chat_id, ar_id)
-    echo_id = _kw_echo_ids.get(key)
-    if echo_id:
-        try:
-            # Получаем текст и кнопки для эха
-            text = row.get("reply_text")
-            
-            import json as _json
-            raw_btns = row.get("reply_buttons")
-            echo_kb = None
-            if raw_btns:
-                try:
-                    parsed = _json.loads(raw_btns)
-                    if parsed and isinstance(parsed[0], dict):
-                        parsed = [parsed]
-                    kb_rows = []
-                    for btn_row in parsed:
-                        kb_rows.append([
-                            InlineKeyboardButton(text=b["text"], url=b["url"])
-                            for b in btn_row if b.get("text") and b.get("url")
-                        ])
-                    if kb_rows:
-                        echo_kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
-                except Exception:
-                    pass
-            
-            await callback.bot.edit_message_caption(
-                chat_id=callback.message.chat.id,
-                message_id=echo_id,
-                caption=text or None,
-                parse_mode="HTML",
-                reply_markup=echo_kb,
-                show_caption_above_media=not new_top,
-            )
-        except Exception:
-            pass
+    # Редактируем эхо-сообщение если есть медиа
+    if row["reply_media"]:
+        key = (owner_id, chat_id, ar_id)
+        echo_id = _kw_echo_ids.get(key)
+        if echo_id:
+            try:
+                # Получаем текст и кнопки для эха
+                text = row.get("reply_text")
+                
+                import json as _json
+                raw_btns = row.get("reply_buttons")
+                echo_kb = None
+                if raw_btns:
+                    try:
+                        parsed = _json.loads(raw_btns)
+                        if parsed and isinstance(parsed[0], dict):
+                            parsed = [parsed]
+                        kb_rows = []
+                        for dict_row in parsed:
+                            kb_rows.append([
+                                InlineKeyboardButton(text=b["text"], url=b["url"])
+                                for b in dict_row if b.get("text") and b.get("url")
+                            ])
+                        if kb_rows:
+                            echo_kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
+                    except Exception:
+                        pass
+                
+                await callback.bot.edit_message_caption(
+                    chat_id=callback.message.chat.id,
+                    message_id=echo_id,
+                    caption=text or None,
+                    parse_mode="HTML",
+                    reply_markup=echo_kb,
+                    show_caption_above_media=not new_top,
+                )
+            except Exception as e:
+                logger.error(f"Error editing echo caption: {e}")
             
     # Обновляем инлайн-клавиатуру самого сообщения-меню
     media_icon    = "⬆️" if new_top else "⬇️"

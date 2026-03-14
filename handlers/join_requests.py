@@ -16,9 +16,14 @@ router = Router()
 
 
 async def _get_owner(chat_id: int) -> dict | None:
-    """Возвращает настройки площадки и owner_id по chat_id."""
+    """Возвращает настройки площадки, owner_id и состояние blacklist_enabled по chat_id."""
     return await db.fetchrow(
-        "SELECT * FROM bot_chats WHERE chat_id=$1 AND is_active=true",
+        """
+        SELECT bc.*, cb.blacklist_enabled
+        FROM bot_chats bc
+        JOIN child_bots cb ON bc.child_bot_id = cb.id
+        WHERE bc.chat_id=$1 AND bc.is_active=true
+        """,
         chat_id,
     )
 
@@ -49,16 +54,17 @@ async def on_join_request(event: ChatJoinRequest, bot: Bot):
     user = event.from_user
 
     # 1. Проверка ЧС
-    in_bl = await check_blacklist(owner_id, user.id, user.username)
-    if in_bl:
-        await event.decline()
-        try:
-            await bot.ban_chat_member(event.chat.id, user.id)
-        except Exception:
-            pass
-        await _log_action(owner_id, event.chat.id, "reject_bl", user.id)
-        logger.info(f"[BL] Rejected {user.id} from {event.chat.id}")
-        return
+    if settings_row.get("blacklist_enabled", True):
+        in_bl = await check_blacklist(owner_id, user.id, user.username)
+        if in_bl:
+            await event.decline()
+            try:
+                await bot.ban_chat_member(event.chat.id, user.id)
+            except Exception:
+                pass
+            await _log_action(owner_id, event.chat.id, "reject_bl", user.id)
+            logger.info(f"[BL] Rejected {user.id} from {event.chat.id}")
+            return
 
     # 2. Языковой фильтр
     # Нормализуем language_code: 'ru-RU' → 'ru', 'en-US' → 'en'
@@ -177,14 +183,15 @@ async def on_member_update(event: ChatMemberUpdated, bot: Bot):
 
     # Пользователь вступил
     if new_status == "member" and old_status in (None, "left", "kicked"):
-        in_bl = await check_blacklist(owner_id, user.id, user.username)
-        if in_bl:
-            try:
-                await bot.ban_chat_member(event.chat.id, user.id)
-            except Exception:
-                pass
-            await _log_action(owner_id, event.chat.id, "ban_on_join", user.id)
-            return
+        if settings_row.get("blacklist_enabled", True):
+            in_bl = await check_blacklist(owner_id, user.id, user.username)
+            if in_bl:
+                try:
+                    await bot.ban_chat_member(event.chat.id, user.id)
+                except Exception:
+                    pass
+                await _log_action(owner_id, event.chat.id, "ban_on_join", user.id)
+                return
 
         await _register_user(owner_id, event.chat.id, user,
                              invite_link=event.invite_link)

@@ -2790,13 +2790,14 @@ async def _show_user_card(message: Message | CallbackQuery, state: FSMContext, c
     # Динамические кнопки
     mute_text = "🔊 Снять Мут" if is_muted else "🔇 Выдать Мут (Read-only)"
     admin_text = " نز Забрать Права Админа" if is_admin else "🛡 Выдать Права Админа"
+    ban_text = "⛔️ Удалить из черного списка" if is_banned else "⛔️ В Черный список"
 
     buttons = [
         [InlineKeyboardButton(text="📝 Написать от бота", callback_data=f"bs_um_pm:{child_bot_id}:{uid}")],
         [InlineKeyboardButton(text=mute_text, callback_data=f"bs_um_mute:{child_bot_id}:{uid}")],
         [InlineKeyboardButton(text=admin_text, callback_data=f"bs_um_promote:{child_bot_id}:{uid}")],
         [InlineKeyboardButton(text="🚷 Кикнуть (Удалить из группы)", callback_data=f"bs_um_kick:{child_bot_id}:{uid}")],
-        [InlineKeyboardButton(text="⛔️ В Черный список", callback_data=f"bs_um_ban:{child_bot_id}:{uid}")],
+        [InlineKeyboardButton(text=ban_text, callback_data=f"bs_um_ban:{child_bot_id}:{uid}")],
         [InlineKeyboardButton(text="◀️ Назад к управлению", callback_data=f"bs_base_edit:{child_bot_id}")],
     ]
 
@@ -3136,32 +3137,46 @@ async def on_bs_um_ban(callback: CallbackQuery, platform_user: dict | None):
     child_bot = Bot(token=decrypt_token(bot_row["token_encrypted"]))
     
     try:
-        if chat_rows:
-            for cr in chat_rows:
-                try:
-                    await child_bot.ban_chat_member(chat_id=cr["chat_id"], user_id=uid)
-                except Exception:
-                    pass # Игнорируем ошибку бана, если не в группе или уже забанен
+        is_banned = await db.fetchval("SELECT 1 FROM blacklist WHERE owner_id=$1 AND user_id=$2", owner_id, uid)
+        
+        if is_banned:
+            if chat_rows:
+                for cr in chat_rows:
+                    try:
+                        await child_bot.unban_chat_member(chat_id=cr["chat_id"], user_id=uid)
+                    except Exception:
+                        pass
+            
+            await db.execute("DELETE FROM blacklist WHERE owner_id=$1 AND user_id=$2", owner_id, uid)
+            action_text = "⛔️ Пользователь удален из черного списка"
+        else:
+            if chat_rows:
+                for cr in chat_rows:
+                    try:
+                        await child_bot.ban_chat_member(chat_id=cr["chat_id"], user_id=uid)
+                    except Exception:
+                        pass # Игнорируем ошибку бана, если не в группе или уже забанен
+            
+            # В любом случае заносим в ЧС бота
+            username = await db.fetchval("SELECT username FROM bot_users WHERE user_id=$1 LIMIT 1", uid)
+            await db.execute(
+                """INSERT INTO blacklist (owner_id, username, user_id, added_at, reason)
+                   VALUES ($1, $2, $3, NOW(), 'Забанен через карточку пользователя')
+                   ON CONFLICT (owner_id, user_id) WHERE user_id IS NOT NULL DO NOTHING""",
+                owner_id, username or '', uid
+            )
+            
+            if chat_rows:
+                for cr in chat_rows:
+                    await db.execute(
+                        "update bot_users set is_active=false, left_at=NOW() where chat_id=$1 and user_id=$2",
+                        cr["chat_id"], uid
+                    )
+            action_text = "⛔️ Пользователь забанен и занесен в ЧС бота"
     finally:
         await child_bot.session.close()
 
-    # В любом случае заносим в ЧС бота
-    username = await db.fetchval("SELECT username FROM bot_users WHERE user_id=$1 LIMIT 1", uid)
-    await db.execute(
-        """INSERT INTO blacklist (owner_id, username, user_id, added_at, reason)
-           VALUES ($1, $2, $3, NOW(), 'Забанен через карточку пользователя')
-           ON CONFLICT (owner_id, user_id) WHERE user_id IS NOT NULL DO NOTHING""",
-        owner_id, username or '', uid
-    )
-    
-    if chat_rows:
-        for cr in chat_rows:
-            await db.execute(
-                "update bot_users set is_active=false, left_at=NOW() where chat_id=$1 and user_id=$2",
-                cr["chat_id"], uid
-            )
-    
-    await callback.answer("⛔️ Пользователь забанен и занесен в ЧС бота", show_alert=True)
+    await callback.answer(action_text, show_alert=True)
     await _refresh_user_card(callback, child_bot_id, uid)
 
 

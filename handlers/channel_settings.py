@@ -2413,10 +2413,9 @@ async def on_bs_base(callback: CallbackQuery, platform_user: dict | None):
         f"👥 Пользователей в базе: {total:,}\n"
         f"⛔️ Заблокированных: {blocked:,}",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="✏️ Изменить базу",          callback_data=f"bs_base_edit:{child_bot_id}")],
-            [InlineKeyboardButton(text="🔄 Синхронизировать участников", callback_data=f"bs_sync:{child_bot_id}")],
-            [InlineKeyboardButton(text="📤 Экспорт базы",             callback_data=f"bs_base_export_menu:{child_bot_id}")],
+            [InlineKeyboardButton(text="📥 Скачать Excel-отчет",       callback_data=f"bs_base_export_menu:{child_bot_id}")],
             [InlineKeyboardButton(text="⛔️ ЧС пользователей",         callback_data=f"bs_blacklist:{child_bot_id}")],
+            [InlineKeyboardButton(text="⚙️ Управление подписчиками",   callback_data=f"bs_base_edit:{child_bot_id}")],
             [InlineKeyboardButton(text="◀️ Назад",                    callback_data=f"bs_settings:{child_bot_id}")],
         ]),
     )
@@ -2441,12 +2440,13 @@ async def on_bs_base_edit(callback: CallbackQuery, state: FSMContext,
     ) or 0
 
     await callback.message.edit_text(
-        "✏️ <b>Управление базой пользователей</b>\n\n"
+        "⚙️ <b>Управление подписчиками</b>\n\n"
         f"<blockquote>В базе сейчас: <b>{total:,}</b> пользователей.\n\n"
-        "Вы можете удалить пользователей из базы по Telegram ID или @username.</blockquote>\n\n"
+        "Вы можете безвозвратно удалить историю конкретного подписчика из базы бота по Telegram ID или @username. \n"
+        "При следующем вступлении бот забудет о нем и воспримет его как нового участника (потребует пройти капчу и т.д.).</blockquote>\n\n"
         "<b>Выберите действие:</b>",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🗑 Удалить пользователей",    callback_data=f"bs_base_del:{child_bot_id}")],
+            [InlineKeyboardButton(text="🧹 Сбросить данные участника",    callback_data=f"bs_base_del:{child_bot_id}")],
             [InlineKeyboardButton(text="◀️ Назад",                    callback_data=f"bs_base:{child_bot_id}")],
         ]),
     )
@@ -2463,8 +2463,8 @@ async def on_bs_base_del(callback: CallbackQuery, state: FSMContext,
     await state.update_data(child_bot_id=child_bot_id)
     await state.set_state(SettingsFSM.bs_base_waiting_del)
     await callback.message.edit_text(
-        "🗑 <b>Удаление пользователей</b>\n\n"
-        "Отправьте <b>@username</b> или <b>Telegram ID</b> тех, кого хотите удалить.\n"
+        "🧹 <b>Сброс данных участника</b>\n\n"
+        "Отправьте <b>@username</b> или <b>Telegram ID</b> тех, чью историю вы хотите очистить.\n"
         "Можно несколько через пробел или с новой строки.\n"
         "Или загрузите <b>TXT/CSV файл</b>.\n\n"
         "<b>Пример:</b>\n"

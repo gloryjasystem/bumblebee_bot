@@ -55,6 +55,7 @@ CREATE TABLE IF NOT EXISTS bot_chats (
     feedback_target  VARCHAR(16) DEFAULT 'owner',
     timezone        VARCHAR(64) DEFAULT 'UTC',
     added_at        TIMESTAMPTZ DEFAULT now(),
+    media_bottom    BOOLEAN DEFAULT false,
     UNIQUE(owner_id, chat_id)
 );
 

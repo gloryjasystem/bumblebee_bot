@@ -2750,13 +2750,17 @@ async def _show_user_card(message: Message | CallbackQuery, state: FSMContext, c
     try:
         # Проверяем статус по всем чатам бота где числится юзер
         chat_rows = await db.fetch(
-            "SELECT bc.chat_id FROM bot_users bu JOIN bot_chats bc ON bu.chat_id=bc.chat_id WHERE bc.child_bot_id=$1 AND bu.user_id=$2",
+            "SELECT bc.chat_id, bc.chat_title FROM bot_users bu JOIN bot_chats bc ON bu.chat_id=bc.chat_id WHERE bc.child_bot_id=$1 AND bu.user_id=$2 AND bc.is_active=true",
             child_bot_id, uid
         )
+
+        active_chat_titles = []
 
         for cr in chat_rows:
             try:
                 member = await child_bot.get_chat_member(chat_id=cr["chat_id"], user_id=uid)
+                if member.status in ('member', 'administrator', 'creator', 'restricted'):
+                    active_chat_titles.append(cr["chat_title"] or f"Чат {cr['chat_id']}")
                 if member.status in ('administrator', 'creator'):
                     is_admin = True
                 if member.status == 'restricted':
@@ -2766,6 +2770,8 @@ async def _show_user_card(message: Message | CallbackQuery, state: FSMContext, c
                 pass # Пропускаем если тут его нет
     finally:
         await child_bot.session.close()
+
+    chat_titles = ", ".join(active_chat_titles) if active_chat_titles else "нету"
 
     text = (
         f"⚙️ <b>Карточка подписчика</b>\n\n"

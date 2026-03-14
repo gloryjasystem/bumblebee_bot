@@ -177,14 +177,22 @@ async def sweep_unban_after_disable(owner_id: int) -> int:
     total_unbanned = 0
 
     for chat in chats:
-        # Находим всех, кто есть в blacklist
+        # Находим всех, кто есть в blacklist (объединяем по ID и Username)
         violators = await db.fetch(
             """
-            SELECT bl.user_id
-            FROM blacklist bl
-            WHERE bl.owner_id = $1 AND bl.user_id IS NOT NULL
+            SELECT DISTINCT bu.user_id
+            FROM bot_users bu
+            INNER JOIN blacklist bl ON bl.owner_id = bu.owner_id
+              AND (
+                (bl.user_id IS NOT NULL AND bl.user_id = bu.user_id)
+                OR
+                (bl.username IS NOT NULL AND bl.username = bu.username)
+              )
+            WHERE bu.owner_id = $1
+              AND bu.chat_id = $2
+              AND bu.is_active = false
             """,
-            owner_id,
+            owner_id, chat["chat_id"],
         )
 
         token = decrypt_token(chat["token_encrypted"])

@@ -400,6 +400,98 @@ async def on_bl_ban_all(callback: CallbackQuery, platform_user: dict | None):
 
 
 # ══════════════════════════════════════════════════════════════
+# ЧС бот-уровень: обработка текста (ручное добавление)
+# ══════════════════════════════════════════════════════════════
+
+@router.message(F.text, StateFilter(
+    "SettingsFSM:bs_bl_waiting_add_file",
+    "SettingsFSM:bs_bl_waiting_del_file",
+))
+async def on_bs_bl_text(message: Message, state: FSMContext, platform_user: dict | None):
+    """Обрабатывает текстовый ввод при добавлении/удалении в ЧС на бот-уровне."""
+    if not platform_user:
+        return
+
+    from handlers.channel_settings import SettingsFSM
+    current_state = await state.get_state()
+    if current_state not in (
+        SettingsFSM.bs_bl_waiting_add_file,
+        SettingsFSM.bs_bl_waiting_del_file,
+    ):
+        return
+
+    data = await state.get_data()
+    child_bot_id = data.get("child_bot_id")
+    mode = data.get("bs_bl_mode", "add")
+    owner_id = platform_user["user_id"]
+
+    from services.security import parse_blacklist_line
+    lines = message.text.replace(",", "\n").split()
+    added = removed = invalid = exists = 0
+    results = []
+
+    for token in lines[:100]:
+        parsed = parse_blacklist_line(token)
+        if not parsed:
+            invalid += 1
+            continue
+
+        if mode == "add":
+            ok = await add_to_blacklist(owner_id, parsed["user_id"], parsed["username"])
+            if ok:
+                added += 1
+                results.append(f"• {token} ✅")
+            else:
+                exists += 1
+                results.append(f"• {token} (уже в базе)")
+        else: # del
+            uid = parsed.get("user_id")
+            uname = parsed.get("username")
+            if uid:
+                res = await db.execute(
+                    "DELETE FROM blacklist WHERE owner_id=$1 AND user_id=$2",
+                    owner_id, uid,
+                )
+            else:
+                res = await db.execute(
+                    "DELETE FROM blacklist WHERE owner_id=$1 AND lower(username)=lower($2)",
+                    owner_id, uname,
+                )
+            if res and res.endswith("1"):
+                removed += 1
+                results.append(f"• {token} 🗑")
+            else:
+                invalid += 1
+                results.append(f"• {token} (нет в базе)")
+
+    total = await db.fetchval("SELECT COUNT(*) FROM blacklist WHERE owner_id=$1", owner_id) or 0
+    await state.clear()
+
+    result_text = "\n".join(results[:10])
+    if len(results) > 10:
+        result_text += f"\n... и ещё {len(results)-10}"
+
+    if mode == "add":
+        await message.answer(
+            f"✅ <b>Добавлено: {added}</b> | Ошибок: {invalid}\n\n"
+            f"{result_text}\n\n"
+            f"Итого в ЧС: {total:,}",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="◀️ Назад к ЧС", callback_data=f"bs_blacklist:{child_bot_id}")]
+            ])
+        )
+    else:
+        await message.answer(
+            f"✅ <b>Удалено: {removed}</b> | Ошибок: {invalid}\n\n"
+            f"{result_text}\n\n"
+            f"Итого в ЧС: {total:,}",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="◀️ Назад к ЧС", callback_data=f"bs_blacklist:{child_bot_id}")]
+            ])
+        )
+
+
+# ══════════════════════════════════════════════════════════════
 # ЧС бот-уровень: обработка загружаемых файлов (add / del)
 # ══════════════════════════════════════════════════════════════
 

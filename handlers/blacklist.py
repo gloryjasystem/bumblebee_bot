@@ -168,7 +168,7 @@ async def on_bl_file_upload(message: Message, bot: Bot, platform_user: dict | No
         f"⚙️ Запускаю авто-зачистку в фоне..."
     )
     # Фоновая зачистка с rate limiting
-    asyncio.create_task(sweep_after_import(owner_id, bot))
+    asyncio.create_task(sweep_after_import(owner_id))
 
 
 # ── Поиск нарушителей ────────────────────────────────────────

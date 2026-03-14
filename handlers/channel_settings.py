@@ -3302,7 +3302,7 @@ async def on_bs_bl_manage(callback: CallbackQuery, platform_user: dict | None):
 
 # ── Тумблер ЧС ───────────────────────────────────────────────
 @router.callback_query(F.data.startswith("bs_bl_toggle:"))
-async def on_bs_bl_toggle(callback: CallbackQuery, bot: Bot, platform_user: dict | None):
+async def on_bs_bl_toggle(callback: CallbackQuery, platform_user: dict | None):
     if not platform_user:
         return
     child_bot_id = int(callback.data.split(":")[1])
@@ -3324,9 +3324,9 @@ async def on_bs_bl_toggle(callback: CallbackQuery, bot: Bot, platform_user: dict
         from services.blacklist import sweep_after_import, sweep_unban_after_disable
         import asyncio
         if new_val:
-            asyncio.create_task(sweep_after_import(owner_id, bot))
+            asyncio.create_task(sweep_after_import(owner_id))
         else:
-            asyncio.create_task(sweep_unban_after_disable(owner_id, bot))
+            asyncio.create_task(sweep_unban_after_disable(owner_id))
             
     except Exception:
         await callback.answer("⚠️ Ошибка обновления", show_alert=True)

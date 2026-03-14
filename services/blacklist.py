@@ -97,13 +97,21 @@ async def import_file(owner_id: int, content: bytes, filename: str) -> dict:
     }
 
 
-async def sweep_after_import(owner_id: int, bot: Bot) -> int:
+async def sweep_after_import(owner_id: int) -> int:
     """
     После загрузки файла — банит всех нарушителей во всех активных площадках.
-    Запускать через asyncio.create_task() — не блокирует ответ боту.
+    Использует индивидуальные токены ботов для каждого чата.
     """
+    from services.security import decrypt_token
+    from aiogram import Bot
+
     chats = await db.fetch(
-        "SELECT chat_id FROM bot_chats WHERE owner_id=$1 AND is_active=true",
+        """
+        SELECT bc.chat_id, cb.token_encrypted
+        FROM bot_chats bc
+        JOIN child_bots cb ON cb.id = bc.child_bot_id
+        WHERE bc.owner_id=$1 AND bc.is_active=true
+        """,
         owner_id,
     )
     total_banned = 0
@@ -126,28 +134,44 @@ async def sweep_after_import(owner_id: int, bot: Bot) -> int:
             owner_id, chat["chat_id"],
         )
 
-        for v in violators:
-            try:
-                await bot.ban_chat_member(chat["chat_id"], v["user_id"])
-                await db.execute(
-                    "UPDATE bot_users SET is_active=false, left_at=now() "
-                    "WHERE owner_id=$1 AND chat_id=$2 AND user_id=$3",
-                    owner_id, chat["chat_id"], v["user_id"],
-                )
-                total_banned += 1
-            except Exception as e:
-                logger.debug(f"Ban failed for {v['user_id']} in {chat['chat_id']}: {e}")
-            await asyncio.sleep(0.05)  # 20 банов/сек — безопасный лимит
+        token = decrypt_token(chat["token_encrypted"])
+        if not token:
+            continue
+        try:
+            async with Bot(token=token).context() as child_bot:
+                for v in violators:
+                    try:
+                        await child_bot.ban_chat_member(chat["chat_id"], v["user_id"])
+                        await db.execute(
+                            "UPDATE bot_users SET is_active=false, left_at=now() "
+                            "WHERE owner_id=$1 AND chat_id=$2 AND user_id=$3",
+                            owner_id, chat["chat_id"], v["user_id"],
+                        )
+                        total_banned += 1
+                    except Exception as e:
+                        logger.debug(f"Ban failed for {v['user_id']} in {chat['chat_id']}: {e}")
+                    await asyncio.sleep(0.05)  # 20 банов/сек — безопасный лимит
+        except Exception as e:
+            logger.debug(f"Failed to use child_bot for chat {chat['chat_id']}: {e}")
 
     return total_banned
 
 
-async def sweep_unban_after_disable(owner_id: int, bot: Bot) -> int:
+async def sweep_unban_after_disable(owner_id: int) -> int:
     """
     Разбанивает всех пользователей, которые есть в базе ЧС (если ЧС выключили).
+    Использует индивидуальные токены ботов для каждого чата.
     """
+    from services.security import decrypt_token
+    from aiogram import Bot
+
     chats = await db.fetch(
-        "SELECT chat_id FROM bot_chats WHERE owner_id=$1 AND is_active=true",
+        """
+        SELECT bc.chat_id, cb.token_encrypted
+        FROM bot_chats bc
+        JOIN child_bots cb ON cb.id = bc.child_bot_id
+        WHERE bc.owner_id=$1 AND bc.is_active=true
+        """,
         owner_id,
     )
     total_unbanned = 0
@@ -163,13 +187,20 @@ async def sweep_unban_after_disable(owner_id: int, bot: Bot) -> int:
             owner_id,
         )
 
-        for v in violators:
-            try:
-                await bot.unban_chat_member(chat["chat_id"], v["user_id"], only_if_banned=True)
-                total_unbanned += 1
-            except Exception as e:
-                logger.debug(f"Unban failed for {v['user_id']} in {chat['chat_id']}: {e}")
-            await asyncio.sleep(0.05)  # 20 анбанов/сек
+        token = decrypt_token(chat["token_encrypted"])
+        if not token:
+            continue
+        try:
+            async with Bot(token=token).context() as child_bot:
+                for v in violators:
+                    try:
+                        await child_bot.unban_chat_member(chat["chat_id"], v["user_id"], only_if_banned=True)
+                        total_unbanned += 1
+                    except Exception as e:
+                        logger.debug(f"Unban failed for {v['user_id']} in {chat['chat_id']}: {e}")
+                    await asyncio.sleep(0.05)  # 20 анбанов/сек
+        except Exception as e:
+            logger.debug(f"Failed to use child_bot unban for chat {chat['chat_id']}: {e}")
 
     return total_unbanned
 

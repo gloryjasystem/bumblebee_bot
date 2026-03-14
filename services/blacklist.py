@@ -194,7 +194,7 @@ async def sweep_unban_after_disable(owner_id: int) -> int:
             async with Bot(token=token).context() as child_bot:
                 for v in violators:
                     try:
-                        await child_bot.unban_chat_member(chat["chat_id"], v["user_id"], only_if_banned=True)
+                        await child_bot.unban_chat_member(chat["chat_id"], v["user_id"])
                         total_unbanned += 1
                     except Exception as e:
                         logger.debug(f"Unban failed for {v['user_id']} in {chat['chat_id']}: {e}")

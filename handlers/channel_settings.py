@@ -235,6 +235,10 @@ async def on_req_accept_all(callback: CallbackQuery, bot: Bot, platform_user: di
         try:
             await child_bot.approve_chat_join_request(chat_id, row["user_id"])
             approved += 1
+            await db.execute(
+                "UPDATE join_requests SET status='approved', resolved_at=now() "
+                "WHERE owner_id=$1 AND chat_id=$2::bigint AND user_id=$3",
+                owner_id, chat_id, row["user_id"])
             # Трекинг статистики ссылки
             if invite_link_url:
                 try:
@@ -251,15 +255,14 @@ async def on_req_accept_all(callback: CallbackQuery, bot: Bot, platform_user: di
                 except Exception:
                     pass
         except Exception:
+            await db.execute(
+                "UPDATE join_requests SET status='expired', resolved_at=now() "
+                "WHERE owner_id=$1 AND chat_id=$2::bigint AND user_id=$3",
+                owner_id, chat_id, row["user_id"])
             pass
     if bot_row:
         await child_bot.session.close()
 
-    await db.execute(
-        "UPDATE join_requests SET status='approved', resolved_at=now() "
-        "WHERE owner_id=$1 AND chat_id=$2::bigint AND status='pending'",
-        owner_id, chat_id,
-    )
     await callback.answer(f"✔️ Принято: {approved}", show_alert=True)
     await _show_requests_menu(callback, platform_user, chat_id)
 
@@ -295,16 +298,19 @@ async def on_req_decline_all(callback: CallbackQuery, bot: Bot, platform_user: d
         try:
             await child_bot.decline_chat_join_request(chat_id, row["user_id"])
             declined += 1
+            await db.execute(
+                "UPDATE join_requests SET status='declined', resolved_at=now() "
+                "WHERE owner_id=$1 AND chat_id=$2::bigint AND user_id=$3",
+                owner_id, chat_id, row["user_id"])
         except Exception:
+            await db.execute(
+                "UPDATE join_requests SET status='expired', resolved_at=now() "
+                "WHERE owner_id=$1 AND chat_id=$2::bigint AND user_id=$3",
+                owner_id, chat_id, row["user_id"])
             pass
     if bot_row:
         await child_bot.session.close()
 
-    await db.execute(
-        "UPDATE join_requests SET status='declined', resolved_at=now() "
-        "WHERE owner_id=$1 AND chat_id=$2::bigint AND status='pending'",
-        owner_id, chat_id,
-    )
     await callback.answer(f"✖️ Отклонено: {declined}", show_alert=True)
     await _show_requests_menu(callback, platform_user, chat_id)
 
@@ -1876,6 +1882,10 @@ async def on_bs_req_accept_all(callback: CallbackQuery, bot: Bot, platform_user:
             try:
                 await child_bot_instance.approve_chat_join_request(chat_id, row["user_id"])
                 approved += 1
+                await db.execute(
+                    "UPDATE join_requests SET status='approved', resolved_at=now() "
+                    "WHERE owner_id=$1 AND chat_id=$2::bigint AND user_id=$3",
+                    owner_id, chat_id, row["user_id"])
                 if invite_link_url:
                     try:
                         from scheduler.child_bot_runner import _track_invite_link
@@ -1891,12 +1901,11 @@ async def on_bs_req_accept_all(callback: CallbackQuery, bot: Bot, platform_user:
                     except Exception:
                         pass
             except Exception:
+                await db.execute(
+                    "UPDATE join_requests SET status='expired', resolved_at=now() "
+                    "WHERE owner_id=$1 AND chat_id=$2::bigint AND user_id=$3",
+                    owner_id, chat_id, row["user_id"])
                 pass
-        if pending:
-            await db.execute(
-                "UPDATE join_requests SET status='approved', resolved_at=now() "
-                "WHERE owner_id=$1 AND chat_id=$2::bigint AND status='pending'",
-                owner_id, chat_id)
     if bot_row:
         await child_bot_instance.session.close()
     await callback.answer(f"✔️ Принято: {approved}", show_alert=True)
@@ -1932,13 +1941,16 @@ async def on_bs_req_decline_all(callback: CallbackQuery, bot: Bot, platform_user
             try:
                 await child_bot_instance.decline_chat_join_request(chat_row["chat_id"], row["user_id"])
                 declined += 1
+                await db.execute(
+                    "UPDATE join_requests SET status='declined', resolved_at=now() "
+                    "WHERE owner_id=$1 AND chat_id=$2::bigint AND user_id=$3",
+                    owner_id, chat_row["chat_id"], row["user_id"])
             except Exception:
+                await db.execute(
+                    "UPDATE join_requests SET status='expired', resolved_at=now() "
+                    "WHERE owner_id=$1 AND chat_id=$2::bigint AND user_id=$3",
+                    owner_id, chat_row["chat_id"], row["user_id"])
                 pass
-        if pending:
-            await db.execute(
-                "UPDATE join_requests SET status='declined', resolved_at=now() "
-                "WHERE owner_id=$1 AND chat_id=$2::bigint AND status='pending'",
-                owner_id, chat_row["chat_id"])
     if bot_row:
         await child_bot_instance.session.close()
     await callback.answer(f"✖️ Отклонено: {declined}", show_alert=True)

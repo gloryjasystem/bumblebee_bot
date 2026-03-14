@@ -183,6 +183,13 @@ async def on_member_update(event: ChatMemberUpdated, bot: Bot):
 
     # Пользователь вступил
     if new_status == "member" and old_status in (None, "left", "kicked"):
+        # Если юзер уже зашел (по ссылке или админ добавил), аннулируем заявку в очереди
+        await db.execute(
+            "UPDATE join_requests SET status='expired', resolved_at=now() "
+            "WHERE owner_id=$1 AND chat_id=$2::bigint AND user_id=$3 AND status='pending'",
+            owner_id, event.chat.id, user.id,
+        )
+
         if settings_row.get("blacklist_enabled", True):
             in_bl = await check_blacklist(owner_id, user.id, user.username)
             if in_bl:
@@ -217,6 +224,12 @@ async def on_member_update(event: ChatMemberUpdated, bot: Bot):
 
     # Пользователь ушёл
     elif new_status in ("left", "kicked") and old_status == "member":
+        # Если юзер отписался, аннулируем его забытую заявку
+        await db.execute(
+            "UPDATE join_requests SET status='expired', resolved_at=now() "
+            "WHERE owner_id=$1 AND chat_id=$2::bigint AND user_id=$3 AND status='pending'",
+            owner_id, event.chat.id, user.id,
+        )
         await db.execute(
             "UPDATE bot_users SET is_active=false, left_at=now() "
             "WHERE owner_id=$1 AND chat_id=$2 AND user_id=$3",

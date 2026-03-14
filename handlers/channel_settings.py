@@ -562,18 +562,21 @@ async def _show_msg_editor(callback: CallbackQuery, chat_id_str: str, msg_type: 
     # Отправить эхо сообщения и запомнить его message_id для последующего удаления
     sent_echo = None
     if media_fid:
+        media_below = bool(ch.get(f["media_below_col"], False))
+        kwargs = {
+            "caption": text or None,
+            "reply_markup": user_msg_kb,
+            "parse_mode": "HTML",
+            "show_caption_above_media": media_below,
+        }
         if media_type == "photo":
-            sent_echo = await callback.message.answer_photo(media_fid, caption=text or None,
-                                                reply_markup=user_msg_kb, parse_mode="HTML")
+            sent_echo = await callback.message.answer_photo(media_fid, **kwargs)
         elif media_type == "video":
-            sent_echo = await callback.message.answer_video(media_fid, caption=text or None,
-                                                reply_markup=user_msg_kb, parse_mode="HTML")
+            sent_echo = await callback.message.answer_video(media_fid, **kwargs)
         elif media_type == "animation":
-            sent_echo = await callback.message.answer_animation(media_fid, caption=text or None,
-                                                    reply_markup=user_msg_kb, parse_mode="HTML")
+            sent_echo = await callback.message.answer_animation(media_fid, **kwargs)
         else:
-            sent_echo = await callback.message.answer_document(media_fid, caption=text or None,
-                                                   reply_markup=user_msg_kb, parse_mode="HTML")
+            sent_echo = await callback.message.answer_document(media_fid, **kwargs)
     else:
         sent_echo = await callback.message.answer(text, reply_markup=user_msg_kb,
                                       parse_mode="HTML",
@@ -853,7 +856,7 @@ async def on_ch_msg_media(callback: CallbackQuery, state: FSMContext, platform_u
     has_media = ch and ch.get(f["media_col"])
 
     if has_media:
-        # Медиа есть — переключаем позицию ⬆️/⬇️ (НЕ удаляем)
+        # Медиа есть — переключаем позицию ⬆️/⬇️ и пересоздаем превью
         current_below = bool(ch.get(f["media_below_col"], False))
         new_below = not current_below
         await db.execute(
@@ -863,22 +866,12 @@ async def on_ch_msg_media(callback: CallbackQuery, state: FSMContext, platform_u
         icon = "⬇️" if new_below else "⬆️"
         await callback.answer(f"🎬 Медиа: {icon}")
         ch = await _get_chat_by_id(platform_user["user_id"], int(chat_id_str))
-        await callback.message.edit_reply_markup(
-            reply_markup=_build_editor_kb(chat_id_str, msg_type, dict(ch), scope="ch")
-        )
+        
+        await callback.message.delete()
+        await _show_msg_editor(callback, chat_id_str, msg_type, dict(ch), scope="ch", state=state)
     else:
-        # Медиа нет — запрашиваем файл
-        await state.set_state(SettingsFSM.waiting_for_msg_media)
-        await state.update_data(chat_id=int(chat_id_str), owner_id=platform_user["user_id"],
-                                 msg_type=msg_type, scope="ch")
-        await callback.message.edit_text(
-            "🎬 <b>Медиа</b>\n\nОтправьте фото, видео или GIF:",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="◀️ Отмена", callback_data=f"ch_msg_back:{chat_id_str}:{msg_type}")],
-            ]),
-            parse_mode="HTML",
-        )
-        await callback.answer()
+        # Медиа нет
+        await callback.answer("Медиа не прикреплено", show_alert=True)
 
 
 @router.callback_query(F.data.startswith("ch_msg_preview:"))

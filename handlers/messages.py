@@ -705,31 +705,20 @@ async def _show_global_mgmt(message, chat_id: int, owner_id: int):
 
     # -- Эхо сохранённого сообщения
     if media_id:
-        if media_top:
-            # Медиа сверху, текст снизу (стандартный caption)
-            if media_type == "photo":
-                echo_msg = await message.answer_photo(media_id, caption=text or None, parse_mode="HTML")
-            elif media_type == "video":
-                echo_msg = await message.answer_video(media_id, caption=text or None, parse_mode="HTML")
-            elif media_type == "document":
-                echo_msg = await message.answer_document(media_id, caption=text or None, parse_mode="HTML")
-            else:
-                echo_msg = await message.answer(text or "—", parse_mode="HTML",
-                                                disable_web_page_preview=not preview_on)
+        kwargs = {
+            "caption": text or None,
+            "parse_mode": "HTML",
+            "show_caption_above_media": not media_top,
+        }
+        if media_type == "photo":
+            echo_msg = await message.answer_photo(media_id, **kwargs)
+        elif media_type == "video":
+            echo_msg = await message.answer_video(media_id, **kwargs)
+        elif media_type == "document":
+            echo_msg = await message.answer_document(media_id, **kwargs)
         else:
-            # Текст сверху, медиа снизу — два сообщения
-            if text:
-                await message.answer(text, parse_mode="HTML",
-                                     disable_web_page_preview=not preview_on)
-            if media_type == "photo":
-                echo_msg = await message.answer_photo(media_id)
-            elif media_type == "video":
-                echo_msg = await message.answer_video(media_id)
-            elif media_type == "document":
-                echo_msg = await message.answer_document(media_id)
-            else:
-                echo_msg = await message.answer(text or "—", parse_mode="HTML",
-                                                disable_web_page_preview=not preview_on)
+            echo_msg = await message.answer(text or "—", parse_mode="HTML",
+                                            disable_web_page_preview=not preview_on)
     else:
         echo_msg = await message.answer(text or "—", parse_mode="HTML",
                                         disable_web_page_preview=not preview_on)
@@ -901,29 +890,23 @@ async def on_ch_ar_media_global(
     chat_id  = int(callback.data.split(":")[1])
     owner_id = platform_user["user_id"]
     ch = await db.fetchrow(
-        "SELECT general_reply_media_top, general_reply_preview FROM bot_chats "
+        "SELECT general_reply_media, general_reply_media_top, general_reply_preview FROM bot_chats "
         "WHERE owner_id=$1 AND chat_id=$2::bigint",
         owner_id, chat_id,
     )
+    if not ch or not ch["general_reply_media"]:
+        await callback.answer("Медиа не прикреплено", show_alert=True)
+        return
+
     current_top = (ch["general_reply_media_top"] if ch and ch["general_reply_media_top"] is not None else True)
     new_top = not current_top
     await db.execute(
         "UPDATE bot_chats SET general_reply_media_top=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
         new_top, owner_id, chat_id,
     )
-    media_icon    = "⬆️" if new_top else "⬇️"
-    preview_on    = bool(ch["general_reply_preview"]) if ch else False
-    preview_label = "есть" if preview_on else "нет"
-    new_kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✏️ Редактировать",    callback_data=f"ch_ar_edit_global:{chat_id}")],
-        [InlineKeyboardButton(text="🎛 Кнопки",           callback_data=f"ch_ar_btns_global:{chat_id}")],
-        [InlineKeyboardButton(text=f"🎬 Медиа: {media_icon}", callback_data=f"ch_ar_media_global:{chat_id}")],
-        [InlineKeyboardButton(text=f"👁 Превью: {preview_label}", callback_data=f"ch_ar_preview_global:{chat_id}")],
-        [InlineKeyboardButton(text="🗑 Удалить",          callback_data=f"ch_ar_delete_global:{chat_id}")],
-        [InlineKeyboardButton(text="◀️ Назад",            callback_data=f"ch_ar_back_global:{chat_id}")],
-    ])
-    await callback.message.edit_reply_markup(reply_markup=new_kb)
+    await callback.message.delete()
     await callback.answer("Медиа: " + ("сверху ⬆️" if new_top else "снизу ⬇️"))
+    await _show_global_mgmt(callback.message, chat_id, owner_id)
 
 
 # ── Управление: Превью ────────────────────────────────────────
@@ -1217,28 +1200,20 @@ async def _show_keyword_mgmt(message, chat_id: int, owner_id: int, ar_id: int):
 
     # -- Эхо сохранённого ответа
     if media_id:
-        if media_top:
-            # Медиа сверху, текст снизу (стандартный caption)
-            if media_type == "photo":
-                echo_msg = await message.answer_photo(media_id, caption=text or None, parse_mode="HTML", reply_markup=echo_kb)
-            elif media_type == "video":
-                echo_msg = await message.answer_video(media_id, caption=text or None, parse_mode="HTML", reply_markup=echo_kb)
-            elif media_type == "document":
-                echo_msg = await message.answer_document(media_id, caption=text or None, parse_mode="HTML", reply_markup=echo_kb)
-            else:
-                echo_msg = await message.answer(text or "—", parse_mode="HTML", reply_markup=echo_kb)
+        kwargs = {
+            "caption": text or None,
+            "parse_mode": "HTML",
+            "reply_markup": echo_kb,
+            "show_caption_above_media": not media_top,
+        }
+        if media_type == "photo":
+            echo_msg = await message.answer_photo(media_id, **kwargs)
+        elif media_type == "video":
+            echo_msg = await message.answer_video(media_id, **kwargs)
+        elif media_type == "document":
+            echo_msg = await message.answer_document(media_id, **kwargs)
         else:
-            # Текст сверху, медиа снизу — два сообщения
-            if text:
-                await message.answer(text, parse_mode="HTML", reply_markup=echo_kb)
-            if media_type == "photo":
-                echo_msg = await message.answer_photo(media_id)
-            elif media_type == "video":
-                echo_msg = await message.answer_video(media_id)
-            elif media_type == "document":
-                echo_msg = await message.answer_document(media_id)
-            else:
-                echo_msg = await message.answer(text or "—", parse_mode="HTML", reply_markup=echo_kb)
+            echo_msg = await message.answer(text or "—", parse_mode="HTML", reply_markup=echo_kb)
     else:
         echo_msg = await message.answer(text or "—", parse_mode="HTML", reply_markup=echo_kb)
 
@@ -1353,11 +1328,15 @@ async def on_ch_ar_kw_media(
     owner_id = platform_user["user_id"]
 
     row = await db.fetchrow(
-        "SELECT reply_media_top, reply_preview FROM autoreplies WHERE id=$1 AND owner_id=$2",
+        "SELECT reply_media, reply_media_top, reply_preview FROM autoreplies WHERE id=$1 AND owner_id=$2",
         ar_id, owner_id,
     )
     if not row:
         await callback.answer()
+        return
+
+    if not row["reply_media"]:
+        await callback.answer("Медиа не прикреплено", show_alert=True)
         return
 
     current_top = row["reply_media_top"] if row["reply_media_top"] is not None else True
@@ -1366,19 +1345,10 @@ async def on_ch_ar_kw_media(
         "UPDATE autoreplies SET reply_media_top=$1 WHERE id=$2 AND owner_id=$3",
         new_top, ar_id, owner_id,
     )
-    media_icon    = "⬆️" if new_top else "⬇️"
-    preview_on    = bool(row["reply_preview"]) if row else False
-    preview_label = "есть" if preview_on else "нет"
-    new_kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✏️ Редактировать",       callback_data=f"ch_ar_kw_edit:{chat_id}:{ar_id}")],
-        [InlineKeyboardButton(text="🎛 Кнопки",              callback_data=f"ch_ar_kw_btns:{chat_id}:{ar_id}")],
-        [InlineKeyboardButton(text=f"🎬 Медиа: {media_icon}", callback_data=f"ch_ar_kw_media:{chat_id}:{ar_id}")],
-        [InlineKeyboardButton(text=f"👁 Превью: {preview_label}", callback_data=f"ch_ar_kw_preview:{chat_id}:{ar_id}")],
-        [InlineKeyboardButton(text="🗑 Удалить",              callback_data=f"ch_ar_del:{chat_id}:{ar_id}")],
-        [InlineKeyboardButton(text="◀️ Назад",               callback_data=f"ch_ar_kw_back:{chat_id}:{ar_id}")],
-    ])
-    await callback.message.edit_reply_markup(reply_markup=new_kb)
+    
+    await callback.message.delete()
     await callback.answer("Медиа: " + ("сверху ⬆️" if new_top else "снизу ⬇️"))
+    await _show_keyword_mgmt(callback.message, chat_id, owner_id, ar_id)
 
 
 # ── Управление: Кнопки keyword-ответа ────────────────────────

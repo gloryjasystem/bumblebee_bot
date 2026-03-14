@@ -2720,7 +2720,6 @@ async def _show_user_card(message: Message | CallbackQuery, state: FSMContext, c
     name = user_row['first_name'] or "Аноним"
     joined = user_row['joined_at'].strftime("%d.%m.%Y %H:%M") if user_row['joined_at'] else "Неизвестно"
     chat_titles = user_row['chat_titles'] or "Личные сообщения"
-    chat_id = user_row['chat_id'] # Используем любой один чат для API вызовов
     is_active = "✅ Активен" if user_row['is_active'] else "❌ Вышел / Заблокировал"
 
     # Идем в Telegram узнавать реальный статус пользователя
@@ -2732,12 +2731,27 @@ async def _show_user_card(message: Message | CallbackQuery, state: FSMContext, c
     is_muted = False
     is_admin = False
     try:
-        member = await child_bot.get_chat_member(chat_id=chat_id, user_id=uid)
-        is_admin = member.status in ('administrator', 'creator')
-        if member.status == 'restricted':
-            is_muted = not getattr(member, 'can_send_messages', True)
-    except Exception:
-        pass # Игнорируем ошибки если пользователя нет в группе
+        # Проверяем статус по всем чатам бота где числится юзер
+        chat_rows = await db.fetch(
+            "SELECT chat_id FROM bot_users WHERE child_bot_id = (SELECT id FROM child_bots WHERE id=$1) AND user_id=$2",
+            child_bot_id, uid
+        )
+        if not chat_rows: # Защита от старых данных
+            chat_rows = await db.fetch(
+                "SELECT bc.chat_id FROM bot_users bu JOIN bot_chats bc ON bu.chat_id=bc.chat_id WHERE bc.child_bot_id=$1 AND bu.user_id=$2",
+                child_bot_id, uid
+            )
+
+        for cr in chat_rows:
+            try:
+                member = await child_bot.get_chat_member(chat_id=cr["chat_id"], user_id=uid)
+                if member.status in ('administrator', 'creator'):
+                    is_admin = True
+                if member.status == 'restricted':
+                    if not getattr(member, 'can_send_messages', True):
+                        is_muted = True
+            except Exception:
+                pass # Пропускаем если тут его нет
     finally:
         await child_bot.session.close()
 
@@ -2760,12 +2774,11 @@ async def _show_user_card(message: Message | CallbackQuery, state: FSMContext, c
     admin_text = " نز Забрать Права Админа" if is_admin else "🛡 Выдать Права Админа"
 
     buttons = [
-        [InlineKeyboardButton(text="📝 Написать от бота", callback_data=f"bs_um_pm:{child_bot_id}:{uid}:{chat_id}")],
-        [InlineKeyboardButton(text=mute_text, callback_data=f"bs_um_mute:{child_bot_id}:{uid}:{chat_id}")],
-        [InlineKeyboardButton(text=admin_text, callback_data=f"bs_um_promote:{child_bot_id}:{uid}:{chat_id}")],
-        [InlineKeyboardButton(text="🚷 Кикнуть (Удалить из группы)", callback_data=f"bs_um_kick:{child_bot_id}:{uid}:{chat_id}")],
-        [InlineKeyboardButton(text="⛔️ В Черный список", callback_data=f"bs_um_ban:{child_bot_id}:{uid}:{chat_id}")],
-        [InlineKeyboardButton(text="🧹 Сбросить историю (Забыть)", callback_data=f"bs_um_reset:{child_bot_id}:{uid}:{chat_id}")],
+        [InlineKeyboardButton(text="📝 Написать от бота", callback_data=f"bs_um_pm:{child_bot_id}:{uid}")],
+        [InlineKeyboardButton(text=mute_text, callback_data=f"bs_um_mute:{child_bot_id}:{uid}")],
+        [InlineKeyboardButton(text=admin_text, callback_data=f"bs_um_promote:{child_bot_id}:{uid}")],
+        [InlineKeyboardButton(text="🚷 Кикнуть (Удалить из группы)", callback_data=f"bs_um_kick:{child_bot_id}:{uid}")],
+        [InlineKeyboardButton(text="⛔️ В Черный список", callback_data=f"bs_um_ban:{child_bot_id}:{uid}")],
         [InlineKeyboardButton(text="◀️ Назад к управлению", callback_data=f"bs_base_edit:{child_bot_id}")],
     ]
 
@@ -2782,11 +2795,10 @@ async def _show_user_card(message: Message | CallbackQuery, state: FSMContext, c
 async def on_bs_um_pm(callback: CallbackQuery, state: FSMContext, platform_user: dict | None):
     if not platform_user:
         return
-    _, child_bot_id_str, uid_str, chat_id_str = callback.data.split(":")
+    _, child_bot_id_str, uid_str = callback.data.split(":")
     await state.update_data(
         pm_child_bot_id=int(child_bot_id_str), 
-        pm_uid=int(uid_str), 
-        pm_chat_id=int(chat_id_str)
+        pm_uid=int(uid_str)
     )
     await state.set_state(SettingsFSM.bs_um_waiting_pm)
     await callback.message.edit_text(
@@ -2832,8 +2844,8 @@ async def on_bs_um_pm_input(message: Message, state: FSMContext, platform_user: 
 async def on_bs_um_mute(callback: CallbackQuery, platform_user: dict | None):
     if not platform_user:
         return
-    _, child_bot_id_str, uid_str, chat_id_str = callback.data.split(":")
-    child_bot_id, uid, chat_id = int(child_bot_id_str), int(uid_str), int(chat_id_str)
+    _, child_bot_id_str, uid_str = callback.data.split(":")
+    child_bot_id, uid = int(child_bot_id_str), int(uid_str)
 
     from aiogram.types import ChatPermissions
 
@@ -2841,39 +2853,60 @@ async def on_bs_um_mute(callback: CallbackQuery, platform_user: dict | None):
     if not bot_row:
         return await callback.answer("❌ Бот не найден", show_alert=True)
     
-    child_bot = Bot(token=decrypt_token(bot_row["token_encrypted"]))
-    try:
-        member = await child_bot.get_chat_member(chat_id=chat_id, user_id=uid)
-        is_muted = False
-        if member.status == 'restricted':
-            is_muted = not getattr(member, 'can_send_messages', True)
+    chat_rows = await db.fetch(
+        "SELECT bc.chat_id FROM bot_users bu JOIN bot_chats bc ON bu.chat_id=bc.chat_id WHERE bc.child_bot_id=$1 AND bu.user_id=$2",
+        child_bot_id, uid
+    )
+    if not chat_rows:
+        return await callback.answer("❌ Нет доступных чатов для этого пользователя", show_alert=True)
         
-        if is_muted:
-            # Размут
-            await child_bot.restrict_chat_member(
-                chat_id=chat_id, user_id=uid,
-                permissions=ChatPermissions(
-                    can_send_messages=True, can_send_audios=True, can_send_documents=True,
-                    can_send_photos=True, can_send_videos=True, can_send_video_notes=True,
-                    can_send_voice_notes=True, can_send_polls=True, can_send_other_messages=True,
-                    can_add_web_page_previews=True, can_change_info=False, can_invite_users=True,
-                    can_pin_messages=False
-                )
-            )
-            await callback.answer("✅ Ограничения сняты (Размут)", show_alert=True)
+    child_bot = Bot(token=decrypt_token(bot_row["token_encrypted"]))
+    success_count = 0
+    
+    try:
+        for cr in chat_rows:
+            chat_id = cr["chat_id"]
+            try:
+                member = await child_bot.get_chat_member(chat_id=chat_id, user_id=uid)
+                if member.status in ('left', 'kicked'):
+                    continue
+                    
+                is_muted = False
+                if member.status == 'restricted':
+                    is_muted = not getattr(member, 'can_send_messages', True)
+                
+                if is_muted:
+                    # Размут
+                    await child_bot.restrict_chat_member(
+                        chat_id=chat_id, user_id=uid,
+                        permissions=ChatPermissions(
+                            can_send_messages=True, can_send_audios=True, can_send_documents=True,
+                            can_send_photos=True, can_send_videos=True, can_send_video_notes=True,
+                            can_send_voice_notes=True, can_send_polls=True, can_send_other_messages=True,
+                            can_add_web_page_previews=True, can_change_info=False, can_invite_users=True,
+                            can_pin_messages=False
+                        )
+                    )
+                else:
+                    # Мут
+                    await child_bot.restrict_chat_member(
+                        chat_id=chat_id, user_id=uid,
+                        permissions=ChatPermissions(can_send_messages=False)
+                    )
+                success_count += 1
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).warning(f"Mute error for {uid} in {chat_id}: {e}")
+                
+        if success_count > 0:
+            await callback.answer("⏳ Статус Мута переключён в активных чатах!", show_alert=True)
         else:
-            # Мут
-            await child_bot.restrict_chat_member(
-                chat_id=chat_id, user_id=uid,
-                permissions=ChatPermissions(can_send_messages=False)
-            )
-            await callback.answer("🔇 Пользователь переведен в Read-only (Мут)", show_alert=True)
-    except Exception as e:
-        await callback.answer(f"❌ Ошибка Telegram: {e}", show_alert=True)
+            await callback.answer("❌ Не удалось изменить статус: возможно, юзер вышел из чатов.", show_alert=True)
+            
     finally:
         await child_bot.session.close()
         
-    # Обновляем карточку чтобы сменить кнопку
+    # Обновляем карточку
     await _refresh_user_card(callback, child_bot_id, uid)
 
 
@@ -2881,34 +2914,56 @@ async def on_bs_um_mute(callback: CallbackQuery, platform_user: dict | None):
 async def on_bs_um_promote(callback: CallbackQuery, state: FSMContext, platform_user: dict | None):
     if not platform_user:
         return
-    _, child_bot_id_str, uid_str, chat_id_str = callback.data.split(":")
-    child_bot_id, uid, chat_id = int(child_bot_id_str), int(uid_str), int(chat_id_str)
+    _, child_bot_id_str, uid_str = callback.data.split(":")
+    child_bot_id, uid = int(child_bot_id_str), int(uid_str)
 
     bot_row = await db.fetchrow("SELECT token_encrypted FROM child_bots WHERE id=$1", child_bot_id)
     if not bot_row:
         return await callback.answer("❌ Бот не найден", show_alert=True)
+        
+    chat_rows = await db.fetch(
+        "SELECT bc.chat_id FROM bot_users bu JOIN bot_chats bc ON bu.chat_id=bc.chat_id WHERE bc.child_bot_id=$1 AND bu.user_id=$2",
+        child_bot_id, uid
+    )
+    if not chat_rows:
+        return await callback.answer("❌ Нет доступных чатов.", show_alert=True)
     
     child_bot = Bot(token=decrypt_token(bot_row["token_encrypted"]))
     try:
-        member = await child_bot.get_chat_member(chat_id=chat_id, user_id=uid)
-        is_admin = member.status in ('administrator', 'creator')
+        # Проверяем первый попавшийся чат для статуса админа (или можно все)
+        is_admin = False
+        left_all = True
         
-        if member.status in ('left', 'kicked'):
-            return await callback.answer("❌ Пользователь покинул группу! Нельзя выдать права.", show_alert=True)
+        for cr in chat_rows:
+            try:
+                member = await child_bot.get_chat_member(chat_id=cr["chat_id"], user_id=uid)
+                if member.status not in ('left', 'kicked'):
+                    left_all = False
+                if member.status in ('administrator', 'creator'):
+                    is_admin = True
+            except Exception:
+                pass
+                
+        if left_all:
+            return await callback.answer("❌ Пользователь покинул все группы! Нельзя выдать права.", show_alert=True)
 
         if is_admin:
-            # Если уже админ — снимаем права сразу
-            await child_bot.promote_chat_member(
-                chat_id=chat_id, user_id=uid,
-                is_anonymous=False, can_manage_chat=False, can_post_messages=False,
-                can_edit_messages=False, can_delete_messages=False, can_manage_video_chats=False,
-                can_restrict_members=False, can_promote_members=False, can_change_info=False,
-                can_invite_users=False, can_pin_messages=False, can_manage_topics=False
-            )
+            # Забираем права повсюду
+            for cr in chat_rows:
+                try:
+                    await child_bot.promote_chat_member(
+                        chat_id=cr["chat_id"], user_id=uid,
+                        is_anonymous=False, can_manage_chat=False, can_post_messages=False,
+                        can_edit_messages=False, can_delete_messages=False, can_manage_video_chats=False,
+                        can_restrict_members=False, can_promote_members=False, can_change_info=False,
+                        can_invite_users=False, can_pin_messages=False, can_manage_topics=False
+                    )
+                except Exception:
+                    pass
             await callback.answer(" نز Права администратора сняты", show_alert=True)
             await _refresh_user_card(callback, child_bot_id, uid)
         else:
-            # Если не админ — открываем меню выбора прав
+            # Меню выбора прав
             perms = {
                 "delete": True,
                 "restrict": True,
@@ -2916,11 +2971,12 @@ async def on_bs_um_promote(callback: CallbackQuery, state: FSMContext, platform_
                 "invite": True,
                 "promote": False
             }
+            # Сохраняем все chat_ids чтобы применить к ним
             await state.update_data(
                 admin_perms=perms,
                 admin_child_bot_id=child_bot_id,
                 admin_uid=uid,
-                admin_chat_id=chat_id
+                admin_chat_ids=[r["chat_id"] for r in chat_rows]
             )
             await _render_admin_menu(callback, perms, child_bot_id)
 
@@ -2962,27 +3018,35 @@ async def on_bs_admin_apply(callback: CallbackQuery, state: FSMContext):
     perms = data.get("admin_perms")
     child_bot_id = data.get("admin_child_bot_id")
     uid = data.get("admin_uid")
-    chat_id = data.get("admin_chat_id")
+    chat_ids = data.get("admin_chat_ids", [])
 
-    if not perms or not child_bot_id:
+    if not perms or not child_bot_id or not chat_ids:
         return await callback.answer("❌ Истекло время сессии. Начните сначала.", show_alert=True)
 
     bot_row = await db.fetchrow("SELECT token_encrypted FROM child_bots WHERE id=$1", child_bot_id)
     child_bot = Bot(token=decrypt_token(bot_row["token_encrypted"]))
+    success = False
     try:
-        await child_bot.promote_chat_member(
-            chat_id=chat_id, user_id=uid,
-            is_anonymous=False, can_manage_chat=True,
-            can_delete_messages=perms.get('delete', False),
-            can_restrict_members=perms.get('restrict', False),
-            can_pin_messages=perms.get('pin', False),
-            can_invite_users=perms.get('invite', False),
-            can_promote_members=perms.get('promote', False),
-            can_change_info=False, can_manage_video_chats=False, can_manage_topics=False
-        )
-        await callback.answer("🛡 Права успешно выданы!", show_alert=True)
-    except Exception as e:
-        await callback.answer(f"❌ Ошибка Telegram: {e}", show_alert=True)
+        for chat_id in chat_ids:
+            try:
+                await child_bot.promote_chat_member(
+                    chat_id=chat_id, user_id=uid,
+                    is_anonymous=False, can_manage_chat=True,
+                    can_delete_messages=perms.get('delete', False),
+                    can_restrict_members=perms.get('restrict', False),
+                    can_pin_messages=perms.get('pin', False),
+                    can_invite_users=perms.get('invite', False),
+                    can_promote_members=perms.get('promote', False),
+                    can_change_info=False, can_manage_video_chats=False, can_manage_topics=False
+                )
+                success = True
+            except Exception:
+                pass
+        
+        if success:
+            await callback.answer("🛡 Права успешно выданы!", show_alert=True)
+        else:
+            await callback.answer("❌ Не удалось выдать (возможно юзер вышел).", show_alert=True)
     finally:
         await child_bot.session.close()
 
@@ -2994,32 +3058,42 @@ async def on_bs_admin_apply(callback: CallbackQuery, state: FSMContext):
 async def on_bs_um_kick(callback: CallbackQuery, platform_user: dict | None):
     if not platform_user:
         return
-    _, child_bot_id_str, uid_str, chat_id_str = callback.data.split(":")
-    child_bot_id, uid, chat_id = int(child_bot_id_str), int(uid_str), int(chat_id_str)
+    _, child_bot_id_str, uid_str = callback.data.split(":")
+    child_bot_id, uid = int(child_bot_id_str), int(uid_str)
 
     bot_row = await db.fetchrow("SELECT token_encrypted FROM child_bots WHERE id=$1", child_bot_id)
     if not bot_row:
         return await callback.answer("❌ Бот не найден", show_alert=True)
+        
+    chat_rows = await db.fetch(
+        "SELECT bc.chat_id FROM bot_users bu JOIN bot_chats bc ON bu.chat_id=bc.chat_id WHERE bc.child_bot_id=$1 AND bu.user_id=$2",
+        child_bot_id, uid
+    )
+    if not chat_rows:
+        return await callback.answer("❌ Нет доступных чатов.", show_alert=True)
     
     child_bot = Bot(token=decrypt_token(bot_row["token_encrypted"]))
-    kick_sucess = False
+    some_success = False
     try:
-        await child_bot.unban_chat_member(chat_id=chat_id, user_id=uid)
-        kick_sucess = True
-    except Exception as e:
-        if "user not found" in str(e).lower() or "not a member" in str(e).lower():
-            kick_sucess = True # Если пользователя и так нет, считаем успешным киком
-        else:
-            await callback.answer(f"❌ Ошибка Telegram при попытке исключить: {e}", show_alert=True)
+        for cr in chat_rows:
+            try:
+                await child_bot.unban_chat_member(chat_id=cr["chat_id"], user_id=uid)
+                some_success = True
+            except Exception as e:
+                pass
     finally:
         await child_bot.session.close()
 
-    if kick_sucess:
+    if some_success:
+        await callback.answer("🚷 Пользователь кикнут из всех ваших групп.", show_alert=True)
+    else:
+        await callback.answer(" Пользователь кикнут (или его там уже не было).", show_alert=True)
+        
+    for cr in chat_rows:
         await db.execute(
             "update bot_users set is_active=false, left_at=NOW() where chat_id=$1 and user_id=$2",
-            chat_id, uid
+            cr["chat_id"], uid
         )
-        await callback.answer("🚷 Пользователь кикнут из группы (или уже вышел).", show_alert=True)
         
     await _refresh_user_card(callback, child_bot_id, uid)
 
@@ -3028,20 +3102,28 @@ async def on_bs_um_kick(callback: CallbackQuery, platform_user: dict | None):
 async def on_bs_um_ban(callback: CallbackQuery, platform_user: dict | None):
     if not platform_user:
         return
-    _, child_bot_id_str, uid_str, chat_id_str = callback.data.split(":")
-    child_bot_id, uid, chat_id = int(child_bot_id_str), int(uid_str), int(chat_id_str)
+    _, child_bot_id_str, uid_str = callback.data.split(":")
+    child_bot_id, uid = int(child_bot_id_str), int(uid_str)
     owner_id = platform_user["user_id"]
 
     bot_row = await db.fetchrow("SELECT token_encrypted FROM child_bots WHERE id=$1", child_bot_id)
     if not bot_row:
         return await callback.answer("❌ Бот не найден", show_alert=True)
+        
+    chat_rows = await db.fetch(
+        "SELECT bc.chat_id FROM bot_users bu JOIN bot_chats bc ON bu.chat_id=bc.chat_id WHERE bc.child_bot_id=$1 AND bu.user_id=$2",
+        child_bot_id, uid
+    )
     
     child_bot = Bot(token=decrypt_token(bot_row["token_encrypted"]))
     
     try:
-        await child_bot.ban_chat_member(chat_id=chat_id, user_id=uid)
-    except Exception:
-        pass # Игнорируем ошибку бана, если не в группе или уже забанен
+        if chat_rows:
+            for cr in chat_rows:
+                try:
+                    await child_bot.ban_chat_member(chat_id=cr["chat_id"], user_id=uid)
+                except Exception:
+                    pass # Игнорируем ошибку бана, если не в группе или уже забанен
     finally:
         await child_bot.session.close()
 
@@ -3054,24 +3136,15 @@ async def on_bs_um_ban(callback: CallbackQuery, platform_user: dict | None):
         owner_id, username or '', uid
     )
     
-    await db.execute(
-        "update bot_users set is_active=false, left_at=NOW() where chat_id=$1 and user_id=$2",
-        chat_id, uid
-    )
+    if chat_rows:
+        for cr in chat_rows:
+            await db.execute(
+                "update bot_users set is_active=false, left_at=NOW() where chat_id=$1 and user_id=$2",
+                cr["chat_id"], uid
+            )
     
     await callback.answer("⛔️ Пользователь забанен и занесен в ЧС бота", show_alert=True)
     await _refresh_user_card(callback, child_bot_id, uid)
-
-
-@router.callback_query(F.data.startswith("bs_um_reset:"))
-async def on_bs_um_reset(callback: CallbackQuery, platform_user: dict | None):
-    if not platform_user:
-        return
-    _, child_bot_id_str, uid_str, chat_id_str = callback.data.split(":")
-    child_bot_id, uid, chat_id = int(child_bot_id_str), int(uid_str), int(chat_id_str)
-    
-    await db.execute("DELETE FROM bot_users WHERE chat_id=$1 AND user_id=$2", chat_id, uid)
-    await callback.answer("🧹 История пользователя полностью очищена", show_alert=True)
 
 
 async def _refresh_user_card(callback: CallbackQuery, child_bot_id: int, uid: int):

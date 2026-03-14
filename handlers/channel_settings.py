@@ -2820,7 +2820,7 @@ async def on_bs_um_pm(callback: CallbackQuery, state: FSMContext, platform_user:
         pm_uid=int(uid_str)
     )
     await state.set_state(SettingsFSM.bs_um_waiting_pm)
-    await callback.message.edit_text(
+    sent_msg = await callback.message.edit_text(
         "📝 <b>Отправка сообщения</b>\n\n"
         "Напишите текст, который бот отправит этому пользователю в личные сообщения.\n"
         "<i>Поддерживается форматирование и эмодзи.</i>",
@@ -2828,6 +2828,7 @@ async def on_bs_um_pm(callback: CallbackQuery, state: FSMContext, platform_user:
             [InlineKeyboardButton(text="◀️ Отмена", callback_data=f"bs_um_card:{child_bot_id_str}:{uid_str}")]
         ])
     )
+    await state.update_data(pm_prompt_msg_id=sent_msg.message_id)
     await callback.answer()
 
 @router.message(SettingsFSM.bs_um_waiting_pm)
@@ -2851,12 +2852,31 @@ async def on_bs_um_pm_input(message: Message, state: FSMContext, platform_user: 
     try:
         await child_bot.send_message(chat_id=target_uid, text=message.text, parse_mode="HTML")
         await message.answer("✅ <b>Сообщение успешно отправлено!</b>")
+
+        # Удаляем предыдущее сообщение-заглушку с кнопкой Отмена
+        prompt_msg_id = data.get("pm_prompt_msg_id")
+        if prompt_msg_id:
+            try:
+                await message.bot.delete_message(chat_id=message.chat.id, message_id=prompt_msg_id)
+            except Exception:
+                pass
+
+        # Отправляем новое сообщение-заглушку под сообщением пользователя
+        sent_prompt = await message.answer(
+            "📝 <b>Отправка сообщения</b>\n\n"
+            "Напишите текст, который бот отправит этому пользователю в личные сообщения.\n"
+            "<i>Поддерживается форматирование и эмодзи.</i>",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="◀️ Отмена", callback_data=f"bs_um_card:{child_bot_id}:{target_uid}")]
+            ])
+        )
+        await state.update_data(pm_prompt_msg_id=sent_prompt.message_id)
+
     except Exception as e:
         await message.answer(f"❌ <b>Ошибка отправки:</b>\n<code>{e}</code>\n<i>Возможно, пользователь заблокировал бота.</i>")
+        await state.clear()
     finally:
         await child_bot.session.close()
-
-    await state.clear()
 
 
 @router.callback_query(F.data.startswith("bs_um_card:"))

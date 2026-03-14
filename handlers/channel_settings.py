@@ -863,12 +863,51 @@ async def on_ch_msg_media(callback: CallbackQuery, state: FSMContext, platform_u
             f"UPDATE bot_chats SET {f['media_below_col']}=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
             new_below, platform_user["user_id"], int(chat_id_str),
         )
-        icon = "⬇️" if new_below else "⬆️"
-        await callback.answer(f"🎬 Медиа: {icon}")
         ch = await _get_chat_by_id(platform_user["user_id"], int(chat_id_str))
         
-        await callback.message.delete()
-        await _show_msg_editor(callback, chat_id_str, msg_type, dict(ch), scope="ch", state=state)
+        # In-place edit of the echo message
+        try:
+            # Resolve message id from state or cache
+            echo_msg_id = None
+            if state:
+                state_data = await state.get_data()
+                echo_msg_id = state_data.get("editor_echo_mid")
+            
+            if not echo_msg_id:
+                cache_key = (chat_id_str, msg_type)
+                cached = _echo_msg_ids.get(cache_key)
+                if cached:
+                    echo_msg_id = cached[0]
+            
+            if echo_msg_id:
+                # Rebuild keyboard if necessary
+                buttons_raw = ch.get(f["buttons_col"])
+                inline_rows = []
+                if buttons_raw:
+                    import json as _json
+                    btns = buttons_raw if isinstance(buttons_raw, list) else _json.loads(buttons_raw)
+                    for btn in btns:
+                        inline_rows.append([InlineKeyboardButton(text=btn["text"], url=btn.get("url", ""))])
+                user_msg_kb = InlineKeyboardMarkup(inline_keyboard=inline_rows) if inline_rows else None
+                
+                await callback.bot.edit_message_caption(
+                    chat_id=callback.message.chat.id,
+                    message_id=echo_msg_id,
+                    caption=(ch.get(f["text_col"]) or None),
+                    parse_mode="HTML",
+                    reply_markup=user_msg_kb,
+                    show_caption_above_media=new_below
+                )
+        except Exception as e:
+            pass
+            
+        icon = "⬇️" if new_below else "⬆️"
+        await callback.answer(f"🎬 Медиа: {icon}")
+        
+        # update keyboard for the editor message itself
+        await callback.message.edit_reply_markup(
+            reply_markup=_build_editor_kb(chat_id_str, msg_type, dict(ch), scope="ch")
+        )
     else:
         # Медиа нет
         await callback.answer("Медиа не прикреплено", show_alert=True)

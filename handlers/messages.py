@@ -904,9 +904,40 @@ async def on_ch_ar_media_global(
         "UPDATE bot_chats SET general_reply_media_top=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
         new_top, owner_id, chat_id,
     )
-    await callback.message.delete()
+    
+    # Редактируем эхо-сообщение
+    key = (owner_id, chat_id)
+    echo_id = _gr_echo_ids.get(key)
+    if echo_id:
+        try:
+            await callback.bot.edit_message_caption(
+                chat_id=callback.message.chat.id,
+                message_id=echo_id,
+                caption=(ch["general_reply_text"] or None),
+                parse_mode="HTML",
+                show_caption_above_media=not new_top,
+            )
+        except Exception:
+            pass
+            
+    # Обновляем инлайн-клавиатуру самого сообщения-меню
+    media_icon    = "⬆️" if new_top else "⬇️"
+    preview_on    = bool(ch["general_reply_preview"]) if ch else False
+    preview_label = "есть" if preview_on else "нет"
+    new_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✏️ Редактировать",    callback_data=f"ch_ar_edit_global:{chat_id}")],
+        [InlineKeyboardButton(text="🎛 Кнопки",           callback_data=f"ch_ar_btns_global:{chat_id}")],
+        [InlineKeyboardButton(text=f"🎬 Медиа: {media_icon}", callback_data=f"ch_ar_media_global:{chat_id}")],
+        [InlineKeyboardButton(text=f"👁 Превью: {preview_label}", callback_data=f"ch_ar_preview_global:{chat_id}")],
+        [InlineKeyboardButton(text="🗑 Удалить",          callback_data=f"ch_ar_delete_global:{chat_id}")],
+        [InlineKeyboardButton(text="◀️ Назад",            callback_data=f"ch_ar_back_global:{chat_id}")],
+    ])
+    try:
+        await callback.message.edit_reply_markup(reply_markup=new_kb)
+    except Exception:
+        pass
+        
     await callback.answer("Медиа: " + ("сверху ⬆️" if new_top else "снизу ⬇️"))
-    await _show_global_mgmt(callback.message, chat_id, owner_id)
 
 
 # ── Управление: Превью ────────────────────────────────────────
@@ -1346,9 +1377,62 @@ async def on_ch_ar_kw_media(
         new_top, ar_id, owner_id,
     )
     
-    await callback.message.delete()
+    # Редактируем эхо-сообщение
+    key = (owner_id, chat_id, ar_id)
+    echo_id = _kw_echo_ids.get(key)
+    if echo_id:
+        try:
+            # Получаем текст и кнопки для эха
+            text = row.get("reply_text")
+            
+            import json as _json
+            raw_btns = row.get("reply_buttons")
+            echo_kb = None
+            if raw_btns:
+                try:
+                    parsed = _json.loads(raw_btns)
+                    if parsed and isinstance(parsed[0], dict):
+                        parsed = [parsed]
+                    kb_rows = []
+                    for btn_row in parsed:
+                        kb_rows.append([
+                            InlineKeyboardButton(text=b["text"], url=b["url"])
+                            for b in btn_row if b.get("text") and b.get("url")
+                        ])
+                    if kb_rows:
+                        echo_kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
+                except Exception:
+                    pass
+            
+            await callback.bot.edit_message_caption(
+                chat_id=callback.message.chat.id,
+                message_id=echo_id,
+                caption=text or None,
+                parse_mode="HTML",
+                reply_markup=echo_kb,
+                show_caption_above_media=not new_top,
+            )
+        except Exception:
+            pass
+            
+    # Обновляем инлайн-клавиатуру самого сообщения-меню
+    media_icon    = "⬆️" if new_top else "⬇️"
+    preview_on    = bool(row["reply_preview"]) if row else False
+    preview_label = "есть" if preview_on else "нет"
+    new_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✏️ Редактировать",       callback_data=f"ch_ar_kw_edit:{chat_id}:{ar_id}")],
+        [InlineKeyboardButton(text="🎛 Кнопки",              callback_data=f"ch_ar_kw_btns:{chat_id}:{ar_id}")],
+        [InlineKeyboardButton(text=f"🎬 Медиа: {media_icon}", callback_data=f"ch_ar_kw_media:{chat_id}:{ar_id}")],
+        [InlineKeyboardButton(text=f"👁 Превью: {preview_label}", callback_data=f"ch_ar_kw_preview:{chat_id}:{ar_id}")],
+        [InlineKeyboardButton(text="🗑 Удалить",              callback_data=f"ch_ar_del:{chat_id}:{ar_id}")],
+        [InlineKeyboardButton(text="◀️ Назад",               callback_data=f"ch_ar_kw_back:{chat_id}:{ar_id}")],
+    ])
+    try:
+        await callback.message.edit_reply_markup(reply_markup=new_kb)
+    except Exception:
+        pass
+        
     await callback.answer("Медиа: " + ("сверху ⬆️" if new_top else "снизу ⬇️"))
-    await _show_keyword_mgmt(callback.message, chat_id, owner_id, ar_id)
 
 
 # ── Управление: Кнопки keyword-ответа ────────────────────────

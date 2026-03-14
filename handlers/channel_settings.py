@@ -3128,7 +3128,7 @@ async def on_bs_um_ban(callback: CallbackQuery, platform_user: dict | None):
     await db.execute(
         """INSERT INTO blacklist (owner_id, username, user_id, added_at, reason)
            VALUES ($1, $2, $3, NOW(), 'Забанен через карточку пользователя')
-           ON CONFLICT (user_id) DO NOTHING""",
+           ON CONFLICT (owner_id, user_id) WHERE user_id IS NOT NULL DO NOTHING""",
         owner_id, username or '', uid
     )
     

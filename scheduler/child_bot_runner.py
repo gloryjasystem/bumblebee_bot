@@ -1215,15 +1215,16 @@ async def _handle_chat_member(bot: Bot, child_bot_id: int, event: ChatMemberUpda
     user = event.new_chat_member.user
     chat_id = event.chat.id
 
-    # Получаем настройки площадки
+    # Получаем настройки площадки + blacklist_enabled
     chat_settings = await db.fetchrow(
         """
-        SELECT owner_id, welcome_text, farewell_text,
-               captcha_type, captcha_text, captcha_timer_min, captcha_emoji_set,
-               join_limit_enabled, join_limit_punishment,
-               join_limit_period_min, join_limit_count
-        FROM bot_chats
-        WHERE child_bot_id=$1 AND chat_id=$2 AND is_active=true
+        SELECT bc.owner_id, bc.welcome_text, bc.farewell_text,
+               bc.captcha_type, bc.captcha_text, bc.captcha_timer_min, bc.captcha_emoji_set,
+               bc.join_limit_enabled, bc.join_limit_punishment,
+               bc.join_limit_period_min, bc.join_limit_count, cb.blacklist_enabled
+        FROM bot_chats bc
+        JOIN child_bots cb ON bc.child_bot_id = cb.id
+        WHERE bc.child_bot_id=$1 AND bc.chat_id=$2 AND bc.is_active=true
         """,
         child_bot_id, chat_id,
     )
@@ -1235,6 +1236,20 @@ async def _handle_chat_member(bot: Bot, child_bot_id: int, event: ChatMemberUpda
     # ── Пользователь вступил ──────────────────────────────────
     # old_status может быть: None, "left", "kicked", "restricted" (одобрение заявки)
     if new_status == "member" and old_status not in ("member", "administrator", "creator"):
+        # ── 1. Проверка ЧС ──────────────────────────────
+        if chat_settings.get("blacklist_enabled", True):
+            from services.blacklist import check_blacklist
+            in_bl = await check_blacklist(owner_id, user.id, user.username)
+            if in_bl:
+                try:
+                    await bot.ban_chat_member(chat_id, user.id)
+                except Exception:
+                    pass
+                from handlers.join_requests import _log_action
+                await _log_action(owner_id, chat_id, "ban_on_join", user.id)
+                logger.info(f"[BL] Kicked {user.id} from open chat {chat_id} (blacklisted)")
+                return
+
         from services.security import detect_rtl, detect_hieroglyph
 
         full_name = f"{user.first_name or ''} {user.last_name or ''}".strip()

@@ -918,10 +918,7 @@ async def _show_global_mgmt(message, chat_id: int, owner_id: int):
     _gr_echo_ids[key] = echo_msg.message_id
 
     # -- Панель управления
-    if media_id:
-        media_icon = "⬆️" if media_top else "⬇️"
-    else:
-        media_icon = "⬆️"
+    media_icon = "⬆️" if media_top else "⬇️"
     preview_label = "нет" if not preview_on else "есть"
 
     mgmt_kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -1085,50 +1082,24 @@ async def on_ch_ar_media_global(
         "WHERE owner_id=$1 AND chat_id=$2::bigint",
         owner_id, chat_id,
     )
-    if not ch or not ch["general_reply_media"]:
-        await callback.answer("Медиа не прикреплено", show_alert=True)
+    if not ch:
+        await callback.answer()
         return
 
-    current_top = (ch["general_reply_media_top"] if ch and ch["general_reply_media_top"] is not None else True)
+    current_top = (ch["general_reply_media_top"] if ch["general_reply_media_top"] is not None else True)
     new_top = not current_top
     await db.execute(
         "UPDATE bot_chats SET general_reply_media_top=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
         new_top, owner_id, chat_id,
     )
     
-    # Редактируем эхо-сообщение
-    key = (owner_id, chat_id)
-    echo_id = _gr_echo_ids.get(key)
-    if echo_id:
-        try:
-            await callback.bot.edit_message_caption(
-                chat_id=callback.message.chat.id,
-                message_id=echo_id,
-                caption=(ch["general_reply_text"] or None),
-                parse_mode="HTML",
-                show_caption_above_media=not new_top,
-            )
-        except Exception:
-            pass
-            
-    # Обновляем инлайн-клавиатуру самого сообщения-меню
-    media_icon    = "⬆️" if new_top else "⬇️"
-    preview_on    = bool(ch["general_reply_preview"]) if ch else False
-    preview_label = "есть" if preview_on else "нет"
-    new_kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✏️ Редактировать",    callback_data=f"ch_ar_edit_global:{chat_id}")],
-        [InlineKeyboardButton(text="🎛 Кнопки",           callback_data=f"ch_ar_btns_global:{chat_id}")],
-        [InlineKeyboardButton(text=f"🎬 Медиа: {media_icon}", callback_data=f"ch_ar_media_global:{chat_id}")],
-        [InlineKeyboardButton(text=f"👁 Превью: {preview_label}", callback_data=f"ch_ar_preview_global:{chat_id}")],
-        [InlineKeyboardButton(text="🗑 Удалить",          callback_data=f"ch_ar_delete_global:{chat_id}")],
-        [InlineKeyboardButton(text="◀️ Назад",            callback_data=f"ch_ar_back_global:{chat_id}")],
-    ])
     try:
-        await callback.message.edit_reply_markup(reply_markup=new_kb)
-    except Exception:
+        await callback.message.delete()
+    except:
         pass
         
     await callback.answer("Медиа: " + ("сверху ⬆️" if new_top else "снизу ⬇️"))
+    await _show_global_mgmt(callback.message, chat_id, owner_id)
 
 
 # ── Управление: Превью ────────────────────────────────────────

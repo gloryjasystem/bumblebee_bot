@@ -2733,14 +2733,9 @@ async def _show_user_card(message: Message | CallbackQuery, state: FSMContext, c
     try:
         # Проверяем статус по всем чатам бота где числится юзер
         chat_rows = await db.fetch(
-            "SELECT chat_id FROM bot_users WHERE child_bot_id = (SELECT id FROM child_bots WHERE id=$1) AND user_id=$2",
+            "SELECT bc.chat_id FROM bot_users bu JOIN bot_chats bc ON bu.chat_id=bc.chat_id WHERE bc.child_bot_id=$1 AND bu.user_id=$2",
             child_bot_id, uid
         )
-        if not chat_rows: # Защита от старых данных
-            chat_rows = await db.fetch(
-                "SELECT bc.chat_id FROM bot_users bu JOIN bot_chats bc ON bu.chat_id=bc.chat_id WHERE bc.child_bot_id=$1 AND bu.user_id=$2",
-                child_bot_id, uid
-            )
 
         for cr in chat_rows:
             try:

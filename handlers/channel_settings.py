@@ -449,6 +449,7 @@ _MSG_FIELDS = {
         "buttons_col": "welcome_buttons",
         "preview_col": "welcome_preview",
         "timer_col": "welcome_timer",
+        "media_below_col": "welcome_media_below",
     },
     "farewell": {
         "label": "🤚 Прощание",
@@ -458,6 +459,7 @@ _MSG_FIELDS = {
         "buttons_col": "farewell_buttons",
         "preview_col": "farewell_preview",
         "timer_col": "farewell_timer",
+        "media_below_col": "farewell_media_below",
     },
 }
 
@@ -499,8 +501,13 @@ def _build_editor_kb(chat_id_str: str, msg_type: str, ch: dict, scope: str = "ch
     media_fid = ch.get(f["media_col"])
     preview_on = bool(ch.get(f["preview_col"], False))
     timer_val = int(ch.get(f["timer_col"]) or 0)
+    media_below = bool(ch.get(f["media_below_col"], False))
 
-    media_label = "🎬 Медиа: ⬆️" if media_fid else "🎬 Медиа: нет"
+    if media_fid:
+        media_icon = "⬇️" if media_below else "⬆️"
+        media_label = f"🎬 Медиа: {media_icon}"
+    else:
+        media_label = "🎬 Медиа: нет"
     preview_label = f"👁 Превью: {'да' if preview_on else 'нет'}"
     timer_label_txt = f"⏱ Таймер: {_timer_label(timer_val)}"
 
@@ -846,20 +853,21 @@ async def on_ch_msg_media(callback: CallbackQuery, state: FSMContext, platform_u
     has_media = ch and ch.get(f["media_col"])
 
     if has_media:
-        # Удаляем медиа
+        # Медиа есть — переключаем позицию ⬆️/⬇️ (НЕ удаляем)
+        current_below = bool(ch.get(f["media_below_col"], False))
+        new_below = not current_below
         await db.execute(
-            f"UPDATE bot_chats SET {f['media_col']}=NULL, {f['media_type_col']}=NULL "
-            "WHERE owner_id=$1 AND chat_id=$2::bigint",
-            platform_user["user_id"], int(chat_id_str),
+            f"UPDATE bot_chats SET {f['media_below_col']}=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
+            new_below, platform_user["user_id"], int(chat_id_str),
         )
-        await callback.answer("🎬 Медиа удалено")
+        icon = "⬇️" if new_below else "⬆️"
+        await callback.answer(f"🎬 Медиа: {icon}")
         ch = await _get_chat_by_id(platform_user["user_id"], int(chat_id_str))
-        # Только обновляем клавиатуру меню на месте, не отправляя новые сообщения
         await callback.message.edit_reply_markup(
             reply_markup=_build_editor_kb(chat_id_str, msg_type, dict(ch), scope="ch")
         )
     else:
-        # Запрашиваем медиа-файл
+        # Медиа нет — запрашиваем файл
         await state.set_state(SettingsFSM.waiting_for_msg_media)
         await state.update_data(chat_id=int(chat_id_str), owner_id=platform_user["user_id"],
                                  msg_type=msg_type, scope="ch")

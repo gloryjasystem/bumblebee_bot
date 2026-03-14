@@ -230,14 +230,65 @@ async def on_member_update(event: ChatMemberUpdated, bot: Bot):
             owner_id, event.chat.id, user.id,
         )
         # Прощание — отправляем если пользователь когда-либо запускал бота
-        if settings_row.get("farewell_text"):
-            farewell_text = settings_row["farewell_text"].replace(
-                "{name}", user.first_name or "Пользователь"
-            ).replace(
-                "{channel}", settings_row.get("chat_title", "")
-            )
+        farewell_text_tpl = settings_row.get("farewell_text") or ""
+        farewell_media_fid = settings_row.get("farewell_media")
+        farewell_media_type = settings_row.get("farewell_media_type")
+        farewell_media_below = bool(settings_row.get("farewell_media_below", False))
+        farewell_buttons_raw = settings_row.get("farewell_buttons")
+        farewell_timer = int(settings_row.get("farewell_timer") or 0)
+
+        if farewell_text_tpl or farewell_media_fid:
+            import json as _json
+            from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+            farewell_text = (farewell_text_tpl
+                .replace("{name}", user.first_name or "Пользователь")
+                .replace("{allname}", f"{user.first_name or ''} {getattr(user, 'last_name', '') or ''}".strip())
+                .replace("{username}", f"@{user.username}" if getattr(user, "username", None) else "")
+                .replace("{chat}", settings_row.get("chat_title", ""))
+                .replace("{day}", __import__("datetime").date.today().strftime("%d.%m.%Y"))
+            ) if farewell_text_tpl else ""
+
+            fw_inline_rows = []
+            if farewell_buttons_raw:
+                fw_btns = farewell_buttons_raw if isinstance(farewell_buttons_raw, list) else _json.loads(farewell_buttons_raw)
+                for btn in fw_btns:
+                    fw_inline_rows.append([InlineKeyboardButton(text=btn["text"], url=btn.get("url", ""))])
+            fw_kb = InlineKeyboardMarkup(inline_keyboard=fw_inline_rows) if fw_inline_rows else None
+
             try:
-                await bot.send_message(user.id, farewell_text, parse_mode="HTML")
+                fw_sent = []
+                if farewell_media_fid and not farewell_media_below:
+                    # ⬆️ медиа сверху (caption)
+                    if farewell_media_type == "photo":
+                        m = await bot.send_photo(user.id, farewell_media_fid, caption=farewell_text or None, parse_mode="HTML", reply_markup=fw_kb)
+                    elif farewell_media_type == "video":
+                        m = await bot.send_video(user.id, farewell_media_fid, caption=farewell_text or None, parse_mode="HTML", reply_markup=fw_kb)
+                    elif farewell_media_type == "animation":
+                        m = await bot.send_animation(user.id, farewell_media_fid, caption=farewell_text or None, parse_mode="HTML", reply_markup=fw_kb)
+                    else:
+                        m = await bot.send_document(user.id, farewell_media_fid, caption=farewell_text or None, parse_mode="HTML", reply_markup=fw_kb)
+                    fw_sent.append(m)
+                elif farewell_media_fid and farewell_media_below:
+                    # ⬇️ медиа снизу
+                    if farewell_text:
+                        m1 = await bot.send_message(user.id, farewell_text, parse_mode="HTML", reply_markup=fw_kb if not farewell_media_fid else None)
+                        fw_sent.append(m1)
+                    if farewell_media_type == "photo":
+                        m2 = await bot.send_photo(user.id, farewell_media_fid, reply_markup=fw_kb if not farewell_text else None)
+                    elif farewell_media_type == "video":
+                        m2 = await bot.send_video(user.id, farewell_media_fid, reply_markup=fw_kb if not farewell_text else None)
+                    elif farewell_media_type == "animation":
+                        m2 = await bot.send_animation(user.id, farewell_media_fid, reply_markup=fw_kb if not farewell_text else None)
+                    else:
+                        m2 = await bot.send_document(user.id, farewell_media_fid, reply_markup=fw_kb if not farewell_text else None)
+                    fw_sent.append(m2)
+                else:
+                    m = await bot.send_message(user.id, farewell_text, parse_mode="HTML", reply_markup=fw_kb)
+                    fw_sent.append(m)
+
+                if farewell_timer > 0:
+                    for sent in fw_sent:
+                        asyncio.create_task(_delete_later(bot, user.id, sent.message_id, farewell_timer // 60 or 1))
             except Exception as e:
                 logger.debug(f"[FAREWELL] Failed to send to user {user.id}: {e}")
 
@@ -406,31 +457,87 @@ async def _register_user(owner_id: int, chat_id: int, user,
 
 
 async def _send_welcome(bot: Bot, chat_id: int, user, settings_row: dict):
-    """Отправляет приветствие новому пользователю в личку (если bot_activated)."""
-    if not settings_row.get("welcome_text"):
+    """Отправляет приветствие новому пользователю в личку."""
+    text_tpl = settings_row.get("welcome_text") or ""
+    media_fid = settings_row.get("welcome_media")
+    media_type = settings_row.get("welcome_media_type")
+    media_below = bool(settings_row.get("welcome_media_below", False))
+    buttons_raw = settings_row.get("welcome_buttons")
+    timer_val = int(settings_row.get("welcome_timer") or 0)
+
+    if not text_tpl and not media_fid:
         return
-    # Шаблонные переменные
-    text = settings_row["welcome_text"].replace(
-        "{name}", user.first_name or "Пользователь"
-    ).replace(
-        "{channel}", settings_row.get("chat_title", "")
-    )
+
+    # Подставляем переменные
+    text = (text_tpl
+        .replace("{name}", user.first_name or "Пользователь")
+        .replace("{allname}", f"{user.first_name or ''} {getattr(user, 'last_name', '') or ''}".strip())
+        .replace("{username}", f"@{user.username}" if getattr(user, "username", None) else "")
+        .replace("{chat}", settings_row.get("chat_title", ""))
+        .replace("{day}", __import__("datetime").date.today().strftime("%d.%m.%Y"))
+    ) if text_tpl else ""
+
+    # Inline-кнопки
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    import json as _json
+    inline_rows = []
+    if buttons_raw:
+        btns = buttons_raw if isinstance(buttons_raw, list) else _json.loads(buttons_raw)
+        for btn in btns:
+            inline_rows.append([InlineKeyboardButton(text=btn["text"], url=btn.get("url", ""))])
+    user_kb = InlineKeyboardMarkup(inline_keyboard=inline_rows) if inline_rows else None
+
     try:
-        # Имитация набора текста
-        if settings_row.get("typing_action"):
-            await bot.send_chat_action(user.id, "typing")
-            await asyncio.sleep(1.5)
+        sent_msgs = []
 
-        msg = await bot.send_message(user.id, text)
+        if media_fid and not media_below:
+            # ⬆️ Медиа СВЕРХУ: медиа+текст в одном caption
+            if media_type == "photo":
+                m = await bot.send_photo(user.id, media_fid, caption=text or None,
+                                         parse_mode="HTML", reply_markup=user_kb)
+            elif media_type == "video":
+                m = await bot.send_video(user.id, media_fid, caption=text or None,
+                                         parse_mode="HTML", reply_markup=user_kb)
+            elif media_type == "animation":
+                m = await bot.send_animation(user.id, media_fid, caption=text or None,
+                                              parse_mode="HTML", reply_markup=user_kb)
+            else:
+                m = await bot.send_document(user.id, media_fid, caption=text or None,
+                                             parse_mode="HTML", reply_markup=user_kb)
+            sent_msgs.append(m)
 
-        # Авто-удаление приветствия
-        delete_min = int(settings_row.get("auto_delete_min") or 0)
-        if delete_min > 0:
-            asyncio.create_task(
-                _delete_later(bot, user.id, msg.message_id, delete_min)
-            )
-    except Exception:
-        pass
+        elif media_fid and media_below:
+            # ⬇️ Медиа СНИЗУ: сначала текст, потом медиа
+            if text:
+                m1 = await bot.send_message(user.id, text, parse_mode="HTML",
+                                             reply_markup=user_kb if not media_fid else None)
+                sent_msgs.append(m1)
+            if media_type == "photo":
+                m2 = await bot.send_photo(user.id, media_fid,
+                                          reply_markup=user_kb if not text else None)
+            elif media_type == "video":
+                m2 = await bot.send_video(user.id, media_fid,
+                                          reply_markup=user_kb if not text else None)
+            elif media_type == "animation":
+                m2 = await bot.send_animation(user.id, media_fid,
+                                               reply_markup=user_kb if not text else None)
+            else:
+                m2 = await bot.send_document(user.id, media_fid,
+                                              reply_markup=user_kb if not text else None)
+            sent_msgs.append(m2)
+
+        else:
+            # Только текст (нет медиа)
+            m = await bot.send_message(user.id, text, parse_mode="HTML", reply_markup=user_kb)
+            sent_msgs.append(m)
+
+        # Авто-удаление
+        if timer_val > 0:
+            for sent in sent_msgs:
+                asyncio.create_task(_delete_later(bot, user.id, sent.message_id, timer_val // 60 or 1))
+
+    except Exception as e:
+        logger.debug(f"[WELCOME] Failed to send to user {user.id}: {e}")
 
 
 async def _delete_later(bot: Bot, chat_id: int, message_id: int, delay_min: int):
@@ -440,3 +547,4 @@ async def _delete_later(bot: Bot, chat_id: int, message_id: int, delay_min: int)
         await bot.delete_message(chat_id, message_id)
     except Exception:
         pass
+

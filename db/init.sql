@@ -340,3 +340,7 @@ CREATE TABLE IF NOT EXISTS message_events (
 );
 CREATE INDEX IF NOT EXISTS idx_msg_events_owner_chat_date
     ON message_events(owner_id, chat_id, created_at);
+
+-- Позиция медиа в приветствии/прощании: false=сверху ⬆️ (default), true=снизу ⬇️
+ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS welcome_media_below BOOLEAN DEFAULT false;
+ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS farewell_media_below BOOLEAN DEFAULT false;

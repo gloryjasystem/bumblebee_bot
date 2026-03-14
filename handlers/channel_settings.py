@@ -2411,18 +2411,18 @@ async def on_bs_base(callback: CallbackQuery, platform_user: dict | None):
         owner_id,
     ) or 0
 
-    bl_status = "Включена 🟢" if bl_enabled else "Выключена 🔴"
+    bl_status = "Включён 🟢" if bl_enabled else "Выключен 🔴"
 
     await callback.message.edit_text(
         "≡ <b>База</b>\n\n"
         f"🤖 Бот: @{bot_username}\n"
         f"👥 Пользователей в базе: {total:,}\n"
         f"⛔️ Заблокированных: {blocked:,}\n"
-        f"🛡 Авто-блокировка по ЧС: {bl_status}",
+        f"🛡 ЧС: {bl_status}",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="⚙️ Управление подписчиками", callback_data=f"bs_base_edit:{child_bot_id}")],
             [InlineKeyboardButton(text="⛔️ ЧС пользователей", callback_data=f"bs_blacklist:{child_bot_id}")],
-            [InlineKeyboardButton(text="📥 Выгрузить базу подписчиков", callback_data=f"bs_base_export_menu:{child_bot_id}")],
+            [InlineKeyboardButton(text="📥 Экспорт базы", callback_data=f"bs_base_export_menu:{child_bot_id}")],
             [InlineKeyboardButton(text="◀️ Назад",                    callback_data=f"bs_settings:{child_bot_id}")],
         ]),
     )

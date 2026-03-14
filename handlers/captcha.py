@@ -14,12 +14,18 @@ from aiogram.types import (
     CallbackQuery, ChatJoinRequest,
     InlineKeyboardMarkup, InlineKeyboardButton,
     ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, Message,
+    BufferedInputFile,
 )
+from io import BytesIO
 
 import db.pool as db
+from config import settings
 
 logger = logging.getLogger(__name__)
 router = Router()
+
+# Cache for child bot file IDs mapping: (original_file_id, bot_id) -> new_file_id
+_child_file_ids_cache = {}
 
 
 def _fill_captcha_text(template: str, user, chat_title: str) -> str:
@@ -117,14 +123,14 @@ async def send_captcha(bot: Bot, event: ChatJoinRequest, settings_row: dict):
 
     # ── Простая капча ──────────────────────────────────────────
     if captcha_type == "simple":
-        raw_text = (
+        raw_caption = (
             settings_row.get("captcha_text")
             or f"👋 Привет, <b>{{name}}</b>!\n\n"
                f"Прежде чем войти в <b>{{chat}}</b>,\n"
                f"докажи что ты не робот — нажми кнопку ниже ✅\n\n"
                f"⏱ У тебя {timer_min} мин."
         )
-        text = _fill_captcha_text(raw_text, user, event.chat.title)
+        caption = _fill_captcha_text(raw_caption, user, event.chat.title)
         # Применяем пользовательские кнопки если заданы, иначе — кнопка по умолчанию
         custom_btns = _parse_captcha_buttons(settings_row.get("captcha_buttons_raw") or "")
         btn_style_placement = settings_row.get("captcha_button_style") or "inline"
@@ -171,13 +177,13 @@ async def send_captcha(bot: Bot, event: ChatJoinRequest, settings_row: dict):
         random.shuffle(options)
         _expected[key] = correct
 
-        raw_text = (
+        raw_caption = (
             settings_row.get("captcha_text")
             or f"👋 Привет, <b>{{name}}</b>!\n\n"
                f"Чтобы войти в <b>{{chat}}</b>, нажми на: <b>{correct}</b>\n\n"
                f"⏱ У тебя {timer_min} мин."
         )
-        text = _fill_captcha_text(raw_text, user, event.chat.title)
+        caption = _fill_captcha_text(raw_caption, user, event.chat.title)
         kb = InlineKeyboardMarkup(inline_keyboard=[[
             InlineKeyboardButton(
                 text=e,
@@ -191,27 +197,70 @@ async def send_captcha(bot: Bot, event: ChatJoinRequest, settings_row: dict):
         _pending.pop(key, None)
         return
 
-    media_id = settings_row.get("captcha_media")
+    captcha_media = settings_row.get("captcha_media")
     anim_file_id = settings_row.get("captcha_anim_file_id")
     anim_type = settings_row.get("captcha_anim_type")
     try:
+        msg = None
         if anim_file_id:
-            if anim_type == "video":
-                msg = await bot.send_video(
-                    user.id, video=anim_file_id, caption=text, parse_mode="HTML", reply_markup=kb,
+            actual_file_id = _child_file_ids_cache.get((anim_file_id, bot.id), anim_file_id)
+            try:
+                if anim_type == "video":
+                    msg = await bot.send_video(
+                        user.id,
+                        actual_file_id,
+                        caption=caption,
+                        parse_mode="HTML",
+                        reply_markup=kb,
+                    )
+                else:
+                    msg = await bot.send_animation(
+                        user.id,
+                        actual_file_id,
+                        caption=caption,
+                        parse_mode="HTML",
+                        reply_markup=kb,
+                    )
+            except Exception as e:
+                error_msg = str(e).lower()
+                if "wrong file identifier" in error_msg or "file reference" in error_msg or "invalid file" in error_msg:
+                    logger.info(f"Re-uploading animation {anim_file_id} for bot {bot.id}")
+                    try:
+                        main_bot = Bot(token=settings.bot_token)
+                        file_info = await main_bot.get_file(anim_file_id)
+                        file_bytes = await main_bot.download_file(file_info.file_path)
+                        await main_bot.session.close()
+
+                        input_file = BufferedInputFile(file_bytes.read(), filename="anim.mp4")
+
+                        if anim_type == "video":
+                            msg = await bot.send_video(user.id, input_file, caption=caption, parse_mode="HTML", reply_markup=kb)
+                            _child_file_ids_cache[(anim_file_id, bot.id)] = msg.video.file_id
+                        else:
+                            msg = await bot.send_animation(user.id, input_file, caption=caption, parse_mode="HTML", reply_markup=kb)
+                            _child_file_ids_cache[(anim_file_id, bot.id)] = msg.animation.file_id
+                    except Exception as inner_e:
+                        logger.error(f"[CAPTCHA REUPLOAD ERR] {inner_e}")
+                else:
+                    logger.error(f"[CAPTCHA SEND ERR] {e}")
+
+        # Fallback to standard message or photo if animation fails or was not provided
+        if not msg:
+            if captcha_media:
+                msg = await bot.send_photo(
+                    user.id,
+                    captcha_media,
+                    caption=caption,
+                    parse_mode="HTML",
+                    reply_markup=kb,
                 )
             else:
-                msg = await bot.send_animation(
-                    user.id, animation=anim_file_id, caption=text, parse_mode="HTML", reply_markup=kb,
+                msg = await bot.send_message(
+                    user.id,
+                    caption,
+                    parse_mode="HTML",
+                    reply_markup=kb,
                 )
-        elif media_id:
-            msg = await bot.send_photo(
-                user.id, photo=media_id, caption=text, parse_mode="HTML", reply_markup=kb,
-            )
-        else:
-            msg = await bot.send_message(
-                user.id, text, parse_mode="HTML", reply_markup=kb,
-            )
         asyncio.create_task(
             _captcha_timeout(bot, event, settings_row, msg.message_id)
         )

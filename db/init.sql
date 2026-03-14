@@ -341,6 +341,14 @@ CREATE TABLE IF NOT EXISTS message_events (
 CREATE INDEX IF NOT EXISTS idx_msg_events_owner_chat_date
     ON message_events(owner_id, chat_id, created_at);
 
+-- captcha_animation
+ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS captcha_animation BOOLEAN DEFAULT false;
+ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS captcha_anim_file_id TEXT;
+ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS captcha_anim_type VARCHAR(16);
+
+-- captcha_greet
+ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS captcha_greet BOOLEAN DEFAULT false;
+
 -- Позиция медиа в приветствии/прощании: false=сверху ⬆️ (default), true=снизу ⬇️
 ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS welcome_media_below BOOLEAN DEFAULT false;
 ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS farewell_media_below BOOLEAN DEFAULT false;

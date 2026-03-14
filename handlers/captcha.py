@@ -192,8 +192,19 @@ async def send_captcha(bot: Bot, event: ChatJoinRequest, settings_row: dict):
         return
 
     media_id = settings_row.get("captcha_media")
+    anim_file_id = settings_row.get("captcha_anim_file_id")
+    anim_type = settings_row.get("captcha_anim_type")
     try:
-        if media_id:
+        if anim_file_id:
+            if anim_type == "video":
+                msg = await bot.send_video(
+                    user.id, video=anim_file_id, caption=text, parse_mode="HTML", reply_markup=kb,
+                )
+            else:
+                msg = await bot.send_animation(
+                    user.id, animation=anim_file_id, caption=text, parse_mode="HTML", reply_markup=kb,
+                )
+        elif media_id:
             msg = await bot.send_photo(
                 user.id, photo=media_id, caption=text, parse_mode="HTML", reply_markup=kb,
             )
@@ -311,8 +322,15 @@ async def send_captcha_group(
         return
 
     media_id = settings_row.get("captcha_media")
+    anim_file_id = settings_row.get("captcha_anim_file_id")
+    anim_type = settings_row.get("captcha_anim_type")
     try:
-        if media_id:
+        if anim_file_id:
+            if anim_type == "video":
+                msg = await bot.send_video(user.id, video=anim_file_id, caption=text, parse_mode="HTML", reply_markup=kb)
+            else:
+                msg = await bot.send_animation(user.id, animation=anim_file_id, caption=text, parse_mode="HTML", reply_markup=kb)
+        elif media_id:
             msg = await bot.send_photo(user.id, photo=media_id, caption=text, parse_mode="HTML", reply_markup=kb)
         else:
             msg = await bot.send_message(user.id, text, parse_mode="HTML", reply_markup=kb)

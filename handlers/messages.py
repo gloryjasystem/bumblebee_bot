@@ -22,6 +22,7 @@ router = Router()
 
 class MessagesFSM(StatesGroup):
     waiting_for_captcha_text           = State()
+    waiting_captcha_anim_msg           = State()
     waiting_for_captcha_buttons        = State()
     waiting_for_autoreply_kw           = State()
     waiting_for_autoreply_text         = State()
@@ -235,7 +236,7 @@ async def _show_captcha(callback: CallbackQuery, chat_id: int, owner_id: int):
 
     ctype         = ch.get("captcha_type") or "off"
     timer         = int(ch["captcha_timer_min"] if ch.get("captcha_timer_min") else 1)
-    anim_on       = bool(ch.get("captcha_animation", False))
+    anim_on       = bool(ch.get("captcha_anim_file_id")) or bool(ch.get("captcha_animation", False))
     btn_placement = ch.get("captcha_button_style") or "inline"  # 'inline' / 'reply'
     greet_on      = bool(ch.get("captcha_greet", False))
     accept_now    = bool(ch.get("captcha_accept_now", False))
@@ -288,8 +289,8 @@ async def _show_captcha(callback: CallbackQuery, chat_id: int, owner_id: int):
                     callback_data=f"ch_cap_reset:{chat_id}",
                 ),
                 InlineKeyboardButton(
-                    text=f"{anim_icon} Анимация: {'вкл' if anim_on else 'выкл'}",
-                    callback_data=f"ch_cap_toggle:{chat_id}:anim",
+                    text=f"{anim_icon} Анимация капчи",
+                    callback_data=f"ch_cap_anim_menu:{chat_id}",
                 ),
             ],
             [
@@ -367,7 +368,7 @@ async def on_ch_cap_toggle(callback: CallbackQuery, platform_user: dict | None):
         return
     parts    = callback.data.split(":")
     chat_id  = int(parts[1])
-    key      = parts[2]
+    setting  = parts[2]
     owner_id = platform_user["user_id"]
 
     ch = await db.fetchrow(
@@ -377,13 +378,13 @@ async def on_ch_cap_toggle(callback: CallbackQuery, platform_user: dict | None):
     if not ch:
         return
 
-    if key == "anim":
-        new_val = not bool(ch.get("captcha_animation", False))
-        await db.execute("UPDATE bot_chats SET captcha_animation=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
+    if setting == "greet":
+        new_val = not bool(ch.get("captcha_greet", False))
+        await db.execute("UPDATE bot_chats SET captcha_greet=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
                          new_val, owner_id, chat_id)
-        await callback.answer("Анимация: " + ("вкл" if new_val else "выкл"))
+        await callback.answer("Приветствовать: " + ("вкл" if new_val else "выкл"))
 
-    elif key == "btn_type":
+    elif setting == "btn_type":
         cur = ch.get("captcha_button_style") or "inline"
         new_val = "reply" if cur == "inline" else "inline"
         await db.execute("UPDATE bot_chats SET captcha_button_style=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
@@ -391,7 +392,7 @@ async def on_ch_cap_toggle(callback: CallbackQuery, platform_user: dict | None):
         labels = {"inline": "📩 Inline", "reply": "⌨️ Reply"}
         await callback.answer(f"Кнопки: {labels[new_val]}")
 
-    elif key == "timer":
+    elif setting == "timer":
         cur = int(ch.get("captcha_timer_min") or 1)
         try:
             idx = _TIMER_CYCLE.index(cur)
@@ -402,19 +403,13 @@ async def on_ch_cap_toggle(callback: CallbackQuery, platform_user: dict | None):
                          new_val, owner_id, chat_id)
         await callback.answer(f"Таймер: {new_val} мин")
 
-    elif key == "greet":
-        new_val = not bool(ch.get("captcha_greet", False))
-        await db.execute("UPDATE bot_chats SET captcha_greet=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
-                         new_val, owner_id, chat_id)
-        await callback.answer("Приветствовать: " + ("вкл" if new_val else "выкл"))
-
-    elif key == "accept_now":
+    elif setting == "accept_now":
         new_val = not bool(ch.get("captcha_accept_now", False))
         await db.execute("UPDATE bot_chats SET captcha_accept_now=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
                          new_val, owner_id, chat_id)
         await callback.answer("Принимать сразу: " + ("вкл" if new_val else "выкл"))
 
-    elif key == "accept_all":
+    elif setting == "accept_all":
         new_val = not bool(ch.get("captcha_accept_all", False))
         await db.execute("UPDATE bot_chats SET captcha_accept_all=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
                          new_val, owner_id, chat_id)
@@ -506,6 +501,85 @@ async def on_ch_cap_set_emoji(callback: CallbackQuery, platform_user: dict | Non
     await callback.answer(f"Вид: {es}")
     callback.data = f"ch_captcha:{chat_id}"
     await on_ch_captcha(callback, platform_user)
+
+
+# ── Анимация капчи (загрузка) ───────────────────────────────────
+
+@router.callback_query(F.data.startswith("ch_cap_anim_menu:"))
+async def on_ch_cap_anim_menu(callback: CallbackQuery, state: FSMContext, platform_user: dict | None):
+    if not platform_user:
+        return
+    chat_id  = int(callback.data.split(":")[1])
+    owner_id = platform_user["user_id"]
+
+    ch = await db.fetchrow(
+        "SELECT captcha_anim_file_id FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint",
+        owner_id, chat_id,
+    )
+    has_anim = bool(ch and ch.get("captcha_anim_file_id"))
+    
+    text = (
+        "📸 <b>Анимация капчи</b>\n\n"
+        "Отправьте в этот чат GIF или короткое видео, чтобы установить его над текстом капчи. "
+        "Если загружена анимация, она будет автоматически проигрываться.\n\n"
+    )
+    if has_anim:
+        text += "<b>Текущая анимация: Установлена ✅</b>"
+    else:
+        text += "<b>Текущая анимация: Нет ❌</b>"
+
+    kb = []
+    if has_anim:
+        kb.append([InlineKeyboardButton(text="❌ Удалить анимацию", callback_data=f"ch_cap_anim_del:{chat_id}")])
+    kb.append([InlineKeyboardButton(text="↩ В меню капчи", callback_data=f"ch_captcha:{chat_id}")])
+    
+    await state.set_state(MessagesFSM.waiting_captcha_anim_msg)
+    await state.update_data(chat_id=chat_id, owner_id=owner_id)
+    
+    await callback.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("ch_cap_anim_del:"))
+async def on_ch_cap_anim_del(callback: CallbackQuery, state: FSMContext, platform_user: dict | None):
+    if not platform_user:
+        return
+    chat_id  = int(callback.data.split(":")[1])
+    owner_id = platform_user["user_id"]
+
+    await db.execute(
+        "UPDATE bot_chats SET captcha_anim_file_id=NULL, captcha_anim_type=NULL, captcha_animation=false "
+        "WHERE owner_id=$1 AND chat_id=$2::bigint",
+        owner_id, chat_id,
+    )
+    await callback.answer("✅ Анимация удалена")
+    await state.clear()
+    await _show_captcha(callback, chat_id, owner_id)
+
+@router.message(MessagesFSM.waiting_captcha_anim_msg, F.animation | F.video)
+async def on_captcha_anim_upload(message: Message, state: FSMContext):
+    data     = await state.get_data()
+    chat_id  = data["chat_id"]
+    owner_id = data["owner_id"]
+
+    if message.animation:
+        file_id = message.animation.file_id
+        file_type = "animation"
+    else:
+        file_id = message.video.file_id
+        file_type = "video"
+
+    await db.execute(
+        "UPDATE bot_chats SET captcha_anim_file_id=$1, captcha_anim_type=$2, captcha_animation=true "
+        "WHERE owner_id=$3 AND chat_id=$4::bigint",
+        file_id, file_type, owner_id, chat_id,
+    )
+    await state.clear()
+    await message.answer(
+        "✅ Анимация успешно установлена!",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="↩ В меню капчи", callback_data=f"ch_captcha:{chat_id}")],
+        ]),
+    )
 
 
 # ── FSM: Текст капчи ───────────────────────────────────────────

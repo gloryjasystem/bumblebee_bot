@@ -2825,7 +2825,7 @@ async def on_bs_um_pm(callback: CallbackQuery, state: FSMContext, platform_user:
         "Напишите текст, который бот отправит этому пользователю в личные сообщения.\n"
         "<i>Поддерживается форматирование и эмодзи.</i>",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="◀️ Отмена", callback_data=f"bs_base_edit:{child_bot_id_str}")]
+            [InlineKeyboardButton(text="◀️ Отмена", callback_data=f"bs_um_card:{child_bot_id_str}:{uid_str}")]
         ])
     )
     await callback.answer()
@@ -2857,6 +2857,15 @@ async def on_bs_um_pm_input(message: Message, state: FSMContext, platform_user: 
         await child_bot.session.close()
 
     await state.clear()
+
+
+@router.callback_query(F.data.startswith("bs_um_card:"))
+async def on_bs_um_card(callback: CallbackQuery, state: FSMContext, platform_user: dict | None):
+    if not platform_user:
+        return
+    _, child_bot_id_str, uid_str = callback.data.split(":")
+    await state.clear()
+    await _refresh_user_card(callback, int(child_bot_id_str), int(uid_str))
 
 
 @router.callback_query(F.data.startswith("bs_um_mute:"))

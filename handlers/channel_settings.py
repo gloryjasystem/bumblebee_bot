@@ -2789,7 +2789,7 @@ async def _show_user_card(message: Message | CallbackQuery, state: FSMContext, c
 
     # Динамические кнопки
     mute_text = "🔊 Снять Мут" if is_muted else "🔇 Выдать Мут (Read-only)"
-    admin_text = " نز Забрать Права Админа" if is_admin else "🛡 Выдать Права Админа"
+    admin_text = "🛡 Выдать Права Админа"
     ban_text = "⛔️ Удалить из черного списка" if is_banned else "⛔️ В Черный список"
 
     buttons = [
@@ -2970,7 +2970,7 @@ async def on_bs_um_promote(callback: CallbackQuery, state: FSMContext, platform_
         return await callback.answer("❌ Бот не найден", show_alert=True)
         
     chat_rows = await db.fetch(
-        "SELECT bc.chat_id FROM bot_users bu JOIN bot_chats bc ON bu.chat_id=bc.chat_id WHERE bc.child_bot_id=$1 AND bu.user_id=$2",
+        "SELECT bc.chat_id, bc.chat_title FROM bot_users bu JOIN bot_chats bc ON bu.chat_id=bc.chat_id WHERE bc.child_bot_id=$1 AND bu.user_id=$2",
         child_bot_id, uid
     )
     if not chat_rows:
@@ -2978,62 +2978,83 @@ async def on_bs_um_promote(callback: CallbackQuery, state: FSMContext, platform_
     
     child_bot = Bot(token=decrypt_token(bot_row["token_encrypted"]))
     try:
-        # Проверяем первый попавшийся чат для статуса админа (или можно все)
-        is_admin = False
-        left_all = True
-        
+        active_chats = []
         for cr in chat_rows:
             try:
                 member = await child_bot.get_chat_member(chat_id=cr["chat_id"], user_id=uid)
                 if member.status not in ('left', 'kicked'):
-                    left_all = False
-                if member.status in ('administrator', 'creator'):
-                    is_admin = True
+                    active_chats.append((cr["chat_id"], cr.get("chat_title") or f"Чат {cr['chat_id']}"))
             except Exception:
                 pass
                 
-        if left_all:
+        if not active_chats:
             return await callback.answer("❌ Пользователь покинул все группы! Нельзя выдать права.", show_alert=True)
 
-        if is_admin:
-            # Забираем права повсюду
-            for cr in chat_rows:
-                try:
-                    await child_bot.promote_chat_member(
-                        chat_id=cr["chat_id"], user_id=uid,
-                        is_anonymous=False, can_manage_chat=False, can_post_messages=False,
-                        can_edit_messages=False, can_delete_messages=False, can_manage_video_chats=False,
-                        can_restrict_members=False, can_promote_members=False, can_change_info=False,
-                        can_invite_users=False, can_pin_messages=False, can_manage_topics=False
-                    )
-                except Exception:
-                    pass
-            await callback.answer(" نز Права администратора сняты", show_alert=True)
-            await _refresh_user_card(callback, child_bot_id, uid)
-        else:
-            # Меню выбора прав
-            perms = {
-                "delete": True,
-                "restrict": True,
-                "pin": True,
-                "invite": True,
-                "promote": False
-            }
-            # Сохраняем все chat_ids чтобы применить к ним
-            await state.update_data(
-                admin_perms=perms,
-                admin_child_bot_id=child_bot_id,
-                admin_uid=uid,
-                admin_chat_ids=[r["chat_id"] for r in chat_rows]
-            )
-            await _render_admin_menu(callback, perms, child_bot_id)
+        buttons = []
+        for chat_id, chat_title in active_chats:
+            buttons.append([InlineKeyboardButton(text=chat_title, callback_data=f"bs_prm_c:{child_bot_id}:{uid}:{chat_id}")])
+            
+        buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"bs_um_card:{child_bot_id}:{uid}")])
+        
+        await callback.message.edit_text(
+            "🛡 <b>Выбор площадки</b>\n\n"
+            "Выберите площадку, на которой нужно выдать права администратора:",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
+        )
 
     except Exception as e:
         await callback.answer(f"❌ Ошибка Telegram: {e}", show_alert=True)
     finally:
         await child_bot.session.close()
 
-async def _render_admin_menu(callback: CallbackQuery, perms: dict, child_bot_id: int):
+
+@router.callback_query(F.data.startswith("bs_prm_c:"))
+async def on_bs_um_prom_chat(callback: CallbackQuery, state: FSMContext, platform_user: dict | None):
+    if not platform_user:
+        return
+    _, child_bot_id_str, uid_str, chat_id_str = callback.data.split(":")
+    child_bot_id, uid, chat_id = int(child_bot_id_str), int(uid_str), int(chat_id_str)
+
+    bot_row = await db.fetchrow("SELECT token_encrypted FROM child_bots WHERE id=$1", child_bot_id)
+    if not bot_row:
+        return await callback.answer("❌ Бот не найден", show_alert=True)
+        
+    chat_title = await db.fetchval("SELECT chat_title FROM bot_chats WHERE chat_id=$1", chat_id)
+    chat_title = chat_title or f"Чат {chat_id}"
+
+    child_bot = Bot(token=decrypt_token(bot_row["token_encrypted"]))
+    try:
+        member = await child_bot.get_chat_member(chat_id=chat_id, user_id=uid)
+        
+        perms = {
+            "delete": False,
+            "restrict": False,
+            "pin": False,
+            "invite": False,
+            "promote": False
+        }
+        
+        if member.status in ('administrator', 'creator'):
+            perms["delete"] = getattr(member, 'can_delete_messages', False)
+            perms["restrict"] = getattr(member, 'can_restrict_members', False)
+            perms["pin"] = getattr(member, 'can_pin_messages', False)
+            perms["invite"] = getattr(member, 'can_invite_users', False)
+            perms["promote"] = getattr(member, 'can_promote_members', False)
+        
+        await state.update_data(
+            admin_perms=perms,
+            admin_child_bot_id=child_bot_id,
+            admin_uid=uid,
+            admin_chat_id=chat_id,
+            admin_chat_title=chat_title
+        )
+        await _render_admin_menu(callback, perms, child_bot_id, uid, chat_title)
+    except Exception as e:
+        await callback.answer(f"❌ Ошибка Telegram: {e}", show_alert=True)
+    finally:
+        await child_bot.session.close()
+
+async def _render_admin_menu(callback: CallbackQuery, perms: dict, child_bot_id: int, uid: int, chat_title: str):
     buttons = [
         [InlineKeyboardButton(text=f"{'✅' if perms['delete'] else '❌'} Удаление сообщений", callback_data="bs_adm_tgl:delete")],
         [InlineKeyboardButton(text=f"{'✅' if perms['restrict'] else '❌'} Блокировка/Мут", callback_data="bs_adm_tgl:restrict")],
@@ -3041,10 +3062,11 @@ async def _render_admin_menu(callback: CallbackQuery, perms: dict, child_bot_id:
         [InlineKeyboardButton(text=f"{'✅' if perms['invite'] else '❌'} Приглашение по ссылкам", callback_data="bs_adm_tgl:invite")],
         [InlineKeyboardButton(text=f"{'✅' if perms['promote'] else '❌'} Добавление админов", callback_data="bs_adm_tgl:promote")],
         [InlineKeyboardButton(text="Применить и Выдать права 🛡", callback_data="bs_adm_apply")],
-        [InlineKeyboardButton(text="◀️ Назад", callback_data=f"bs_base_edit:{child_bot_id}")]
+        [InlineKeyboardButton(text="◀️ Назад", callback_data=f"bs_um_card:{child_bot_id}:{uid}")]
     ]
     await callback.message.edit_text(
-        "🛡 <b>Выдача прав администратора</b>\n\n"
+        "🛡 <b>Выдача прав администратора</b>\n"
+        f"📍 <i>{chat_title}</i>\n\n"
         "Отметьте нужные права для этого пользователя:",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
     )
@@ -3058,7 +3080,9 @@ async def on_bs_admin_toggle(callback: CallbackQuery, state: FSMContext):
         perms[key] = not perms[key]
     await state.update_data(admin_perms=perms)
     child_bot_id = data.get("admin_child_bot_id")
-    await _render_admin_menu(callback, perms, child_bot_id)
+    uid = data.get("admin_uid")
+    chat_title = data.get("admin_chat_title", "Чат")
+    await _render_admin_menu(callback, perms, child_bot_id, uid, chat_title)
 
 @router.callback_query(F.data == "bs_adm_apply")
 async def on_bs_admin_apply(callback: CallbackQuery, state: FSMContext):
@@ -3066,35 +3090,27 @@ async def on_bs_admin_apply(callback: CallbackQuery, state: FSMContext):
     perms = data.get("admin_perms")
     child_bot_id = data.get("admin_child_bot_id")
     uid = data.get("admin_uid")
-    chat_ids = data.get("admin_chat_ids", [])
+    chat_id = data.get("admin_chat_id")
 
-    if not perms or not child_bot_id or not chat_ids:
+    if not perms or not child_bot_id or not chat_id:
         return await callback.answer("❌ Истекло время сессии. Начните сначала.", show_alert=True)
 
     bot_row = await db.fetchrow("SELECT token_encrypted FROM child_bots WHERE id=$1", child_bot_id)
     child_bot = Bot(token=decrypt_token(bot_row["token_encrypted"]))
-    success = False
     try:
-        for chat_id in chat_ids:
-            try:
-                await child_bot.promote_chat_member(
-                    chat_id=chat_id, user_id=uid,
-                    is_anonymous=False, can_manage_chat=True,
-                    can_delete_messages=perms.get('delete', False),
-                    can_restrict_members=perms.get('restrict', False),
-                    can_pin_messages=perms.get('pin', False),
-                    can_invite_users=perms.get('invite', False),
-                    can_promote_members=perms.get('promote', False),
-                    can_change_info=False, can_manage_video_chats=False, can_manage_topics=False
-                )
-                success = True
-            except Exception:
-                pass
-        
-        if success:
-            await callback.answer("🛡 Права успешно выданы!", show_alert=True)
-        else:
-            await callback.answer("❌ Не удалось выдать (возможно юзер вышел).", show_alert=True)
+        await child_bot.promote_chat_member(
+            chat_id=chat_id, user_id=uid,
+            is_anonymous=False, can_manage_chat=True,
+            can_delete_messages=perms.get('delete', False),
+            can_restrict_members=perms.get('restrict', False),
+            can_pin_messages=perms.get('pin', False),
+            can_invite_users=perms.get('invite', False),
+            can_promote_members=perms.get('promote', False),
+            can_change_info=False, can_manage_video_chats=False, can_manage_topics=False
+        )
+        await callback.answer("🛡 Права успешно выданы!", show_alert=True)
+    except Exception as e:
+        await callback.answer(f"❌ Не удалось выдать права: {e}", show_alert=True)
     finally:
         await child_bot.session.close()
 

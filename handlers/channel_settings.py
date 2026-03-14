@@ -42,7 +42,10 @@ class SettingsFSM(StatesGroup):
     bs_bl_waiting_del_file  = State()
     # База пользователей: ручное добавление/удаление
     bs_base_waiting_add     = State()
-    bs_base_waiting_del     = State()
+    bs_base_waiting_del     = State() # also used for User Search
+
+    # Карточка пользователя
+    bs_um_waiting_pm        = State()
 
 
 # ══════════════════════════════════════════════════════════════
@@ -2476,6 +2479,28 @@ async def on_bs_base_del(callback: CallbackQuery, state: FSMContext,
     await callback.answer()
 
 
+# ── Управление подписчиками (Карточка) ───────────────────────
+
+def _extract_user_id_from_message(message: Message) -> int | None:
+    """Извлекает user_id из пересланного сообщения, контакта или текста."""
+    if message.forward_origin:
+        if getattr(message.forward_origin, "type", None) == 'user':
+            return message.forward_origin.sender_user.id
+    if message.contact:
+        return message.contact.user_id
+    if message.text:
+        text = message.text.strip()
+        if text.isdigit():
+            return int(text)
+    return None
+
+def _extract_username_from_message(message: Message) -> str | None:
+    if message.text:
+        text = message.text.strip()
+        if text.startswith('@') and len(text) > 1:
+            return text.lstrip('@').lower()
+    return None
+
 def _parse_user_lines(text: str) -> list[str]:
     """Возвращает список @username или числовых ID из свободного текста."""
     import re
@@ -2597,14 +2622,16 @@ async def _process_base_del(owner_id: int, child_bot_id: int,
 
 
 @router.message(SettingsFSM.bs_base_waiting_del)
-async def on_bs_base_del_input(message: Message, state: FSMContext,
-                                platform_user: dict | None):
+async def on_bs_base_user_search(message: Message, state: FSMContext,
+                                 platform_user: dict | None):
+    """Ждет получения пользователя для управления (или файла для массового удаления)."""
     if not platform_user:
         return
     data = await state.get_data()
     child_bot_id = data.get("child_bot_id")
     owner_id = platform_user["user_id"]
 
+    # 1. Массовое удаление через файл (оставляем старую логику для файлов)
     if message.document:
         doc = message.document
         if not doc.file_name.lower().endswith((".txt", ".csv")):
@@ -2613,44 +2640,338 @@ async def on_bs_base_del_input(message: Message, state: FSMContext,
         file_obj = await message.bot.get_file(doc.file_id)
         content_io = await message.bot.download_file(file_obj.file_path)
         text = content_io.read().decode("utf-8", errors="replace")
-    elif message.text:
-        text = message.text
-    else:
-        await message.answer("❌ Отправьте текст или файл.")
-        return
+        
+        tokens = _parse_user_lines(text)
+        if not tokens:
+            await message.answer("⚠️ Не найдено ни одного @username или Telegram ID.")
+            return
 
-    tokens = _parse_user_lines(text)
-    if not tokens:
+        res = await _process_base_del(owner_id, child_bot_id, tokens)
+        total_now = await db.fetchval(
+            """SELECT COUNT(*) FROM bot_users bu
+               JOIN bot_chats bc ON bu.chat_id=bc.chat_id AND bu.owner_id=bc.owner_id
+               WHERE bc.child_bot_id=$1 AND bc.owner_id=$2""",
+            child_bot_id, owner_id,
+        ) or 0
+        detail_text = "\n".join(res["details"][:20])
+        if len(res["details"]) > 20:
+            detail_text += f"\n... и ещё {len(res['details']) - 20}"
+        await state.clear()
         await message.answer(
-            "⚠️ Не найдено ни одного @username или Telegram ID."
+            f"🗑 <b>Удаление завершено!</b>\n\n"
+            f"✅ Удалено: <b>{res['removed']}</b>\n"
+            f"🔍 Не найдено: <b>{res['not_found']}</b>\n"
+            f"❌ Неверный формат: <b>{res['invalid']}</b>\n\n"
+            f"{detail_text}\n\n"
+            f"👥 Осталось в базе: <b>{total_now:,}</b>",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="◀️ Назад к управлению",
+                                      callback_data=f"bs_base_edit:{child_bot_id}")],
+            ]),
         )
         return
 
-    res = await _process_base_del(owner_id, child_bot_id, tokens)
-    total_now = await db.fetchval(
-        """SELECT COUNT(*) FROM bot_users bu
-           JOIN bot_chats bc ON bu.chat_id=bc.chat_id AND bu.owner_id=bc.owner_id
-           WHERE bc.child_bot_id=$1 AND bc.owner_id=$2""",
-        child_bot_id, owner_id,
-    ) or 0
+    # 2. Поиск конкретного пользователя (Карточка)
+    target_id = _extract_user_id_from_message(message)
+    target_username = _extract_username_from_message(message)
 
-    detail_text = "\n".join(res["details"][:20])
-    if len(res["details"]) > 20:
-        detail_text += f"\n... и ещё {len(res['details']) - 20}"
+    if not target_id and not target_username:
+        await message.answer("❌ Не удалось распознать пользователя. Пришлите ID, @username или перешлите его сообщение.")
+        return
+
+    # Ищем пользователя в базе (по всем площадкам этого бота)
+    query = """
+        SELECT bu.user_id, bu.username, bu.first_name, bu.joined_at, bu.is_active, 
+               bc.chat_id, bc.chat_title
+        FROM bot_users bu
+        JOIN bot_chats bc ON bu.chat_id = bc.chat_id AND bu.owner_id = bc.owner_id
+        WHERE bc.child_bot_id = $1 AND bc.owner_id = $2
+    """
+    args = [child_bot_id, owner_id]
+    
+    if target_id:
+        query += " AND bu.user_id = $3 LIMIT 1"
+        args.append(target_id)
+    else:
+        query += " AND lower(bu.username) = $3 LIMIT 1"
+        args.append(target_username.lower())
+
+    user_row = await db.fetchrow(query, *args)
+
+    if not user_row:
+        ident = target_id or f"@{target_username}"
+        await message.answer(
+            f"❌ Пользователь <b>{ident}</b> не найден в базе этого бота.\n"
+            f"Убедитесь, что он запускал бота или писал сообщения в вашей группе.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="◀️ Назад к управлению", callback_data=f"bs_base_edit:{child_bot_id}")],
+            ])
+        )
+        return
+
+    # Рендерим карточку
+    await _show_user_card(message, state, child_bot_id, user_row)
+
+
+async def _show_user_card(message: Message | CallbackQuery, state: FSMContext, child_bot_id: int, user_row: dict):
+    uid = user_row["user_id"]
+    username = f"@{user_row['username']}" if user_row['username'] else "Нет"
+    name = user_row['first_name'] or "Аноним"
+    joined = user_row['joined_at'].strftime("%d.%m.%Y %H:%M") if user_row['joined_at'] else "Неизвестно"
+    chat_title = user_row['chat_title'] or "Личные сообщения"
+    chat_id = user_row['chat_id']
+    is_active = "✅ Активен" if user_row['is_active'] else "❌ Вышел / Заблокировал"
+
+    text = (
+        f"⚙️ <b>Карточка подписчика</b>\n\n"
+        f"👤 <b>Имя:</b> <a href='tg://user?id={uid}'>{name}</a>\n"
+        f"🪪 <b>ID:</b> <code>{uid}</code>\n"
+        f"🔗 <b>Юзернейм:</b> {username}\n"
+        f"📅 <b>В базе с:</b> {joined}\n"
+        f"📍 <b>Площадка:</b> {chat_title}\n"
+        f"📊 <b>Статус:</b> {is_active}\n"
+    )
+
+    # Проверяем не в ЧС ли он
+    owner_id = await db.fetchval("SELECT owner_id FROM child_bots WHERE id=$1", child_bot_id)
+    is_banned = await db.fetchval("SELECT 1 FROM blacklist WHERE owner_id=$1 AND user_id=$2", owner_id, uid)
+    if is_banned:
+        text += f"\n⛔️ <b>Находится в Черном списке!</b>"
+
+    buttons = [
+        [InlineKeyboardButton(text="📝 Написать от бота", callback_data=f"bs_um_pm:{child_bot_id}:{uid}:{chat_id}")],
+        [InlineKeyboardButton(text="🔇 Снять Мут / Выдать Мут", callback_data=f"bs_um_mute:{child_bot_id}:{uid}:{chat_id}")],
+        [InlineKeyboardButton(text="🛡 Изменить Права Админа", callback_data=f"bs_um_promote:{child_bot_id}:{uid}:{chat_id}")],
+        [InlineKeyboardButton(text="🚷 Кикнуть (Удалить из группы)", callback_data=f"bs_um_kick:{child_bot_id}:{uid}:{chat_id}")],
+        [InlineKeyboardButton(text="⛔️ В Черный список", callback_data=f"bs_um_ban:{child_bot_id}:{uid}:{chat_id}")],
+        [InlineKeyboardButton(text="🧹 Сбросить историю (Забыть)", callback_data=f"bs_um_reset:{child_bot_id}:{uid}:{chat_id}")],
+        [InlineKeyboardButton(text="◀️ Назад к управлению", callback_data=f"bs_base_edit:{child_bot_id}")],
+    ]
 
     await state.clear()
-    await message.answer(
-        f"🗑 <b>Удаление завершено!</b>\n\n"
-        f"✅ Удалено: <b>{res['removed']}</b>\n"
-        f"🔍 Не найдено: <b>{res['not_found']}</b>\n"
-        f"❌ Неверный формат: <b>{res['invalid']}</b>\n\n"
-        f"{detail_text}\n\n"
-        f"👥 Осталось в базе: <b>{total_now:,}</b>",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="◀️ Назад к управлению",
-                                  callback_data=f"bs_base_edit:{child_bot_id}")],
-        ]),
+    if isinstance(message, Message):
+        await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons), parse_mode="HTML")
+    else:
+        await message.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons), parse_mode="HTML")
+
+
+# ── Действия из Карточки Подписчика ──────────────────────────
+
+@router.callback_query(F.data.startswith("bs_um_pm:"))
+async def on_bs_um_pm(callback: CallbackQuery, state: FSMContext, platform_user: dict | None):
+    if not platform_user:
+        return
+    _, child_bot_id_str, uid_str, chat_id_str = callback.data.split(":")
+    await state.update_data(
+        pm_child_bot_id=int(child_bot_id_str), 
+        pm_uid=int(uid_str), 
+        pm_chat_id=int(chat_id_str)
     )
+    await state.set_state(SettingsFSM.bs_um_waiting_pm)
+    await callback.message.edit_text(
+        "📝 <b>Отправка сообщения</b>\n\n"
+        "Напишите текст, который бот отправит этому пользователю в личные сообщения.\n"
+        "<i>Поддерживается форматирование и эмодзи.</i>",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="◀️ Отмена", callback_data=f"bs_base_edit:{child_bot_id_str}")]
+        ])
+    )
+    await callback.answer()
+
+@router.message(SettingsFSM.bs_um_waiting_pm)
+async def on_bs_um_pm_input(message: Message, state: FSMContext, platform_user: dict | None):
+    if not platform_user:
+        return
+    data = await state.get_data()
+    child_bot_id = data.get("pm_child_bot_id")
+    target_uid = data.get("pm_uid")
+
+    if not message.text:
+        await message.answer("❌ Отправьте текстовое сообщение.")
+        return
+
+    from services.security import decrypt_token
+    from aiogram import Bot as AioBot
+
+    bot_row = await db.fetchrow("SELECT token_encrypted FROM child_bots WHERE id=$1", child_bot_id)
+    if not bot_row:
+        await message.answer("❌ Ошибка: бот не найден.")
+        return
+
+    child_bot = AioBot(token=decrypt_token(bot_row["token_encrypted"]))
+    try:
+        await child_bot.send_message(chat_id=target_uid, text=message.text, parse_mode="HTML")
+        await message.answer("✅ <b>Сообщение успешно отправлено!</b>")
+    except Exception as e:
+        await message.answer(f"❌ <b>Ошибка отправки:</b>\n<code>{e}</code>\n<i>Возможно, пользователь заблокировал бота.</i>")
+    finally:
+        await child_bot.session.close()
+
+    await state.clear()
+
+
+@router.callback_query(F.data.startswith("bs_um_mute:"))
+async def on_bs_um_mute(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    _, child_bot_id_str, uid_str, chat_id_str = callback.data.split(":")
+    child_bot_id, uid, chat_id = int(child_bot_id_str), int(uid_str), int(chat_id_str)
+
+    from services.security import decrypt_token
+    from aiogram import Bot as AioBot
+    from aiogram.types import ChatPermissions
+
+    bot_row = await db.fetchrow("SELECT token_encrypted FROM child_bots WHERE id=$1", child_bot_id)
+    if not bot_row:
+        return await callback.answer("❌ Бот не найден", show_alert=True)
+    
+    child_bot = AioBot(token=decrypt_token(bot_row["token_encrypted"]))
+    try:
+        member = await child_bot.get_chat_member(chat_id=chat_id, user_id=uid)
+        is_muted = not member.can_send_messages if hasattr(member, 'can_send_messages') else False
+        
+        if is_muted:
+            # Размут
+            await child_bot.restrict_chat_member(
+                chat_id=chat_id, user_id=uid,
+                permissions=ChatPermissions(
+                    can_send_messages=True, can_send_audios=True, can_send_documents=True,
+                    can_send_photos=True, can_send_videos=True, can_send_video_notes=True,
+                    can_send_voice_notes=True, can_send_polls=True, can_send_other_messages=True,
+                    can_add_web_page_previews=True, can_change_info=False, can_invite_users=True,
+                    can_pin_messages=False
+                )
+            )
+            await callback.answer("✅ Ограничения сняты (Размут)", show_alert=True)
+        else:
+            # Мут
+            await child_bot.restrict_chat_member(
+                chat_id=chat_id, user_id=uid,
+                permissions=ChatPermissions(can_send_messages=False)
+            )
+            await callback.answer("🔇 Пользователь переведен в Read-only (Мут)", show_alert=True)
+    except Exception as e:
+        await callback.answer(f"❌ Ошибка Telegram: {e}", show_alert=True)
+    finally:
+        await child_bot.session.close()
+
+
+@router.callback_query(F.data.startswith("bs_um_promote:"))
+async def on_bs_um_promote(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    _, child_bot_id_str, uid_str, chat_id_str = callback.data.split(":")
+    child_bot_id, uid, chat_id = int(child_bot_id_str), int(uid_str), int(chat_id_str)
+
+    from services.security import decrypt_token
+    from aiogram import Bot as AioBot
+
+    bot_row = await db.fetchrow("SELECT token_encrypted FROM child_bots WHERE id=$1", child_bot_id)
+    if not bot_row:
+        return await callback.answer("❌ Бот не найден", show_alert=True)
+    
+    child_bot = AioBot(token=decrypt_token(bot_row["token_encrypted"]))
+    try:
+        member = await child_bot.get_chat_member(chat_id=chat_id, user_id=uid)
+        is_admin = member.status in ('administrator', 'creator')
+        
+        if is_admin:
+            # Забираем права
+            await child_bot.promote_chat_member(
+                chat_id=chat_id, user_id=uid,
+                is_anonymous=False, can_manage_chat=False, can_post_messages=False,
+                can_edit_messages=False, can_delete_messages=False, can_manage_video_chats=False,
+                can_restrict_members=False, can_promote_members=False, can_change_info=False,
+                can_invite_users=False, can_pin_messages=False, can_manage_topics=False
+            )
+            await callback.answer(" نز Права администратора сняты", show_alert=True)
+        else:
+            # Выдаем права
+            await child_bot.promote_chat_member(
+                chat_id=chat_id, user_id=uid,
+                is_anonymous=False, can_manage_chat=True, can_post_messages=False,
+                can_edit_messages=False, can_delete_messages=True, can_manage_video_chats=True,
+                can_restrict_members=True, can_promote_members=False, can_change_info=True,
+                can_invite_users=True, can_pin_messages=True, can_manage_topics=True
+            )
+            await callback.answer("🛡 Выданы права модератора", show_alert=True)
+    except Exception as e:
+        await callback.answer(f"❌ Ошибка Telegram: {e}", show_alert=True)
+    finally:
+        await child_bot.session.close()
+
+
+@router.callback_query(F.data.startswith("bs_um_kick:"))
+async def on_bs_um_kick(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    _, child_bot_id_str, uid_str, chat_id_str = callback.data.split(":")
+    child_bot_id, uid, chat_id = int(child_bot_id_str), int(uid_str), int(chat_id_str)
+
+    from services.security import decrypt_token
+    from aiogram import Bot as AioBot
+
+    bot_row = await db.fetchrow("SELECT token_encrypted FROM child_bots WHERE id=$1", child_bot_id)
+    if not bot_row:
+        return await callback.answer("❌ Бот не найден", show_alert=True)
+    
+    child_bot = AioBot(token=decrypt_token(bot_row["token_encrypted"]))
+    try:
+        await child_bot.unban_chat_member(chat_id=chat_id, user_id=uid)
+        await callback.answer("🚷 Пользователь кикнут из группы", show_alert=True)
+        await db.execute(
+            "update bot_users set is_active=false, left_at=NOW() where chat_id=$1 and user_id=$2",
+            chat_id, uid
+        )
+    except Exception as e:
+        await callback.answer(f"❌ Ошибка Telegram: {e}", show_alert=True)
+    finally:
+        await child_bot.session.close()
+
+
+@router.callback_query(F.data.startswith("bs_um_ban:"))
+async def on_bs_um_ban(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    _, child_bot_id_str, uid_str, chat_id_str = callback.data.split(":")
+    child_bot_id, uid, chat_id = int(child_bot_id_str), int(uid_str), int(chat_id_str)
+    owner_id = platform_user["user_id"]
+
+    from services.security import decrypt_token
+    from aiogram import Bot as AioBot
+
+    bot_row = await db.fetchrow("SELECT token_encrypted FROM child_bots WHERE id=$1", child_bot_id)
+    if not bot_row:
+        return await callback.answer("❌ Бот не найден", show_alert=True)
+    
+    child_bot = AioBot(token=decrypt_token(bot_row["token_encrypted"]))
+    try:
+        await child_bot.ban_chat_member(chat_id=chat_id, user_id=uid)
+        
+        # Заносим в ЧС бота
+        username = await db.fetchval("SELECT username FROM bot_users WHERE user_id=$1 LIMIT 1", uid)
+        await db.execute(
+            """INSERT INTO blacklist (owner_id, username, user_id, added_at, reason)
+               VALUES ($1, $2, $3, NOW(), 'Забанен через карточку пользователя')
+               ON CONFLICT (user_id) DO NOTHING""",
+            owner_id, username or '', uid
+        )
+        await callback.answer("⛔️ Пользователь забанен и занесен в ЧС бота", show_alert=True)
+    except Exception as e:
+        await callback.answer(f"❌ Ошибка: {e}", show_alert=True)
+    finally:
+        await child_bot.session.close()
+
+
+@router.callback_query(F.data.startswith("bs_um_reset:"))
+async def on_bs_um_reset(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+    _, child_bot_id_str, uid_str, chat_id_str = callback.data.split(":")
+    child_bot_id, uid, chat_id = int(child_bot_id_str), int(uid_str), int(chat_id_str)
+    
+    await db.execute("DELETE FROM bot_users WHERE chat_id=$1 AND user_id=$2", chat_id, uid)
+    await callback.answer("🧹 История пользователя полностью очищена", show_alert=True)
 
 
 @router.callback_query(F.data.startswith("bs_blacklist:"))

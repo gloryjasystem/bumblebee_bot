@@ -772,14 +772,14 @@ async def on_ch_captcha_btns(callback: CallbackQuery, state: FSMContext, platfor
     await state.set_state(MessagesFSM.waiting_for_captcha_buttons)
     await state.update_data(chat_id=chat_id, owner_id=platform_user["user_id"])
     await callback.message.edit_text(
-        f"<u>{ctype_label} капча</u>:\n\n"
-        "🔤 Текст кнопок\n\n"
-        "<blockquote>Цвет:\n"
+        f"{ctype_label} капча:\n\n"
+        "⸬ <b>Текст кнопок</b>\n\n"
+        "<blockquote><u>Цвет:</u>\n\n"
         "🟦 - Синий\n"
         "🟩 - Зелёный\n"
         "🟥 - Красный\n\n"
-        "Пример: 🟩 Я не робот</blockquote>\n\n"
-        "➡ Пришлите названия для <u>кнопок капчи</u>:",
+        "<u>Пример:</u> <code>🟩 Я не робот</code></blockquote>\n\n"
+        "↪️ Пришлите названия для <u>кнопок капчи:</u>",
         parse_mode="HTML",
     )
     await callback.answer()

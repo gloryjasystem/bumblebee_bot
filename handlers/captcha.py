@@ -215,7 +215,8 @@ async def send_captcha(bot: Bot, event: ChatJoinRequest, settings_row: dict):
         asyncio.create_task(
             _captcha_timeout(bot, event, settings_row, msg.message_id)
         )
-    except Exception:
+    except Exception as e:
+        logger.error(f"[CAPTCHA SEND ERROR] Could not send to {user.id}: {e}")
         # Пользователь не открыл диалог с ботом → авто-одобряем
         _pending.pop(key, None)
         _expected.pop(key, None)

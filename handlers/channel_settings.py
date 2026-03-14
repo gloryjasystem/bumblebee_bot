@@ -2402,7 +2402,7 @@ async def on_bs_base(callback: CallbackQuery, platform_user: dict | None):
         """SELECT COUNT(DISTINCT bu.user_id) FROM bot_users bu
            JOIN bot_chats bc ON bu.chat_id=bc.chat_id AND bu.owner_id=bc.owner_id
            WHERE bc.child_bot_id=$1 AND bc.owner_id=$2
-             AND bu.user_id IS NOT NULL""",
+             AND bu.user_id IS NOT NULL AND bu.user_id != $2""",
         child_bot_id, owner_id,
     ) or 0
 
@@ -2442,7 +2442,7 @@ async def on_bs_base_edit(callback: CallbackQuery, state: FSMContext,
     total = await db.fetchval(
         """SELECT COUNT(*) FROM bot_users bu
            JOIN bot_chats bc ON bu.chat_id=bc.chat_id AND bu.owner_id=bc.owner_id
-           WHERE bc.child_bot_id=$1 AND bc.owner_id=$2""",
+           WHERE bc.child_bot_id=$1 AND bc.owner_id=$2 AND bu.user_id != $2""",
         child_bot_id, owner_id,
     ) or 0
 
@@ -3569,7 +3569,7 @@ async def _show_bs_sweep_screen(
     owner_id = platform_user["user_id"]
     user_count = await db.fetchval(
         "SELECT COUNT(*) FROM bot_users "
-        "WHERE owner_id=$1 AND chat_id=$2::bigint AND is_active=true",
+        "WHERE owner_id=$1 AND chat_id=$2::bigint AND is_active=true AND user_id != $1",
         owner_id, chat_id,
     ) or 0
     await callback.message.edit_text(

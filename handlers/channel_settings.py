@@ -1640,20 +1640,18 @@ async def on_ch_settings(callback: CallbackQuery, platform_user: dict | None):
         await callback.answer("Площадка не найдена", show_alert=True)
         return
 
-    status_icon = "🟢 Активна" if ch["is_active"] else "🔴 Остановлена"
     tz = ch.get("timezone") or "UTC"
     added = ch["added_at"].strftime("%d.%m.%Y") if ch.get("added_at") else "—"
     chat_id = ch["chat_id"]
 
-    toggle_text = "⏸ Остановить" if ch["is_active"] else "▶️ Запустить"
+    toggle_text = "🟢 Активна" if ch["is_active"] else "🔴 Выключена"
 
     await callback.message.edit_text(
         f"⚙️ <b>Управление площадкой</b>\n\n"
         f"📢 {ch['chat_title']}\n"
         f"🤖 Бот: @{ch['bot_username'] or '—'}\n"
         f"📅 Подключена: {added}\n"
-        f"🕐 Часовой пояс: {tz}\n"
-        f"📡 Статус: {status_icon}",
+        f"🕐 Часовой пояс: {tz}",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text=toggle_text, callback_data=f"ch_toggle:{ch_id}")],
             [InlineKeyboardButton(text="🕐 Часовой пояс", callback_data=f"ch_tz:{ch_id}")],

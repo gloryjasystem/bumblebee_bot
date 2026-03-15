@@ -914,7 +914,6 @@ async def on_channel_in_bot(callback: CallbackQuery, platform_user: dict | None)
         return
 
     status_label = "🟢 Активна" if ch["is_active"] else "🔴 Неактивна"
-    toggle_text  = "⏸ Остановить" if ch["is_active"] else "▶️ Запустить"
     added = ch["added_at"].strftime("%d.%m.%Y") if ch.get("added_at") else "—"
     type_icon = "📢" if ch.get("chat_type") == "channel" else "👥"
     title = ch["chat_title"] or f"Чат {ch['chat_id']}"
@@ -992,7 +991,11 @@ async def on_ch_toggle(callback: CallbackQuery, platform_user: dict | None):
         new_val, ch_id, platform_user["user_id"],
     )
     await callback.answer("🟢 Включена" if new_val else "🔴 Выключена")
-    await _show_channel_detail(callback, platform_user, ch_id)
+    
+    # Trigger a re-render of the settings screen itself so the button updates
+    from handlers.channel_settings import on_ch_settings
+    callback.data = f"ch_settings:{ch_id}"
+    await on_ch_settings(callback, platform_user)
 
 
 @router.callback_query(F.data.startswith("ch_delete:"))

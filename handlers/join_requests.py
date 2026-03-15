@@ -250,82 +250,7 @@ async def on_member_update(event: ChatMemberUpdated, bot: Bot):
             owner_id, event.chat.id, user.id,
         )
         # Прощание — отправляем если пользователь когда-либо запускал бота
-        farewell_text_tpl = settings_row.get("farewell_text") or ""
-        farewell_media_fid = settings_row.get("farewell_media")
-        farewell_media_type = settings_row.get("farewell_media_type")
-        farewell_media_below = bool(settings_row.get("farewell_media_below", False))
-        farewell_buttons_raw = settings_row.get("farewell_buttons")
-        farewell_timer = int(settings_row.get("farewell_timer") or 0)
-
-        if farewell_text_tpl or farewell_media_fid:
-            import json as _json
-            from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-            farewell_text = (farewell_text_tpl
-                .replace("{name}", user.first_name or "Пользователь")
-                .replace("{allname}", f"{user.first_name or ''} {getattr(user, 'last_name', '') or ''}".strip())
-                .replace("{username}", f"@{user.username}" if getattr(user, "username", None) else "")
-                .replace("{chat}", settings_row.get("chat_title", ""))
-                .replace("{day}", __import__("datetime").date.today().strftime("%d.%m.%Y"))
-            ) if farewell_text_tpl else ""
-
-            fw_inline_rows = []
-            if farewell_buttons_raw:
-                fw_btns = farewell_buttons_raw if isinstance(farewell_buttons_raw, list) else _json.loads(farewell_buttons_raw)
-                for btn in fw_btns:
-                    fw_inline_rows.append([InlineKeyboardButton(text=btn["text"], url=btn.get("url", ""))])
-            fw_kb = InlineKeyboardMarkup(inline_keyboard=fw_inline_rows) if fw_inline_rows else None
-
-            try:
-                fw_sent = []
-                if farewell_media_fid:
-                    kwargs = {
-                        "caption": farewell_text or None,
-                        "parse_mode": "HTML",
-                        "reply_markup": fw_kb,
-                        "show_caption_above_media": farewell_media_below,
-                    }
-                    async def send_fw(fid):
-                        if farewell_media_type == "photo":
-                            return await bot.send_photo(user.id, fid, **kwargs)
-                        elif farewell_media_type == "video":
-                            return await bot.send_video(user.id, fid, **kwargs)
-                        elif farewell_media_type == "animation":
-                            return await bot.send_animation(user.id, fid, **kwargs)
-                        else:
-                            return await bot.send_document(user.id, fid, **kwargs)
-                            
-                    try:
-                        m = await send_fw(farewell_media_fid)
-                    except Exception as e:
-                        error_msg = str(e).lower()
-                        if "wrong file identifier" in error_msg or "file reference" in error_msg or "invalid file" in error_msg:
-                            logger.info(f"Re-uploading farewell media {farewell_media_fid} for bot {bot.id}")
-                            try:
-                                from config import settings
-                                from aiogram import Bot as AioBot
-                                from aiogram.types import BufferedInputFile
-                                main_bot = AioBot(token=settings.bot_token)
-                                file_info = await main_bot.get_file(farewell_media_fid)
-                                file_bytes = await main_bot.download_file(file_info.file_path)
-                                await main_bot.session.close()
-                                input_file = BufferedInputFile(file_bytes.read(), filename=f"fw.{farewell_media_type}")
-                                m = await send_fw(input_file)
-                            except Exception as inner_e:
-                                logger.error(f"[FW REUPLOAD ERR] {inner_e}")
-                                m = await bot.send_message(user.id, farewell_text or "До свидания!", parse_mode="HTML", reply_markup=fw_kb)
-                        else:
-                            m = await bot.send_message(user.id, farewell_text or "До свидания!", parse_mode="HTML", reply_markup=fw_kb)
-                    
-                    fw_sent.append(m)
-                else:
-                    m = await bot.send_message(user.id, farewell_text, parse_mode="HTML", reply_markup=fw_kb)
-                    fw_sent.append(m)
-
-                if farewell_timer > 0:
-                    for sent in fw_sent:
-                        asyncio.create_task(_delete_later(bot, user.id, sent.message_id, farewell_timer // 60 or 1))
-            except Exception as e:
-                logger.debug(f"[FAREWELL] Failed to send to user {user.id}: {e}")
+        await _send_farewell(bot, event.chat.id, user, settings_row)
 
 
 async def _save_pending(owner_id: int, chat_id: int, user):
@@ -586,4 +511,86 @@ async def _delete_later(bot: Bot, chat_id: int, message_id: int, delay_min: int)
         await bot.delete_message(chat_id, message_id)
     except Exception:
         pass
+
+
+async def _send_farewell(bot: Bot, chat_id: int, user, settings_row: dict):
+    """Отправляет прощальное сообщение."""
+    farewell_text_tpl = settings_row.get("farewell_text") or ""
+    farewell_media_fid = settings_row.get("farewell_media")
+    farewell_media_type = settings_row.get("farewell_media_type")
+    farewell_media_below = bool(settings_row.get("farewell_media_below", False))
+    farewell_buttons_raw = settings_row.get("farewell_buttons")
+    farewell_timer = int(settings_row.get("farewell_timer") or 0)
+
+    if not farewell_text_tpl and not farewell_media_fid:
+        return
+
+    import json as _json
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    farewell_text = (farewell_text_tpl
+        .replace("{name}", user.first_name or "Пользователь")
+        .replace("{allname}", f"{user.first_name or ''} {getattr(user, 'last_name', '') or ''}".strip())
+        .replace("{username}", f"@{user.username}" if getattr(user, "username", None) else "")
+        .replace("{chat}", settings_row.get("chat_title", ""))
+        .replace("{day}", __import__("datetime").date.today().strftime("%d.%m.%Y"))
+    ) if farewell_text_tpl else ""
+
+    fw_inline_rows = []
+    if farewell_buttons_raw:
+        fw_btns = farewell_buttons_raw if isinstance(farewell_buttons_raw, list) else _json.loads(farewell_buttons_raw)
+        for btn in fw_btns:
+            fw_inline_rows.append([InlineKeyboardButton(text=btn["text"], url=btn.get("url", ""))])
+    fw_kb = InlineKeyboardMarkup(inline_keyboard=fw_inline_rows) if fw_inline_rows else None
+
+    try:
+        fw_sent = []
+        if farewell_media_fid:
+            kwargs = {
+                "caption": farewell_text or None,
+                "parse_mode": "HTML",
+                "reply_markup": fw_kb,
+                "show_caption_above_media": farewell_media_below,
+            }
+            async def send_fw(fid):
+                if farewell_media_type == "photo":
+                    return await bot.send_photo(user.id, fid, **kwargs)
+                elif farewell_media_type == "video":
+                    return await bot.send_video(user.id, fid, **kwargs)
+                elif farewell_media_type == "animation":
+                    return await bot.send_animation(user.id, fid, **kwargs)
+                else:
+                    return await bot.send_document(user.id, fid, **kwargs)
+                    
+            try:
+                m = await send_fw(farewell_media_fid)
+            except Exception as e:
+                error_msg = str(e).lower()
+                if "wrong file identifier" in error_msg or "file reference" in error_msg or "invalid file" in error_msg:
+                    logger.info(f"Re-uploading farewell media {farewell_media_fid} for bot {bot.id}")
+                    try:
+                        from config import settings
+                        from aiogram import Bot as AioBot
+                        from aiogram.types import BufferedInputFile
+                        main_bot = AioBot(token=settings.bot_token)
+                        file_info = await main_bot.get_file(farewell_media_fid)
+                        file_bytes = await main_bot.download_file(file_info.file_path)
+                        await main_bot.session.close()
+                        input_file = BufferedInputFile(file_bytes.read(), filename=f"fw.{farewell_media_type}")
+                        m = await send_fw(input_file)
+                    except Exception as inner_e:
+                        logger.error(f"[FW REUPLOAD ERR] {inner_e}")
+                        m = await bot.send_message(user.id, farewell_text or "До свидания!", parse_mode="HTML", reply_markup=fw_kb)
+                else:
+                    m = await bot.send_message(user.id, farewell_text or "До свидания!", parse_mode="HTML", reply_markup=fw_kb)
+            
+            fw_sent.append(m)
+        else:
+            m = await bot.send_message(user.id, farewell_text, parse_mode="HTML", reply_markup=fw_kb)
+            fw_sent.append(m)
+
+        if farewell_timer > 0:
+            for sent in fw_sent:
+                asyncio.create_task(_delete_later(bot, user.id, sent.message_id, farewell_timer // 60 or 1))
+    except Exception as e:
+        logger.debug(f"[FAREWELL] Failed to send to user {user.id}: {e}")
 

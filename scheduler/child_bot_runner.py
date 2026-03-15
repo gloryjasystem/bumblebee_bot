@@ -1523,6 +1523,10 @@ async def _handle_chat_member(bot: Bot, child_bot_id: int, event: ChatMemberUpda
         logger.info(f"[MEMBER] User {user.id} left chat {chat_id} (owner={owner_id})")
 
         # Прощальное сообщение
-        farewell = chat_settings.get("farewell_text")
-        if farewell:
-            await _try_send_dm(bot, user.id, farewell)
+        farewell_text = chat_settings.get("farewell_text")
+        farewell_media = chat_settings.get("farewell_media")
+        
+        logger.info(f"[FAREWELL] user={user.id} has_text={bool(farewell_text)} has_media={bool(farewell_media)}")
+        if farewell_text or farewell_media:
+            from handlers.join_requests import _send_farewell
+            await _send_farewell(bot, chat_id, user, dict(chat_settings))

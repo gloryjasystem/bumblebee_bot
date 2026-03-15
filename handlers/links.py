@@ -685,5 +685,3 @@ async def on_link_delete(callback: CallbackQuery, platform_user: dict | None):
         ]),
     )
     await callback.answer()
-
-    await on_links_list(callback, platform_user)

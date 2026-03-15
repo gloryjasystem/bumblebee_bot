@@ -104,7 +104,7 @@ async def on_bot_settings(callback: CallbackQuery, platform_user: dict | None):
     bot = await db.fetchrow(
         """
         SELECT cb.* FROM child_bots cb
-        WHERE cb.id=$1 AND (
+        WHERE cb.id=$1::bigint AND (
             cb.owner_id=$2
             OR EXISTS (
                 SELECT 1 FROM team_members tm

@@ -3873,8 +3873,7 @@ async def on_bs_bl_clear_do(callback: CallbackQuery, platform_user: dict | None)
 
     await callback.message.edit_text(
         f"⏳ <b>Процесс запущен!</b>\n\n"
-        f"База ЧС успешно очищена, и бот начал фоновый процесс разблокировки <b>{deleted:,}</b> "
-        f"пользователей в ваших группах/каналах.\n"
+        f"Процесс очистки черного списка запущен. База ЧС будет в скором времени полностью очищена.\n"
         f"Это может занять некоторое время в зависимости от размера базы.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="◀️ Назад к базе",

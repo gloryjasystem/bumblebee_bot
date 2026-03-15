@@ -1722,9 +1722,9 @@ async def resolve_owner_id(user_id: int, child_bot_id: int) -> int | None:
 
 
 async def _get_bot_first_chat(owner_id: int, child_bot_id: int):
-    """Возвращает первый активный bot_chats для чтения текущих настроек."""
+    """Возвращает первую площадку (активную или нет) для чтения текущих настроек."""
     return await db.fetchrow(
-        "SELECT * FROM bot_chats WHERE child_bot_id=$1 AND owner_id=$2 AND is_active=true LIMIT 1",
+        "SELECT * FROM bot_chats WHERE child_bot_id=$1 AND owner_id=$2 LIMIT 1",
         child_bot_id, owner_id,
     )
 
@@ -1737,7 +1737,7 @@ async def _show_bs_requests(callback: CallbackQuery, platform_user: dict, child_
         return
     ch = await _get_bot_first_chat(owner_id, child_bot_id)
     if not ch:
-        await callback.answer("Нет активных площадок у бота", show_alert=True)
+        await callback.answer("У бота нет подключенных площадок", show_alert=True)
         return
 
     # ── Синхронизация: очищаем устаревшие pending-заявки по всем чатам бота ──
@@ -1970,7 +1970,7 @@ async def on_bs_messages(callback: CallbackQuery, platform_user: dict | None):
         child_bot_id, owner_id,
     )
     if not chats:
-        await callback.answer("Нет активных площадок у бота", show_alert=True)
+        await callback.answer("У бота нет подключенных площадок", show_alert=True)
         return
     buttons = [[InlineKeyboardButton(
         text=f"📍 {ch['chat_title'] or ch['chat_id']}",
@@ -4218,7 +4218,7 @@ async def _bs_channel_picker(callback: CallbackQuery, platform_user: dict,
         "SELECT chat_id, chat_title FROM bot_chats WHERE child_bot_id=$1 AND owner_id=$2 AND is_active=true",
         child_bot_id, owner_id)
     if not chats:
-        await callback.answer("Нет активных площадок у бота", show_alert=True)
+        await callback.answer("У бота нет подключенных площадок", show_alert=True)
         return
     buttons = [[InlineKeyboardButton(
         text=f"📍 {ch['chat_title'] or ch['chat_id']}",

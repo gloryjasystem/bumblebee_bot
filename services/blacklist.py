@@ -214,6 +214,59 @@ async def sweep_unban_after_disable(owner_id: int) -> int:
     return total_unbanned
 
 
+async def sweep_unban_records(owner_id: int, records: list) -> None:
+    """
+    Фоновая задача разбана после очистки базы ЧС.
+    records: список строк из БД с полями user_id, username.
+    """
+    from services.security import decrypt_token
+    from aiogram import Bot
+
+    chats = await db.fetch(
+        """
+        SELECT bc.chat_id, cb.token_encrypted
+        FROM bot_chats bc
+        JOIN child_bots cb ON cb.id = bc.child_bot_id
+        WHERE bc.owner_id=$1 AND bc.is_active=true
+        """,
+        owner_id,
+    )
+    if not chats:
+        return
+
+    explicit_user_ids = {r["user_id"] for r in records if r["user_id"] is not None}
+    usernames = [r["username"].lower() for r in records if r["username"] is not None]
+
+    for chat in chats:
+        chat_id = chat["chat_id"]
+        token = decrypt_token(chat["token_encrypted"])
+        if not token:
+            continue
+            
+        username_user_ids = set()
+        if usernames:
+            resolved = await db.fetch(
+                "SELECT user_id FROM bot_users WHERE owner_id=$1 AND chat_id=$2 AND lower(username) = ANY($3::text[])",
+                owner_id, chat_id, usernames
+            )
+            username_user_ids = {r["user_id"] for r in resolved}
+            
+        all_user_ids = explicit_user_ids | username_user_ids
+        if not all_user_ids:
+            continue
+            
+        try:
+            async with Bot(token=token).context() as child_bot:
+                for uid in all_user_ids:
+                    try:
+                        await child_bot.unban_chat_member(chat_id, uid)
+                    except Exception as e:
+                        logger.debug(f"Unban failed for {uid} in {chat_id}: {e}")
+                    await asyncio.sleep(0.05)
+        except Exception as e:
+            logger.debug(f"Failed to use child_bot unban for chat {chat_id}: {e}")
+
+
 async def get_blacklist_count(owner_id: int) -> int:
     return await db.fetchval(
         "SELECT COUNT(*) FROM blacklist WHERE owner_id=$1", owner_id

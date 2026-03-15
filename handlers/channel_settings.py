@@ -3832,12 +3832,16 @@ async def on_bs_bl_clear(callback: CallbackQuery, platform_user: dict | None):
         platform_user["user_id"],
     ) or 0
     await callback.message.edit_text(
-        f"⚠️ <b>Очистить базу ЧС?</b>\n\n"
-        f"Будет удалено <b>{count:,}</b> записей. Действие необратимо.",
+        f"⚠️ <b>Действительно очистить базу ЧС?</b>\n\n"
+        f"Вы собираетесь удалить <b>{count:,}</b> записей из чёрного списка.\n\n"
+        f"<blockquote>ℹ️ При подтверждении все пользователи из этой базы будут "
+        f"удалены безвозвратно, а также <b>автоматически разблокированы</b> во всех "
+        f"подключенных группах и каналах вашего бота, куда им ранее был закрыт доступ.</blockquote>\n\n"
+        f"Это действие необратимо. Вы уверены?",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="✅ Да, очистить",
+            [InlineKeyboardButton(text="✅ Да, очистить и разблокировать",
                                   callback_data=f"bs_bl_clear_do:{child_bot_id}")],
-            [InlineKeyboardButton(text="🚫 Отмена",
+            [InlineKeyboardButton(text="🚫 Нет, отменить",
                                   callback_data=f"bs_bl_manage:{child_bot_id}")],
         ]),
     )
@@ -3850,15 +3854,30 @@ async def on_bs_bl_clear_do(callback: CallbackQuery, platform_user: dict | None)
         return
     child_bot_id = callback.data.split(":")[1]
     owner_id = platform_user["user_id"]
+    
+    # 1. Запоминаем кого разбанивать перед удалением из базы
+    records = await db.fetch("SELECT user_id, username FROM blacklist WHERE owner_id=$1", owner_id)
+    
+    # 2. Очищаем базу
     deleted = await db.fetchval(
         "WITH d AS (DELETE FROM blacklist WHERE owner_id=$1 RETURNING 1) "
         "SELECT COUNT(*) FROM d",
         owner_id,
     ) or 0
+    
+    # 3. Запускаем фоновую задачу разбана
+    import asyncio
+    from services.blacklist import sweep_unban_records
+    if records:
+        asyncio.create_task(sweep_unban_records(owner_id, records))
+
     await callback.message.edit_text(
-        f"✅ База ЧС очищена. Удалено <b>{deleted:,}</b> записей.",
+        f"⏳ <b>Процесс запущен!</b>\n\n"
+        f"База ЧС успешно очищена, и бот начал фоновый процесс разблокировки <b>{deleted:,}</b> "
+        f"пользователей в ваших группах/каналах.\n"
+        f"Это может занять некоторое время в зависимости от размера базы.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="◀️ Назад",
+            [InlineKeyboardButton(text="◀️ Назад к базе",
                                   callback_data=f"bs_blacklist:{child_bot_id}")],
         ]),
     )

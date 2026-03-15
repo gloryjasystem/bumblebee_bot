@@ -560,13 +560,65 @@ async def _handle_group_message(bot: Bot, child_bot_id: int, message):
     if text:
         owner_id = settings["owner_id"]
 
-        # Проверяем общий ответ (отвечает на ЛЮБОЕ сообщение)
-        general_on   = bool(settings.get("general_reply_enabled", False))
-        general_text = (settings.get("general_reply_text") or "").strip()
+        async def _send_ar(t, mid, mtype, mtop, prev, btns):
+            import json as _json
+            from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+            kr = None
+            if btns:
+                try:
+                    p = _json.loads(btns)
+                    if p and isinstance(p[0], dict): p = [p]
+                    rows = []
+                    for r in p:
+                        rows.append([InlineKeyboardButton(text=b["text"], url=b["url"]) for b in r if b.get("text") and b.get("url")])
+                    if rows: kr = InlineKeyboardMarkup(inline_keyboard=rows)
+                except Exception:
+                    pass
+            if mid:
+                kw_args = {
+                    "caption": t or None,
+                    "parse_mode": "HTML",
+                    "reply_markup": kr,
+                    "show_caption_above_media": not mtop
+                }
+                async def do_send(fid):
+                    if mtype == "photo": return await message.reply_photo(fid, **kw_args)
+                    elif mtype == "video": return await message.reply_video(fid, **kw_args)
+                    elif mtype == "animation": return await message.reply_animation(fid, **kw_args)
+                    else: return await message.reply_document(fid, **kw_args)
+                try:
+                    return await do_send(mid)
+                except Exception as e:
+                    error_msg = str(e).lower()
+                    if "wrong file identifier" in error_msg or "file reference" in error_msg or "invalid file" in error_msg:
+                        try:
+                            from config import settings as sys_settings
+                            from aiogram import Bot as AioBot
+                            from aiogram.types import BufferedInputFile
+                            mb = AioBot(token=sys_settings.bot_token)
+                            fi = await mb.get_file(mid)
+                            fb = await mb.download_file(fi.file_path)
+                            await mb.session.close()
+                            return await do_send(BufferedInputFile(fb.read(), filename=f"ar.{mtype}"))
+                        except Exception:
+                            return await message.reply(t or "—", parse_mode="HTML", reply_markup=kr, disable_web_page_preview=not prev)
+                    else:
+                        return await message.reply(t or "—", parse_mode="HTML", reply_markup=kr, disable_web_page_preview=not prev)
+            else:
+                return await message.reply(t or "—", parse_mode="HTML", reply_markup=kr, disable_web_page_preview=not prev)
 
-        if general_on and general_text:
+        # Проверяем общий ответ (отвечает на ЛЮБОЕ сообщение)
+        general_on    = bool(settings.get("general_reply_enabled", False))
+        general_text  = (settings.get("general_reply_text") or "").strip()
+        general_media = settings.get("general_reply_media")
+
+        if general_on and (general_text or general_media):
             try:
-                reply = await message.reply(general_text)
+                g_mtype = settings.get("general_reply_media_type")
+                g_mtop  = settings.get("general_reply_media_top") if settings.get("general_reply_media_top") is not None else True
+                g_prev  = bool(settings.get("general_reply_preview"))
+                g_btns  = settings.get("general_reply_buttons")
+                reply = await _send_ar(general_text, general_media, g_mtype, g_mtop, g_prev, g_btns)
                 delete_min = int(settings.get("auto_delete_min") or 0)
                 if delete_min > 0:
                     import asyncio as _asyncio
@@ -579,7 +631,7 @@ async def _handle_group_message(bot: Bot, child_bot_id: int, message):
         else:
             # Keyword-ответы
             rules = await db.fetch(
-                "SELECT keyword, reply_text FROM autoreplies "
+                "SELECT * FROM autoreplies "
                 "WHERE owner_id=$1 AND chat_id=$2::bigint",
                 owner_id, chat_id,
             )
@@ -587,7 +639,13 @@ async def _handle_group_message(bot: Bot, child_bot_id: int, message):
                 kw = (rule["keyword"] or "").lower().strip()
                 if kw and kw in text.lower():
                     try:
-                        reply = await message.reply(rule["reply_text"])
+                        r_text  = rule["reply_text"] or ""
+                        r_mid   = rule["reply_media"]
+                        r_mtype = rule["reply_media_type"]
+                        r_mtop  = rule["reply_media_top"] if rule["reply_media_top"] is not None else True
+                        r_prev  = bool(rule["reply_preview"])
+                        r_btns  = rule["reply_buttons"]
+                        reply = await _send_ar(r_text, r_mid, r_mtype, r_mtop, r_prev, r_btns)
                         # Авто-удаление ответа бота
                         delete_min = int(settings.get("auto_delete_min") or 0)
                         if delete_min > 0:

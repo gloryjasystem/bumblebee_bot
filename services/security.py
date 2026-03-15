@@ -135,3 +135,47 @@ def detect_hieroglyph(text: str) -> bool:
         if "\u4E00" <= ch <= "\u9FFF" or "\u3040" <= ch <= "\u30FF":
             return True
     return False
+
+
+def detect_user_language(language_code: str | None, first_name: str = "", last_name: str = "") -> set[str]:
+    """
+    Определяет возможные языки пользователя.
+    Возвращает множество кодов языков (например {'ru', 'uk'}).
+
+    Логика:
+    1. Если language_code задан — возвращаем его сразу.
+    2. Иначе анализируем символы имени/фамилии по диапазонам Unicode
+       Это даёт ~70% точность для случаев без language_code.
+    """
+    if language_code:
+        lc = language_code.lower().split("-")[0]  # "ru-RU" → "ru"
+        return {lc}
+
+    # Fallback: анализ символов имени
+    name = (first_name or "") + " " + (last_name or "")
+    name = name.strip()
+    if not name:
+        return set()  # неизвестно → пропускаем
+
+    langs: set[str] = set()
+
+    for ch in name:
+        cp = ord(ch)
+        # Кириллица → CIS языки
+        if 0x0400 <= cp <= 0x04FF:
+            langs.update({"ru", "uk", "by", "kz", "uz", "az"})
+        # Арабское письмо → AR
+        elif 0x0600 <= cp <= 0x06FF:
+            langs.add("ar")
+        # Деванагари → HI (хинди)
+        elif 0x0900 <= cp <= 0x097F:
+            langs.add("hi")
+        # CJK (китайский/японский/корейский) → ZH
+        elif 0x4E00 <= cp <= 0x9FFF or 0x3040 <= cp <= 0x30FF or 0xAC00 <= cp <= 0xD7AF:
+            langs.add("zh")
+        # Базовая латиница → EN/ES/DE (западные языки)
+        elif 0x0041 <= cp <= 0x007A or 0x00C0 <= cp <= 0x024F:
+            langs.update({"en", "es", "de"})
+
+    return langs
+

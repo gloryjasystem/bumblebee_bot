@@ -1179,6 +1179,27 @@ async def _handle_join_request(bot: Bot, child_bot_id: int, event: ChatJoinReque
         except Exception as _e:
             logger.warning(f"[FILTER-PHOTO] get_user_profile_photos failed: {_e}")
 
+    # 5. Языковой фильтр
+    blocked_langs_rows = await db.fetch(
+        "SELECT language_code FROM language_filters WHERE owner_id=$1 AND chat_id=$2::bigint",
+        owner_id, chat_id,
+    )
+    if blocked_langs_rows:
+        blocked_codes = {r["language_code"] for r in blocked_langs_rows}
+        from services.security import detect_user_language
+        user_langs = detect_user_language(
+            getattr(user, "language_code", None),
+            user.first_name or "",
+            getattr(user, "last_name", "") or "",
+        )
+        if user_langs and user_langs.intersection(blocked_codes):
+            try:
+                await event.decline()
+            except Exception:
+                pass
+            logger.info(f"[LANG-FILTER] Declined join req {user.id} (langs={user_langs} blocked={blocked_codes})")
+            return
+
     captcha_type = (chat_settings.get("captcha_type") or "off")
 
     # Определяем invite_link_url:
@@ -1303,6 +1324,30 @@ async def _handle_chat_member(bot: Bot, child_bot_id: int, event: ChatMemberUpda
                 from handlers.join_requests import _log_action
                 await _log_action(owner_id, chat_id, "ban_on_join", user.id)
                 logger.info(f"[BL] Kicked {user.id} from open chat {chat_id} (blacklisted)")
+                return
+
+        # ── 2. Языковой фильтр ──────────────────────────
+        blocked_langs = await db.fetch(
+            "SELECT language_code FROM language_filters WHERE owner_id=$1 AND chat_id=$2::bigint",
+            owner_id, chat_id,
+        )
+        if blocked_langs:
+            blocked_codes = {r["language_code"] for r in blocked_langs}
+            from services.security import detect_user_language
+            user_langs = detect_user_language(
+                getattr(user, "language_code", None),
+                user.first_name or "",
+                getattr(user, "last_name", "") or "",
+            )
+            # Кикаем только если пересечение с заблокированными языками
+            # Если user_langs пустой (не определить) — пропускаем (вариант A)
+            if user_langs and user_langs.intersection(blocked_codes):
+                try:
+                    await bot.ban_chat_member(chat_id, user.id)
+                    await bot.unban_chat_member(chat_id, user.id, only_if_banned=True)
+                except Exception:
+                    pass
+                logger.info(f"[LANG] Kicked {user.id} from {chat_id} (langs={user_langs} blocked={blocked_codes})")
                 return
 
         from services.security import detect_rtl, detect_hieroglyph

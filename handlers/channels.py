@@ -913,7 +913,7 @@ async def on_channel_in_bot(callback: CallbackQuery, platform_user: dict | None)
         await callback.answer("Площадка не найдена", show_alert=True)
         return
 
-    status_label = "🟢 Активна" if ch["is_active"] else "🔴 Неактивна"
+    status_label = "🟢 Включена" if ch["is_active"] else "🔴 Выключена"
     added = ch["added_at"].strftime("%d.%m.%Y") if ch.get("added_at") else "—"
     type_icon = "📢" if ch.get("chat_type") == "channel" else "👥"
     title = ch["chat_title"] or f"Чат {ch['chat_id']}"

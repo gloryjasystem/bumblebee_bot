@@ -444,9 +444,9 @@ async def on_bot_verify_toggle(callback: CallbackQuery, platform_user: dict | No
     )
     label = "включена ✅" if new_val else "выключена ❌"
     await callback.answer(f"Проверка {label}")
-    # Обновляем экран
-    callback.data = f"bot_chats_list:{child_bot_id}"
-    await on_bot_chats_list(callback, platform_user)
+    # Обновляем экран (не мутируем frozen объект, а создаём копию с нужным data)
+    fake_cb = callback.model_copy(update={"data": f"bot_chats_list:{child_bot_id}"})
+    await on_bot_chats_list(fake_cb, platform_user)
 
 
 # ══════════════════════════════════════════════════════════════

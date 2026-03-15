@@ -197,7 +197,7 @@ async def on_req_accept_all(callback: CallbackQuery, bot: Bot, platform_user: di
     bot_row = await db.fetchrow(
         """SELECT cb.token_encrypted FROM child_bots cb
            JOIN bot_chats bc ON bc.child_bot_id = cb.id
-           WHERE bc.owner_id=$1 AND bc.chat_id=$2::bigint AND bc.is_active=true""",
+           WHERE bc.owner_id=$1 AND bc.chat_id=$2::bigint""",
         owner_id, chat_id,
     )
 
@@ -277,7 +277,7 @@ async def on_req_decline_all(callback: CallbackQuery, bot: Bot, platform_user: d
     bot_row = await db.fetchrow(
         """SELECT cb.token_encrypted FROM child_bots cb
            JOIN bot_chats bc ON bc.child_bot_id = cb.id
-           WHERE bc.owner_id=$1 AND bc.chat_id=$2::bigint AND bc.is_active=true""",
+           WHERE bc.owner_id=$1 AND bc.chat_id=$2::bigint""",
         owner_id, chat_id,
     )
 
@@ -1563,12 +1563,12 @@ async def on_ch_stats(callback: CallbackQuery, platform_user: dict | None):
     owner_id = platform_user["user_id"]
 
     total   = await db.fetchval(
-        "SELECT COUNT(*) FROM bot_users WHERE owner_id=$1 AND chat_id=$2::bigint AND is_active=true",
+        "SELECT COUNT(*) FROM bot_users WHERE owner_id=$1 AND chat_id=$2::bigint",
         owner_id, chat_id,
     )
     active_bot = await db.fetchval(
         "SELECT COUNT(*) FROM bot_users WHERE owner_id=$1 AND chat_id=$2::bigint "
-        "AND is_active=true AND bot_activated=true",
+        "AND bot_activated=true",
         owner_id, chat_id,
     )
     premium = await db.fetchval(

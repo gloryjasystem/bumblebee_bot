@@ -277,31 +277,46 @@ async def on_member_update(event: ChatMemberUpdated, bot: Bot):
 
             try:
                 fw_sent = []
-                if farewell_media_fid and not farewell_media_below:
-                    # ⬆️ медиа сверху (caption)
-                    if farewell_media_type == "photo":
-                        m = await bot.send_photo(user.id, farewell_media_fid, caption=farewell_text or None, parse_mode="HTML", reply_markup=fw_kb)
-                    elif farewell_media_type == "video":
-                        m = await bot.send_video(user.id, farewell_media_fid, caption=farewell_text or None, parse_mode="HTML", reply_markup=fw_kb)
-                    elif farewell_media_type == "animation":
-                        m = await bot.send_animation(user.id, farewell_media_fid, caption=farewell_text or None, parse_mode="HTML", reply_markup=fw_kb)
-                    else:
-                        m = await bot.send_document(user.id, farewell_media_fid, caption=farewell_text or None, parse_mode="HTML", reply_markup=fw_kb)
+                if farewell_media_fid:
+                    kwargs = {
+                        "caption": farewell_text or None,
+                        "parse_mode": "HTML",
+                        "reply_markup": fw_kb,
+                        "show_caption_above_media": farewell_media_below,
+                    }
+                    async def send_fw(fid):
+                        if farewell_media_type == "photo":
+                            return await bot.send_photo(user.id, fid, **kwargs)
+                        elif farewell_media_type == "video":
+                            return await bot.send_video(user.id, fid, **kwargs)
+                        elif farewell_media_type == "animation":
+                            return await bot.send_animation(user.id, fid, **kwargs)
+                        else:
+                            return await bot.send_document(user.id, fid, **kwargs)
+                            
+                    try:
+                        m = await send_fw(farewell_media_fid)
+                    except Exception as e:
+                        error_msg = str(e).lower()
+                        if "wrong file identifier" in error_msg or "file reference" in error_msg or "invalid file" in error_msg:
+                            logger.info(f"Re-uploading farewell media {farewell_media_fid} for bot {bot.id}")
+                            try:
+                                from config import settings
+                                from aiogram import Bot as AioBot
+                                from aiogram.types import BufferedInputFile
+                                main_bot = AioBot(token=settings.bot_token)
+                                file_info = await main_bot.get_file(farewell_media_fid)
+                                file_bytes = await main_bot.download_file(file_info.file_path)
+                                await main_bot.session.close()
+                                input_file = BufferedInputFile(file_bytes.read(), filename=f"fw.{farewell_media_type}")
+                                m = await send_fw(input_file)
+                            except Exception as inner_e:
+                                logger.error(f"[FW REUPLOAD ERR] {inner_e}")
+                                m = await bot.send_message(user.id, farewell_text or "До свидания!", parse_mode="HTML", reply_markup=fw_kb)
+                        else:
+                            m = await bot.send_message(user.id, farewell_text or "До свидания!", parse_mode="HTML", reply_markup=fw_kb)
+                    
                     fw_sent.append(m)
-                elif farewell_media_fid and farewell_media_below:
-                    # ⬇️ медиа снизу
-                    if farewell_text:
-                        m1 = await bot.send_message(user.id, farewell_text, parse_mode="HTML", reply_markup=fw_kb if not farewell_media_fid else None)
-                        fw_sent.append(m1)
-                    if farewell_media_type == "photo":
-                        m2 = await bot.send_photo(user.id, farewell_media_fid, reply_markup=fw_kb if not farewell_text else None)
-                    elif farewell_media_type == "video":
-                        m2 = await bot.send_video(user.id, farewell_media_fid, reply_markup=fw_kb if not farewell_text else None)
-                    elif farewell_media_type == "animation":
-                        m2 = await bot.send_animation(user.id, farewell_media_fid, reply_markup=fw_kb if not farewell_text else None)
-                    else:
-                        m2 = await bot.send_document(user.id, farewell_media_fid, reply_markup=fw_kb if not farewell_text else None)
-                    fw_sent.append(m2)
                 else:
                     m = await bot.send_message(user.id, farewell_text, parse_mode="HTML", reply_markup=fw_kb)
                     fw_sent.append(m)
@@ -510,41 +525,45 @@ async def _send_welcome(bot: Bot, chat_id: int, user, settings_row: dict):
     try:
         sent_msgs = []
 
-        if media_fid and not media_below:
-            # ⬆️ Медиа СВЕРХУ: медиа+текст в одном caption
-            if media_type == "photo":
-                m = await bot.send_photo(user.id, media_fid, caption=text or None,
-                                         parse_mode="HTML", reply_markup=user_kb)
-            elif media_type == "video":
-                m = await bot.send_video(user.id, media_fid, caption=text or None,
-                                         parse_mode="HTML", reply_markup=user_kb)
-            elif media_type == "animation":
-                m = await bot.send_animation(user.id, media_fid, caption=text or None,
-                                              parse_mode="HTML", reply_markup=user_kb)
-            else:
-                m = await bot.send_document(user.id, media_fid, caption=text or None,
-                                             parse_mode="HTML", reply_markup=user_kb)
+        if media_fid:
+            kwargs = {
+                "caption": text or None,
+                "parse_mode": "HTML",
+                "reply_markup": user_kb,
+                "show_caption_above_media": media_below,
+            }
+            async def send_wl(fid):
+                if media_type == "photo":
+                    return await bot.send_photo(user.id, fid, **kwargs)
+                elif media_type == "video":
+                    return await bot.send_video(user.id, fid, **kwargs)
+                elif media_type == "animation":
+                    return await bot.send_animation(user.id, fid, **kwargs)
+                else:
+                    return await bot.send_document(user.id, fid, **kwargs)
+            
+            try:
+                m = await send_wl(media_fid)
+            except Exception as e:
+                error_msg = str(e).lower()
+                if "wrong file identifier" in error_msg or "file reference" in error_msg or "invalid file" in error_msg:
+                    logger.info(f"Re-uploading welcome media {media_fid} for bot {bot.id}")
+                    try:
+                        from config import settings
+                        from aiogram import Bot as AioBot
+                        from aiogram.types import BufferedInputFile
+                        main_bot = AioBot(token=settings.bot_token)
+                        file_info = await main_bot.get_file(media_fid)
+                        file_bytes = await main_bot.download_file(file_info.file_path)
+                        await main_bot.session.close()
+                        input_file = BufferedInputFile(file_bytes.read(), filename=f"wl.{media_type}")
+                        m = await send_wl(input_file)
+                    except Exception as inner_e:
+                        logger.error(f"[WL REUPLOAD ERR] {inner_e}")
+                        m = await bot.send_message(user.id, text, parse_mode="HTML", reply_markup=user_kb)
+                else:
+                    m = await bot.send_message(user.id, text, parse_mode="HTML", reply_markup=user_kb)
             sent_msgs.append(m)
-
-        elif media_fid and media_below:
-            # ⬇️ Медиа СНИЗУ: сначала текст, потом медиа
-            if text:
-                m1 = await bot.send_message(user.id, text, parse_mode="HTML",
-                                             reply_markup=user_kb if not media_fid else None)
-                sent_msgs.append(m1)
-            if media_type == "photo":
-                m2 = await bot.send_photo(user.id, media_fid,
-                                          reply_markup=user_kb if not text else None)
-            elif media_type == "video":
-                m2 = await bot.send_video(user.id, media_fid,
-                                          reply_markup=user_kb if not text else None)
-            elif media_type == "animation":
-                m2 = await bot.send_animation(user.id, media_fid,
-                                               reply_markup=user_kb if not text else None)
-            else:
-                m2 = await bot.send_document(user.id, media_fid,
-                                              reply_markup=user_kb if not text else None)
-            sent_msgs.append(m2)
 
         else:
             # Только текст (нет медиа)

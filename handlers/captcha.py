@@ -581,14 +581,6 @@ async def _approve_user(
                 except Exception as e:
                     logger.warning(f"[LINK TRACK] failed: {e}")
 
-            welcome = settings_row.get("welcome_text")
-            if welcome:
-                from scheduler.child_bot_runner import _try_send_dm
-                await _try_send_dm(
-                    bot, callback.from_user.id, welcome,
-                    show_typing=bool(settings_row.get("typing_action")),
-                )
-
             if settings_row.get("captcha_delete"):
                 try:
                     await callback.message.delete()
@@ -701,14 +693,6 @@ async def _approve_user_from_message(
                 await _track_invite_link(inv_url, message.from_user)
             except Exception as e:
                 logger.warning(f"[LINK TRACK REPLY] failed: {e}")
-
-        welcome = settings_row.get("welcome_text")
-        if welcome:
-            from scheduler.child_bot_runner import _try_send_dm
-            await _try_send_dm(
-                bot, message.from_user.id, welcome,
-                show_typing=bool(settings_row.get("typing_action")),
-            )
 
     logger.info(f"[CAPTCHA REPLY] Passed join_request: user={user_id} chat={chat_id}")
 

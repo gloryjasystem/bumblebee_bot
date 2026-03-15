@@ -1856,7 +1856,7 @@ async def on_bs_req_accept_all(callback: CallbackQuery, bot: Bot, platform_user:
     bot_row = await db.fetchrow(
         "SELECT token_encrypted FROM child_bots WHERE id=$1 AND owner_id=$2", child_bot_id, owner_id)
     chats = await db.fetch(
-        "SELECT chat_id FROM bot_chats WHERE child_bot_id=$1 AND owner_id=$2 AND is_active=true",
+        "SELECT chat_id FROM bot_chats WHERE child_bot_id=$1 AND owner_id=$2",
         child_bot_id, owner_id)
     child_bot_instance = AioBot(token=decrypt_token(bot_row["token_encrypted"])) if bot_row else bot
     approved = 0
@@ -1927,7 +1927,7 @@ async def on_bs_req_decline_all(callback: CallbackQuery, bot: Bot, platform_user
     bot_row = await db.fetchrow(
         "SELECT token_encrypted FROM child_bots WHERE id=$1 AND owner_id=$2", child_bot_id, owner_id)
     chats = await db.fetch(
-        "SELECT chat_id FROM bot_chats WHERE child_bot_id=$1 AND owner_id=$2 AND is_active=true",
+        "SELECT chat_id FROM bot_chats WHERE child_bot_id=$1 AND owner_id=$2",
         child_bot_id, owner_id)
     child_bot_instance = AioBot(token=decrypt_token(bot_row["token_encrypted"])) if bot_row else bot
     declined = 0
@@ -1966,7 +1966,7 @@ async def on_bs_messages(callback: CallbackQuery, platform_user: dict | None):
         await callback.answer("Нет доступа", show_alert=True)
         return
     chats = await db.fetch(
-        "SELECT chat_id, chat_title FROM bot_chats WHERE child_bot_id=$1 AND owner_id=$2 AND is_active=true",
+        "SELECT chat_id, chat_title FROM bot_chats WHERE child_bot_id=$1 AND owner_id=$2",
         child_bot_id, owner_id,
     )
     if not chats:
@@ -3318,7 +3318,7 @@ async def on_bs_sync(callback: CallbackQuery, bot: Bot,
 
     chats = await db.fetch(
         "SELECT chat_id, chat_title FROM bot_chats "
-        "WHERE child_bot_id=$1 AND owner_id=$2 AND is_active=true",
+        "WHERE child_bot_id=$1 AND owner_id=$2",
         child_bot_id, owner_id,
     )
 
@@ -4215,7 +4215,7 @@ async def _bs_channel_picker(callback: CallbackQuery, platform_user: dict,
         await callback.answer("Нет доступа", show_alert=True)
         return
     chats = await db.fetch(
-        "SELECT chat_id, chat_title FROM bot_chats WHERE child_bot_id=$1 AND owner_id=$2 AND is_active=true",
+        "SELECT chat_id, chat_title FROM bot_chats WHERE child_bot_id=$1 AND owner_id=$2",
         child_bot_id, owner_id)
     if not chats:
         await callback.answer("У бота нет подключенных площадок", show_alert=True)
@@ -4330,7 +4330,7 @@ async def _show_bs_team(callback: CallbackQuery, bot: Bot,
 
     members = await db.fetch(
         "SELECT user_id, username, role FROM team_members "
-        "WHERE owner_id=$1 AND child_bot_id=$2 AND is_active=true "
+        "WHERE owner_id=$1 AND child_bot_id=$2 "
         "ORDER BY added_at",
         owner_id, child_bot_id,
     )
@@ -4414,7 +4414,7 @@ async def on_bs_team_members(callback: CallbackQuery, platform_user: dict | None
 
     members = await db.fetch(
         "SELECT id, user_id, username, role, added_at FROM team_members "
-        "WHERE owner_id=$1 AND child_bot_id=$2 AND is_active=true "
+        "WHERE owner_id=$1 AND child_bot_id=$2 "
         "ORDER BY added_at",
         owner_id, child_bot_id,
     )

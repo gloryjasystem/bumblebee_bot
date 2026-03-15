@@ -1276,10 +1276,7 @@ async def _handle_chat_member(bot: Bot, child_bot_id: int, event: ChatMemberUpda
     # Получаем настройки площадки + blacklist_enabled
     chat_settings = await db.fetchrow(
         """
-        SELECT bc.owner_id, bc.welcome_text, bc.farewell_text,
-               bc.captcha_type, bc.captcha_text, bc.captcha_timer_min, bc.captcha_emoji_set,
-               bc.join_limit_enabled, bc.join_limit_punishment,
-               bc.join_limit_period_min, bc.join_limit_count, cb.blacklist_enabled
+        SELECT bc.*, cb.blacklist_enabled
         FROM bot_chats bc
         JOIN child_bots cb ON bc.child_bot_id = cb.id
         WHERE bc.child_bot_id=$1 AND bc.chat_id=$2 AND bc.is_active=true

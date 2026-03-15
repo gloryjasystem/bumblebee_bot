@@ -581,8 +581,6 @@ async def _approve_user(
                 except Exception as e:
                     logger.warning(f"[LINK TRACK] failed: {e}")
 
-            await _send_welcome(bot, chat_id, callback.from_user, settings_row)
-
             if settings_row.get("captcha_delete"):
                 try:
                     await callback.message.delete()
@@ -695,8 +693,6 @@ async def _approve_user_from_message(
                 await _track_invite_link(inv_url, message.from_user)
             except Exception as e:
                 logger.warning(f"[LINK TRACK REPLY] failed: {e}")
-
-        await _send_welcome(bot, chat_id, message.from_user, settings_row)
 
     logger.info(f"[CAPTCHA REPLY] Passed join_request: user={user_id} chat={chat_id}")
 

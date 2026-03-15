@@ -913,7 +913,7 @@ async def on_channel_in_bot(callback: CallbackQuery, platform_user: dict | None)
         await callback.answer("Площадка не найдена", show_alert=True)
         return
 
-    status_label = "🟢 Активна" if ch["is_active"] else "🔴 Выключена"
+    status_label = "🟢 Включена" if ch["is_active"] else "🔴 Выключена"
     added = ch["added_at"].strftime("%d.%m.%Y") if ch.get("added_at") else "—"
     type_icon = "📢" if ch.get("chat_type") == "channel" else "👥"
     title = ch["chat_title"] or f"Чат {ch['chat_id']}"
@@ -952,11 +952,19 @@ async def on_ch_in_bot_toggle(callback: CallbackQuery, platform_user: dict | Non
         "UPDATE bot_chats SET is_active=$1 WHERE id=$2 AND owner_id=$3",
         new_val, ch_id, owner_id,
     )
-    await callback.answer("🟢 Активна" if new_val else "🔴 Выключена")
+    status_label = "🟢 Включена" if new_val else "🔴 Выключена"
+    await callback.answer(status_label)
     
-    # Перерендер экрана, чтобы кнопка сразу обновилась
-    callback.data = f"channel_in_bot:{ch_id}:{child_bot_id or ''}"
-    await on_channel_in_bot(callback, platform_user)
+    back_cb = f"bot_chats_list:{child_bot_id}" if child_bot_id else "menu:channels"
+    
+    # Обновляем только клавиатуру, это 100% надёжно и мгновенно
+    await callback.message.edit_reply_markup(
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=status_label, callback_data=f"ch_in_bot_toggle:{ch_id}:{child_bot_id or ''}")],
+            [InlineKeyboardButton(text="🗑 Удалить",  callback_data=f"ch_delete:{ch_id}:{child_bot_id or ''}")],
+            [InlineKeyboardButton(text="◀️ Назад",    callback_data=back_cb)],
+        ])
+    )
 
 
 @router.callback_query(F.data.startswith("channel_by_chat:"))

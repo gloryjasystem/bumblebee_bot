@@ -17,6 +17,10 @@
     <script>
         const tg = window.Telegram.WebApp;
         tg.ready();
+        tg.expand();
+        if (tg.requestFullscreen) {
+            tg.requestFullscreen();
+        }
 
         const params = new URLSearchParams(window.location.search);
         const tariff = params.get('tariff') || 'pro';

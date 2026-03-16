@@ -279,19 +279,11 @@ async def _show_captcha(callback: CallbackQuery, chat_id: int, owner_id: int):
                 callback_data=f"ch_captcha_emoji:{chat_id}",
             )])
 
-        if ctype == "simple":
-            buttons += [
-                [
-                    InlineKeyboardButton(text="✏️ Текст капчи",  callback_data=f"ch_captcha_text:{chat_id}"),
-                    InlineKeyboardButton(text="✏️ Текст кнопок", callback_data=f"ch_captcha_btns:{chat_id}"),
-                ],
-            ]
-        else:
-            buttons += [
-                [InlineKeyboardButton(text="✏️ Текст капчи",  callback_data=f"ch_captcha_text:{chat_id}")],
-            ]
-
         buttons += [
+            [
+                InlineKeyboardButton(text="✏️ Текст капчи",  callback_data=f"ch_captcha_text:{chat_id}"),
+                InlineKeyboardButton(text="✏️ Текст кнопок", callback_data=f"ch_captcha_btns:{chat_id}"),
+            ],
             [
                 InlineKeyboardButton(
                     text=f"🔄 Сброс капчи",

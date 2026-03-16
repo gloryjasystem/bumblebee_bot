@@ -1070,6 +1070,13 @@ async def on_general_reply_text_input(message: Message, state: FSMContext):
     data     = await state.get_data()
     chat_id  = data["chat_id"]
     owner_id = data["owner_id"]
+    prompt_mid = data.get("prompt_mid")
+
+    if prompt_mid:
+        try:
+            await message.bot.delete_message(message.chat.id, prompt_mid)
+        except Exception:
+            pass
 
     # Поддержка медиа
     if message.photo:
@@ -1111,9 +1118,19 @@ async def on_ch_ar_edit_global(
         return
     chat_id  = int(callback.data.split(":")[1])
     owner_id = platform_user["user_id"]
+    # Удаляем эхо-сообщение перед открытием формы
+    key = (owner_id, chat_id)
+    echo_id = _gr_echo_ids.pop(key, None)
+    if echo_id:
+        try:
+            await callback.bot.delete_message(chat_id=callback.message.chat.id, message_id=echo_id)
+        except Exception:
+            pass
+
     await state.set_state(MessagesFSM.waiting_for_general_reply_text)
-    await state.update_data(chat_id=chat_id, owner_id=owner_id)
+    await state.update_data(chat_id=chat_id, owner_id=owner_id, prompt_mid=callback.message.message_id)
     await callback.message.edit_text(
+        "✏️ <b>Редактирование общего ответа</b>\n\n"
         "<blockquote>⟲ Пришлите сообщение, которое будет "
         "использоваться для автоматического ответа.</blockquote>\n\n"
         "<b>Переменные:</b>\n"
@@ -1123,6 +1140,7 @@ async def on_ch_ar_edit_global(
         "├ Площадка: <code>{chat}</code>\n"
         "└ Текущая дата: <code>{day}</code>\n\n"
         "ⓘ Можно прикрепить медиа.",
+        parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="◀️ Отмена", callback_data=f"ch_autoreply:{chat_id}")],
         ]),
@@ -1196,23 +1214,32 @@ async def on_ch_ar_btns_global(
         return
     chat_id  = int(callback.data.split(":")[1])
     owner_id = platform_user["user_id"]
+    # Удаляем эхо-сообщение перед открытием формы
+    key = (owner_id, chat_id)
+    echo_id = _gr_echo_ids.pop(key, None)
+    if echo_id:
+        try:
+            await callback.bot.delete_message(chat_id=callback.message.chat.id, message_id=echo_id)
+        except Exception:
+            pass
+
     await state.set_state(MessagesFSM.waiting_for_general_reply_buttons)
-    await state.update_data(chat_id=chat_id, owner_id=owner_id)
+    await state.update_data(chat_id=chat_id, owner_id=owner_id, prompt_mid=callback.message.message_id)
     await callback.message.edit_text(
         "📎 Отправьте <b>кнопки</b>, которые будут добавлены к сообщению.\n\n"
-        "🔗 <b>URL-кнопки</b>\n\n"
+        "🔗 <u><b>URL-кнопки</b></u>\n\n"
         "<b>Одна кнопка в ряду:</b>\n"
-        "<code>Кнопка 1 — ссылка</code>\n"
-        "<code>Кнопка 2 — ссылка</code>\n\n"
+        "<blockquote><code>Кнопка 1 — ссылка</code>\n"
+        "<code>Кнопка 2 — ссылка</code></blockquote>\n\n"
         "<b>Несколько кнопок в ряду:</b>\n"
-        "<code>Кнопка 1 — ссылка | Кнопка 2 — ссылка</code>\n\n"
-        "🎨 <b>Цветные кнопки (добавь emoji перед названием):</b>\n"
-        "<code>🟦 Кнопка — ссылка</code> — синяя\n"
+        "<blockquote><code>Кнопка 1 — ссылка | Кнопка 2 — ссылка</code></blockquote>\n\n"
+        "🎨 <u><b>Цветные кнопки (добавь emoji перед названием):</b></u>\n"
+        "<blockquote><code>🟦 Кнопка — ссылка</code> — синяя\n"
         "<code>🟩 Кнопка — ссылка</code> — зелёная\n"
-        "<code>🟥 Кнопка — ссылка</code> — красная\n\n"
-        "*** <b>Другие виды кнопок</b>\n\n"
+        "<code>🟥 Кнопка — ссылка</code> — красная</blockquote>\n\n"
+        "*** <u><b>Другие виды кнопок</b></u>\n\n"
         "<b>WebApp кнопки:</b>\n"
-        "<code>Кнопка 1 — ссылка (webapp)</code>\n\n"
+        "<blockquote><code>Кнопка 1 — ссылка (webapp)</code></blockquote>\n\n"
         "ℹ️ Нажмите, чтобы скопировать.",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
@@ -1228,6 +1255,13 @@ async def on_general_reply_buttons_input(message: Message, state: FSMContext):
     chat_id  = data["chat_id"]
     owner_id = data["owner_id"]
     raw      = (message.text or "").strip()
+    prompt_mid = data.get("prompt_mid")
+
+    if prompt_mid:
+        try:
+            await message.bot.delete_message(message.chat.id, prompt_mid)
+        except Exception:
+            pass
 
     if raw == "-":
         buttons_json = None
@@ -1241,6 +1275,7 @@ async def on_general_reply_buttons_input(message: Message, state: FSMContext):
             row = []
             for btn_raw in line.split("|"):
                 btn_raw = btn_raw.strip()
+                # Поддерживаем em-dash (—), en-dash (–) и обычный дефис (-)
                 sep = None
                 if " — " in btn_raw:
                     sep = " — "
@@ -1248,6 +1283,13 @@ async def on_general_reply_buttons_input(message: Message, state: FSMContext):
                     sep = " – "
                 elif " - " in btn_raw:
                     sep = " - "
+                elif "—" in btn_raw:
+                    sep = "—"
+                elif "–" in btn_raw:
+                    sep = "–"
+                elif "-" in btn_raw:
+                    sep = "-"
+                
                 if sep:
                     idx = btn_raw.index(sep)
                     btn_text = btn_raw[:idx].strip()

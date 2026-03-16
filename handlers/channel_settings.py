@@ -352,6 +352,9 @@ async def on_req_confirm(callback: CallbackQuery, bot: Bot, state: FSMContext, p
         link_rows = await db.fetch("SELECT link FROM invite_links WHERE chat_id=$1::bigint AND link_type='request' AND is_active=true", c_id)
         invite_link_url = link_rows[0]["link"] if len(link_rows) == 1 else None
 
+        # Fetch settings once per chat for the welcome message
+        settings_row = await db.fetchrow("SELECT * FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint", owner_id, c_id)
+
         for row in pending_full:
             try:
                 if action == "accept":
@@ -366,9 +369,22 @@ async def on_req_confirm(callback: CallbackQuery, bot: Bot, state: FSMContext, p
                             last_name = None
                             language_code = row["language_code"] or None
                             is_premium = row["is_premium"]
+                            username = None
                         try:
                             await _track_invite_link(invite_link_url, _FakeUser())
                         except Exception: pass
+                    
+                    if settings_row:
+                        from handlers.join_requests import _register_user, _send_welcome
+                        class _FakeUser2:
+                            id = row["user_id"]
+                            first_name = row["first_name"] or ""
+                            last_name = None
+                            language_code = row["language_code"] or None
+                            is_premium = row["is_premium"]
+                            username = None
+                        await _register_user(owner_id, c_id, _FakeUser2())
+                        await _send_welcome(child_bot, c_id, _FakeUser2(), dict(settings_row))
                 else:
                     await child_bot.decline_chat_join_request(c_id, row["user_id"])
                     await db.execute("UPDATE join_requests SET status='declined', resolved_at=now() WHERE owner_id=$1 AND chat_id=$2::bigint AND user_id=$3", owner_id, c_id, row["user_id"])
@@ -1946,6 +1962,9 @@ async def on_bs_req_accept_all(callback: CallbackQuery, bot: Bot, platform_user:
             chat_id,
         )
         invite_link_url = link_rows[0]["link"] if len(link_rows) == 1 else None
+        
+        # Настройки для приветственного сообщения
+        settings_row = await db.fetchrow("SELECT * FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint", owner_id, chat_id)
 
         pending = await db.fetch(
             "SELECT jr.user_id, jr.first_name, COALESCE(bu.language_code,'') AS language_code, "
@@ -1972,10 +1991,27 @@ async def on_bs_req_accept_all(callback: CallbackQuery, bot: Bot, platform_user:
                             last_name = None
                             language_code = row["language_code"] or None
                             is_premium = row["is_premium"]
+                            username = None
 
                         await _track_invite_link(invite_link_url, _FakeUser())
                     except Exception:
                         pass
+                
+                if settings_row:
+                    try:
+                        from handlers.join_requests import _register_user, _send_welcome
+                        class _FakeUser2:
+                            id = row["user_id"]
+                            first_name = row["first_name"] or ""
+                            last_name = None
+                            language_code = row["language_code"] or None
+                            is_premium = row["is_premium"]
+                            username = None
+                        await _register_user(owner_id, chat_id, _FakeUser2())
+                        await _send_welcome(child_bot_instance, chat_id, _FakeUser2(), dict(settings_row))
+                    except Exception as _e:
+                        import logging
+                        logging.getLogger(__name__).warning(f"[MANUAL ACCEPT] Failed to send welcome: {_e}")
             except Exception:
                 await db.execute(
                     "UPDATE join_requests SET status='expired', resolved_at=now() "

@@ -551,6 +551,16 @@ async def on_ch_cap_anim_menu(call: CallbackQuery, state: FSMContext, platform_u
     
     anim_msg = None
     menu_msg = None
+    
+    # Очищаем старую анимацию, если мы вернулись сюда по кнопке "Отмена" 
+    data = await state.get_data()
+    old_anim_id = data.get("anim_msg_id")
+    if old_anim_id:
+        try:
+            await call.message.chat.delete_message(old_anim_id)
+        except Exception:
+            pass
+
     if has_anim:
         # We need to send a new message with the animation, so we delete the current menu
         try:
@@ -575,11 +585,11 @@ async def on_ch_cap_anim_menu(call: CallbackQuery, state: FSMContext, platform_u
         menu_msg = await call.message.answer(
             text,
             parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=kb + [[InlineKeyboardButton(text="◀️ Назад", callback_data=f"ch_captcha:{chat_id}")]]),
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=kb + [[InlineKeyboardButton(text="◀️ Назад", callback_data=f"ch_cap_anim_back:{chat_id}")]]),
         )
     else:
         # No animation yet, just edit the existing text
-        kb.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"ch_captcha:{chat_id}")])
+        kb.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"ch_cap_anim_back:{chat_id}")])
         menu_msg = await call.message.edit_text(
             text,
             parse_mode="HTML",
@@ -595,6 +605,26 @@ async def on_ch_cap_anim_menu(call: CallbackQuery, state: FSMContext, platform_u
         menu_msg_id=menu_msg.message_id,
         anim_msg_id=anim_msg.message_id if anim_msg else None
     )
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("ch_cap_anim_back:"))
+async def on_ch_cap_anim_back(call: CallbackQuery, state: FSMContext, platform_user: dict | None):
+    if not platform_user:
+        return
+    chat_id = int(call.data.split(":")[1])
+    
+    # Удаляем сообщение с анимацией, если оно есть
+    data = await state.get_data()
+    anim_msg_id = data.get("anim_msg_id")
+    if anim_msg_id:
+        try:
+            await call.message.chat.delete_message(anim_msg_id)
+        except Exception:
+            pass
+            
+    await state.clear()
+    await _show_captcha(call, chat_id, platform_user["user_id"])
     await call.answer()
 
 

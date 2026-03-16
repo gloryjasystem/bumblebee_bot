@@ -1350,6 +1350,13 @@ async def on_ar_text_input(message: Message, state: FSMContext):
     owner_id = data["owner_id"]
     keyword  = data.get("keyword", "")
     ar_id    = data.get("ar_id")  # есть при редактировании, нет при создании
+    prompt_mid = data.get("prompt_mid")
+
+    if prompt_mid:
+         try:
+             await message.bot.delete_message(message.chat.id, prompt_mid)
+         except Exception:
+             pass
 
     # Поддержка медиа
     if message.photo:
@@ -1551,8 +1558,17 @@ async def on_ch_ar_kw_edit(
     )
     keyword = (row["keyword"] if row else "") or ""
 
+    # Удаляем эхо перед открытием формы редактирования
+    key = (owner_id, chat_id, ar_id)
+    echo_id = _kw_echo_ids.pop(key, None)
+    if echo_id:
+        try:
+            await callback.bot.delete_message(chat_id=callback.message.chat.id, message_id=echo_id)
+        except Exception:
+            pass
+
     await state.set_state(MessagesFSM.waiting_for_autoreply_text)
-    await state.update_data(chat_id=chat_id, owner_id=owner_id, keyword=keyword, ar_id=ar_id)
+    await state.update_data(chat_id=chat_id, owner_id=owner_id, keyword=keyword, ar_id=ar_id, prompt_mid=callback.message.message_id)
     await callback.message.edit_text(
         f"✏️ <b>Редактирование ответа</b>\n\nТриггер: <code>{keyword}</code>\n\n"
         "<blockquote>⟲ Пришлите новое сообщение для автоматического ответа.</blockquote>\n\n"
@@ -1681,9 +1697,9 @@ async def on_ch_ar_kw_btns(
             pass
 
     await state.set_state(MessagesFSM.waiting_for_autoreply_buttons)
-    await state.update_data(chat_id=chat_id, owner_id=owner_id, ar_id=ar_id)
+    await state.update_data(chat_id=chat_id, owner_id=owner_id, ar_id=ar_id, prompt_mid=callback.message.message_id)
     await callback.message.edit_text(
-        "� Отправьте <b>кнопки</b>, которые будут добавлены к сообщению.\n\n"
+        " Отправьте <b>кнопки</b>, которые будут добавлены к сообщению.\n\n"
         "🔗 <b>URL-кнопки</b>\n\n"
         "<b>Одна кнопка в ряду:</b>\n"
         "<code>Кнопка 1 — ссылка</code>\n"
@@ -1714,6 +1730,13 @@ async def on_ar_buttons_input(message: Message, state: FSMContext):
     owner_id = data["owner_id"]
     ar_id    = data["ar_id"]
     raw      = (message.text or "").strip()
+    prompt_mid = data.get("prompt_mid")
+
+    if prompt_mid:
+         try:
+             await message.bot.delete_message(message.chat.id, prompt_mid)
+         except Exception:
+             pass
 
     if raw == "-":
         buttons_json = None

@@ -1987,7 +1987,7 @@ async def on_mailing_run(callback: CallbackQuery, bot: Bot, platform_user: dict 
     async def progress_callback(ml_id: int, sent: int, total: int,
                                 errors: int, status: str):
         """Обновляем сообщение с прогрессом."""
-        m_row = await db.fetchrow("SELECT started_at FROM mailings WHERE id=$1", ml_id)
+        m_row = await db.fetchrow("SELECT started_at, child_bot_id, chat_id FROM mailings WHERE id=$1", ml_id)
         started_at = m_row["started_at"] if m_row else None
         text = _mailing_progress_text(ml_id, sent, total, errors, status, bot_username, started_at)
         kb = kb_mailing_control(ml_id, False, "low") if status == "running" else None
@@ -2001,6 +2001,38 @@ async def on_mailing_run(callback: CallbackQuery, bot: Bot, platform_user: dict 
             )
         except Exception as e:
             logger.debug(f"Progress update failed: {e}")
+
+        # После завершения — отправляем меню рассылки
+        if status in ("done", "cancelled", "failed") and m_row:
+            try:
+                chat_id_from_m = m_row.get("chat_id")
+                child_bot_from_m = m_row.get("child_bot_id")
+                if chat_id_from_m:
+                    final_kb = InlineKeyboardMarkup(inline_keyboard=[
+                        [InlineKeyboardButton(text="➕ Создать рассылку", callback_data=f"mailing_start:{chat_id_from_m}")],
+                        [InlineKeyboardButton(text="📅 Запланированные",  callback_data=f"mailing_scheduled:{chat_id_from_m}")],
+                        [InlineKeyboardButton(text="◀️ Назад",             callback_data=f"channel_by_chat:{chat_id_from_m}")],
+                    ])
+                elif child_bot_from_m:
+                    final_kb = InlineKeyboardMarkup(inline_keyboard=[
+                        [InlineKeyboardButton(text="➕ Создать рассылку", callback_data=f"mailing_bot_start:{child_bot_from_m}")],
+                        [InlineKeyboardButton(text="📅 Запланированные",  callback_data=f"mailing_bot_scheduled:{child_bot_from_m}")],
+                        [InlineKeyboardButton(text="◀️ Назад",             callback_data=f"bs_mailing:{child_bot_from_m}")],
+                    ])
+                else:
+                    final_kb = InlineKeyboardMarkup(inline_keyboard=[
+                        [InlineKeyboardButton(text="➕ Создать рассылку", callback_data="menu:mailing")],
+                        [InlineKeyboardButton(text="◀️ Назад",             callback_data="menu:mailing")],
+                    ])
+
+                await bot.send_message(
+                    chat_id=upd_chat_id,
+                    text="📨 <b>Рассылка</b>\n\nВыберите действие ⬇️",
+                    parse_mode="HTML",
+                    reply_markup=final_kb,
+                )
+            except Exception:
+                pass
 
     asyncio.create_task(mailing_svc.run_mailing(mailing_id, bot, progress_callback))
 

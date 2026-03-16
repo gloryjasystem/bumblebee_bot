@@ -583,7 +583,7 @@ import json as _json
 
 def _timer_label(v: int) -> str:
     if not v:
-        return "0 сек"
+        return "нету"
     if v < 60:
         return f"{v} сек"
     return f"{v // 60} мин"

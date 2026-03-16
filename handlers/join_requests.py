@@ -492,15 +492,15 @@ async def _send_welcome(bot: Bot, chat_id: int, user, settings_row: dict):
         # Авто-удаление
         if timer_val > 0:
             for sent in sent_msgs:
-                asyncio.create_task(_delete_later(bot, user.id, sent.message_id, timer_val // 60 or 1))
+                asyncio.create_task(_delete_later(bot, user.id, sent.message_id, timer_val))
 
     except Exception as e:
         logger.debug(f"[WELCOME] Failed to send to user {user.id}: {e}")
 
 
-async def _delete_later(bot: Bot, chat_id: int, message_id: int, delay_min: int):
-    """Удаляет сообщение через delay_min минут."""
-    await asyncio.sleep(delay_min * 60)
+async def _delete_later(bot: Bot, chat_id: int, message_id: int, delay_sec: int):
+    """Удаляет сообщение через delay_sec секунд."""
+    await asyncio.sleep(delay_sec)
     try:
         await bot.delete_message(chat_id, message_id)
     except Exception:
@@ -580,7 +580,7 @@ async def _send_farewell(bot: Bot, chat_id: int, user, settings_row: dict):
 
         if farewell_timer > 0:
             for sent in fw_sent:
-                asyncio.create_task(_delete_later(bot, user.id, sent.message_id, farewell_timer // 60 or 1))
+                asyncio.create_task(_delete_later(bot, user.id, sent.message_id, farewell_timer))
     except Exception as e:
         logger.debug(f"[FAREWELL] Failed to send to user {user.id}: {e}")
 

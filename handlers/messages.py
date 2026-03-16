@@ -280,18 +280,18 @@ async def _show_captcha(callback: CallbackQuery, chat_id: int, owner_id: int):
             )])
 
         if ctype == "simple":
-            buttons += [
-                [
-                    InlineKeyboardButton(text="✏️ Текст капчи",  callback_data=f"ch_captcha_text:{chat_id}"),
-                    InlineKeyboardButton(text="✏️ Текст кнопок", callback_data=f"ch_captcha_btns:{chat_id}"),
-                ],
-            ]
+            buttons.append([
+                InlineKeyboardButton(text="✏️ Текст капчи",  callback_data=f"ch_captcha_text:{chat_id}"),
+                InlineKeyboardButton(text="✏️ Текст кнопок", callback_data=f"ch_captcha_btns:{chat_id}"),
+            ])
         else:
-            buttons += [
-                [InlineKeyboardButton(text="✏️ Текст капчи",  callback_data=f"ch_captcha_text:{chat_id}")],
-            ]
+            # Для рандомной капчи скрываем кнопку настройки текста кнопок
+            buttons.append([
+                InlineKeyboardButton(text="✏️ Текст капчи", callback_data=f"ch_captcha_text:{chat_id}"),
+            ])
 
-        buttons += [
+        buttons.extend([
+            [
                 InlineKeyboardButton(
                     text=f"🔄 Сброс капчи",
                     callback_data=f"ch_cap_reset:{chat_id}",
@@ -320,7 +320,7 @@ async def _show_captcha(callback: CallbackQuery, chat_id: int, owner_id: int):
                 text=f"{accept_a_icon} Принимать всех: {'вкл' if accept_all else 'выкл'}",
                 callback_data=f"ch_cap_toggle:{chat_id}:accept_all",
             )],
-        ]
+        ])
 
     buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"ch_messages:{chat_id}")])
 

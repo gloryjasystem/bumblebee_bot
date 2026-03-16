@@ -670,7 +670,22 @@ async def _show_msg_editor(event: Message | CallbackQuery, chat_id_str: str, msg
         await _show_msg_prompt(callback, chat_id_str, msg_type, scope)
         return
 
-    # Отправляем эхо сообщения пользователю, затем меню
+    # Удаляем старое эхо перед отправкой нового (если оно есть)
+    owner_id = (await state.get_data()).get("owner_id") if state else None
+    old_echo_mid = None
+    if state:
+        old_echo_mid = (await state.get_data()).get("editor_echo_mid")
+    if not old_echo_mid and owner_id:
+        old_echo_mid = await _get_echo_mid(owner_id, int(chat_id_str), msg_type)
+
+    if old_echo_mid:
+        echo_chat_id = (await state.get_data()).get("editor_echo_chat_id") if state else msg.chat.id
+        if not echo_chat_id:
+            echo_chat_id = msg.chat.id
+        try:
+            await msg.bot.delete_message(chat_id=echo_chat_id, message_id=old_echo_mid)
+        except Exception:
+            pass
 
     try:
         await msg.delete()

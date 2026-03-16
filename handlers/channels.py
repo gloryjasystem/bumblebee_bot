@@ -147,7 +147,7 @@ async def on_bot_settings(callback: CallbackQuery, platform_user: dict | None):
     pending = await db.fetchval(
         """SELECT COUNT(*) FROM join_requests jr
            JOIN bot_chats bc ON jr.chat_id=bc.chat_id AND jr.owner_id=bc.owner_id
-           WHERE bc.child_bot_id=$1 AND bc.owner_id=$2 AND jr.status='pending'""",
+           WHERE bc.child_bot_id=$1 AND bc.owner_id=$2 AND jr.status IN ('pending','captcha_verified')""",
         child_bot_id, owner_id,
     ) or 0
     # Статистика капчи (с защитой от ошибок, если таблица ещё не создана)
@@ -768,7 +768,7 @@ async def _show_channel_detail(callback: CallbackQuery, platform_user: dict, ch_
         owner_id, chat_id, yesterday,
     ) or 0
     pending_requests = await db.fetchval(
-        "SELECT COUNT(*) FROM join_requests WHERE owner_id=$1 AND chat_id=$2::bigint AND status='pending'",
+        "SELECT COUNT(*) FROM join_requests WHERE owner_id=$1 AND chat_id=$2::bigint AND status IN ('pending','captcha_verified')",
         owner_id, chat_id,
     ) or 0
     # Статистика капчи (с защитой от ошибок, если таблица ещё не создана)

@@ -266,13 +266,18 @@ async def send_captcha(bot: Bot, event: ChatJoinRequest, settings_row: dict):
         )
     except Exception as e:
         logger.error(f"[CAPTCHA SEND ERROR] Could not send to {user.id}: {e}")
-        # Пользователь не открыл диалог с ботом → авто-одобряем
+        # Пользователь не открыл диалог с ботом
         _pending.pop(key, None)
         _expected.pop(key, None)
-        await event.approve()
-        from handlers.join_requests import _register_user, _send_welcome
-        await _register_user(settings_row["owner_id"], event.chat.id, user)
-        await _send_welcome(bot, event.chat.id, user, settings_row)
+        # Если автопринятие включено — принимаем; если выключено — оставляем на ручное
+        if settings_row.get("autoaccept"):
+            await event.approve()
+            from handlers.join_requests import _register_user, _send_welcome
+            await _register_user(settings_row["owner_id"], event.chat.id, user)
+            await _send_welcome(bot, event.chat.id, user, settings_row)
+        else:
+            # Автопринятие выключено: оставляем заявку pending для ручного одобрения
+            logger.info(f"[CAPTCHA] DM failed, autoaccept=off — leaving {user.id} pending for manual review")
 
 
 
@@ -545,52 +550,102 @@ async def _approve_user(
         return
 
     if success:
-        _passed_captcha_group.add(key)
-        try:
-            await event.approve()
-        except Exception as e:
-            _passed_captcha_group.discard(key)
-            logger.warning(f"Approve failed: {e}")
-            await callback.answer("❌ Не удалось одобрить заявку", show_alert=True)
-            return
-
         settings_row = await db.fetchrow(
             "SELECT * FROM bot_chats WHERE chat_id=$1::bigint AND is_active=true", chat_id
         )
-        if settings_row:
-            from handlers.join_requests import _register_user, _send_welcome
-            await _register_user(settings_row["owner_id"], chat_id, callback.from_user)
+        autoaccept = settings_row.get("autoaccept") if settings_row else True
 
+        if autoaccept:
+            # Автопринятие включено — сразу принимаем
+            _passed_captcha_group.add(key)
+            try:
+                await event.approve()
+            except Exception as e:
+                _passed_captcha_group.discard(key)
+                logger.warning(f"Approve failed: {e}")
+                await callback.answer("❌ Не удалось одобрить заявку", show_alert=True)
+                return
+
+            if settings_row:
+                from handlers.join_requests import _register_user, _send_welcome
+                await _register_user(settings_row["owner_id"], chat_id, callback.from_user)
+
+                try:
+                    await db.execute(
+                        "INSERT INTO captcha_events (owner_id, chat_id, user_id, passed) VALUES ($1,$2,$3,true)",
+                        settings_row["owner_id"], chat_id, callback.from_user.id,
+                    )
+                except Exception as ex:
+                    logger.debug(f"captcha_events insert failed: {ex}")
+
+                inv_url = event.invite_link.invite_link if getattr(event, "invite_link", None) and event.invite_link else None
+                if not inv_url:
+                    inv_url = _pending_link_urls.pop(key, None)
+                logger.info(f"[CAPTCHA APPROVED] user={callback.from_user.id} invite_link={inv_url}")
+                if inv_url:
+                    try:
+                        from scheduler.child_bot_runner import _track_invite_link
+                        tracked = await _track_invite_link(inv_url, callback.from_user)
+                        logger.info(f"[CAPTCHA TRACK] link_id={tracked}")
+                    except Exception as e:
+                        logger.warning(f"[LINK TRACK] failed: {e}")
+
+                if settings_row.get("captcha_delete"):
+                    try:
+                        await callback.message.delete()
+                    except Exception:
+                        pass
+                    await callback.answer("✅ Отлично!")
+                    return
+
+            await callback.message.edit_text("✅ Капча пройдена! Добро пожаловать.")
+            await callback.answer("✅ Отлично!")
+
+        else:
+            # Автопринятие выключено — капча пройдена, но заявка ждёт ручного одобрения
             try:
                 await db.execute(
                     "INSERT INTO captcha_events (owner_id, chat_id, user_id, passed) VALUES ($1,$2,$3,true)",
                     settings_row["owner_id"], chat_id, callback.from_user.id,
                 )
             except Exception as ex:
-                logger.debug(f"captcha_events insert failed: {ex}")
+                logger.debug(f"captcha_events insert failed (manual mode): {ex}")
+
+            # Помечаем заявку как прошедшую капчу (captcha_verified)
+            try:
+                await db.execute(
+                    "UPDATE join_requests SET status='captcha_verified', resolved_at=NULL "
+                    "WHERE owner_id=$1 AND chat_id=$2 AND user_id=$3",
+                    settings_row["owner_id"], chat_id, callback.from_user.id,
+                )
+            except Exception as ex:
+                logger.debug(f"join_requests captcha_verified update failed: {ex}")
 
             inv_url = event.invite_link.invite_link if getattr(event, "invite_link", None) and event.invite_link else None
             if not inv_url:
                 inv_url = _pending_link_urls.pop(key, None)
-            logger.info(f"[CAPTCHA APPROVED] user={callback.from_user.id} invite_link={inv_url}")
             if inv_url:
                 try:
                     from scheduler.child_bot_runner import _track_invite_link
-                    tracked = await _track_invite_link(inv_url, callback.from_user)
-                    logger.info(f"[CAPTCHA TRACK] link_id={tracked}")
+                    await _track_invite_link(inv_url, callback.from_user)
                 except Exception as e:
-                    logger.warning(f"[LINK TRACK] failed: {e}")
+                    logger.warning(f"[LINK TRACK manual] failed: {e}")
+
+            logger.info(f"[CAPTCHA] Passed (autoaccept=off) user={callback.from_user.id} chat={chat_id} — waiting for admin")
 
             if settings_row.get("captcha_delete"):
                 try:
                     await callback.message.delete()
                 except Exception:
                     pass
-                await callback.answer("✅ Отлично!")
-                return
-
-        await callback.message.edit_text("✅ Капча пройдена! Добро пожаловать.")
-        await callback.answer("✅ Отлично!")
+                await callback.answer("✅ Капча пройдена!")
+            else:
+                await callback.message.edit_text(
+                    "✅ Капча пройдена!\n\n"
+                    "⏳ Ваша заявка на вступление отправлена администратору.\n"
+                    "Ожидайте подтверждения."
+                )
+                await callback.answer("✅ Готово!")
 
     else:
         try:
@@ -661,40 +716,82 @@ async def _approve_user_from_message(
         return
 
     # ── Join-request режим ──
-    _passed_captcha_group.add(key)
-    try:
-        await event.approve()
-    except Exception as e:
-        _passed_captcha_group.discard(key)
-        logger.warning(f"[CAPTCHA REPLY] Approve failed: {e}")
-        return
-
     settings_row = await db.fetchrow(
         "SELECT * FROM bot_chats WHERE chat_id=$1::bigint AND is_active=true", chat_id
     )
-    if settings_row:
-        from handlers.join_requests import _register_user, _send_welcome
-        await _register_user(settings_row["owner_id"], chat_id, message.from_user)
+    autoaccept = settings_row.get("autoaccept") if settings_row else True
 
+    if autoaccept:
+        # Автопринятие включено — сразу принимаем
+        _passed_captcha_group.add(key)
         try:
-            await db.execute(
-                "INSERT INTO captcha_events (owner_id, chat_id, user_id, passed) VALUES ($1,$2,$3,true)",
-                settings_row["owner_id"], chat_id, message.from_user.id,
-            )
-        except Exception as ex:
-            logger.debug(f"captcha_events insert failed (reply): {ex}")
+            await event.approve()
+        except Exception as e:
+            _passed_captcha_group.discard(key)
+            logger.warning(f"[CAPTCHA REPLY] Approve failed: {e}")
+            return
 
-        inv_url = event.invite_link.invite_link if getattr(event, "invite_link", None) and event.invite_link else None
-        if not inv_url:
-            inv_url = _pending_link_urls.pop(key, None)
-        if inv_url:
+        if settings_row:
+            from handlers.join_requests import _register_user, _send_welcome
+            await _register_user(settings_row["owner_id"], chat_id, message.from_user)
+
             try:
-                from scheduler.child_bot_runner import _track_invite_link
-                await _track_invite_link(inv_url, message.from_user)
-            except Exception as e:
-                logger.warning(f"[LINK TRACK REPLY] failed: {e}")
+                await db.execute(
+                    "INSERT INTO captcha_events (owner_id, chat_id, user_id, passed) VALUES ($1,$2,$3,true)",
+                    settings_row["owner_id"], chat_id, message.from_user.id,
+                )
+            except Exception as ex:
+                logger.debug(f"captcha_events insert failed (reply): {ex}")
 
-    logger.info(f"[CAPTCHA REPLY] Passed join_request: user={user_id} chat={chat_id}")
+            inv_url = event.invite_link.invite_link if getattr(event, "invite_link", None) and event.invite_link else None
+            if not inv_url:
+                inv_url = _pending_link_urls.pop(key, None)
+            if inv_url:
+                try:
+                    from scheduler.child_bot_runner import _track_invite_link
+                    await _track_invite_link(inv_url, message.from_user)
+                except Exception as e:
+                    logger.warning(f"[LINK TRACK REPLY] failed: {e}")
+
+        logger.info(f"[CAPTCHA REPLY] Passed join_request (autoaccept=on): user={user_id} chat={chat_id}")
+
+    else:
+        # Автопринятие выключено — капча пройдена, ждём ручного одобрения
+        if settings_row:
+            try:
+                await db.execute(
+                    "INSERT INTO captcha_events (owner_id, chat_id, user_id, passed) VALUES ($1,$2,$3,true)",
+                    settings_row["owner_id"], chat_id, message.from_user.id,
+                )
+            except Exception as ex:
+                logger.debug(f"captcha_events insert failed (reply manual): {ex}")
+
+            try:
+                await db.execute(
+                    "UPDATE join_requests SET status='captcha_verified', resolved_at=NULL "
+                    "WHERE owner_id=$1 AND chat_id=$2 AND user_id=$3",
+                    settings_row["owner_id"], chat_id, message.from_user.id,
+                )
+            except Exception as ex:
+                logger.debug(f"join_requests captcha_verified update failed (reply): {ex}")
+
+            inv_url = event.invite_link.invite_link if getattr(event, "invite_link", None) and event.invite_link else None
+            if not inv_url:
+                inv_url = _pending_link_urls.pop(key, None)
+            if inv_url:
+                try:
+                    from scheduler.child_bot_runner import _track_invite_link
+                    await _track_invite_link(inv_url, message.from_user)
+                except Exception as e:
+                    logger.warning(f"[LINK TRACK REPLY manual] failed: {e}")
+
+        await bot.send_message(
+            user_id,
+            "✅ Капча пройдена!\n\n"
+            "⏳ Ваша заявка на вступление отправлена администратору.\n"
+            "Ожидайте подтверждения.",
+        )
+        logger.info(f"[CAPTCHA REPLY] Passed join_request (autoaccept=off): user={user_id} chat={chat_id} — waiting for admin")
 
 
 

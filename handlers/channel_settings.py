@@ -93,7 +93,7 @@ async def _show_requests_menu(callback: CallbackQuery, platform_user: dict, chat
     # 1. Старше 30 дней — Telegram их авто-отклоняет
     await db.execute(
         "UPDATE join_requests SET status='expired', resolved_at=now() "
-        "WHERE owner_id=$1 AND chat_id=$2::bigint AND status='pending' "
+        "WHERE owner_id=$1 AND chat_id=$2::bigint AND status IN ('pending','captcha_verified') "
         "AND requested_at < now() - interval '30 days'",
         owner_id, chat_id,
     )
@@ -112,7 +112,7 @@ async def _show_requests_menu(callback: CallbackQuery, platform_user: dict, chat
 
     # Актуальное кол-во ожидающих заявок (свежий запрос после очистки)
     pending = await db.fetchval(
-        "SELECT COUNT(*) FROM join_requests WHERE owner_id=$1 AND chat_id=$2::bigint AND status='pending'",
+        "SELECT COUNT(*) FROM join_requests WHERE owner_id=$1 AND chat_id=$2::bigint AND status IN ('pending','captcha_verified')",
         owner_id, chat_id,
     ) or 0
 
@@ -201,12 +201,12 @@ async def on_req_decide(callback: CallbackQuery, state: FSMContext, platform_use
     
     if scope == "ch":
         pending = await db.fetchval(
-            "SELECT COUNT(*) FROM join_requests WHERE owner_id=$1 AND chat_id=$2::bigint AND status='pending'",
+            "SELECT COUNT(*) FROM join_requests WHERE owner_id=$1 AND chat_id=$2::bigint AND status IN ('pending','captcha_verified')",
             owner_id, target_id,
         ) or 0
     else:
         pending = await db.fetchval(
-            "SELECT COUNT(*) FROM join_requests jr JOIN bot_chats bc ON jr.chat_id=bc.chat_id AND jr.owner_id=bc.owner_id WHERE bc.child_bot_id=$1 AND bc.owner_id=$2 AND jr.status='pending'",
+            "SELECT COUNT(*) FROM join_requests jr JOIN bot_chats bc ON jr.chat_id=bc.chat_id AND jr.owner_id=bc.owner_id WHERE bc.child_bot_id=$1 AND bc.owner_id=$2 AND jr.status IN ('pending','captcha_verified')",
             target_id, owner_id,
         ) or 0
 
@@ -345,7 +345,7 @@ async def on_req_confirm(callback: CallbackQuery, bot: Bot, state: FSMContext, p
         pending_full = await db.fetch(
             "SELECT jr.user_id, jr.first_name, COALESCE(bu.language_code,'') AS language_code, COALESCE(bu.is_premium, false) AS is_premium "
             "FROM join_requests jr LEFT JOIN bot_users bu ON bu.user_id=jr.user_id AND bu.chat_id=$2::bigint "
-            "WHERE jr.owner_id=$1 AND jr.chat_id=$2::bigint AND jr.status='pending' ORDER BY jr.requested_at ASC LIMIT $3",
+            "WHERE jr.owner_id=$1 AND jr.chat_id=$2::bigint AND jr.status IN ('pending','captcha_verified') ORDER BY jr.status DESC, jr.requested_at ASC LIMIT $3",
             owner_id, c_id, rem
         )
         
@@ -1850,7 +1850,7 @@ async def _show_bs_requests(callback: CallbackQuery, platform_user: dict, child_
     pending = await db.fetchval(
         """SELECT COUNT(*) FROM join_requests jr
            JOIN bot_chats bc ON jr.chat_id=bc.chat_id AND jr.owner_id=bc.owner_id
-           WHERE bc.child_bot_id=$1 AND bc.owner_id=$2 AND jr.status='pending'""",
+           WHERE bc.child_bot_id=$1 AND bc.owner_id=$2 AND jr.status IN ('pending','captcha_verified')""",
         child_bot_id, owner_id,
     ) or 0
     auto_label  = "✅ Автопринятие: ВКЛ 🟢" if auto else "☑️ Автопринятие: ВЫКЛ 🔴"
@@ -1952,7 +1952,7 @@ async def on_bs_req_accept_all(callback: CallbackQuery, bot: Bot, platform_user:
             "       COALESCE(bu.is_premium, false) AS is_premium "
             "FROM join_requests jr "
             "LEFT JOIN bot_users bu ON bu.user_id=jr.user_id AND bu.chat_id=$2::bigint "
-            "WHERE jr.owner_id=$1 AND jr.chat_id=$2::bigint AND jr.status='pending'",
+            "WHERE jr.owner_id=$1 AND jr.chat_id=$2::bigint AND jr.status IN ('pending','captcha_verified')",
             owner_id, chat_id)
         for row in pending:
             try:
@@ -2011,7 +2011,7 @@ async def on_bs_req_decline_all(callback: CallbackQuery, bot: Bot, platform_user
     declined = 0
     for chat_row in chats:
         pending = await db.fetch(
-            "SELECT user_id FROM join_requests WHERE owner_id=$1 AND chat_id=$2::bigint AND status='pending'",
+            "SELECT user_id FROM join_requests WHERE owner_id=$1 AND chat_id=$2::bigint AND status IN ('pending','captcha_verified')",
             owner_id, chat_row["chat_id"])
         for row in pending:
             try:

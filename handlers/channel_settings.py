@@ -1139,23 +1139,47 @@ async def on_msg_buttons_input(message: Message, state: FSMContext):
             pass
 
     raw = sanitize(message.text or "", max_len=2048)
-    buttons = []
-    for line in raw.splitlines():
-        line = line.strip()
-        if "—" in line:
-            parts = line.split("—", 1)
-        elif "-" in line:
-            parts = line.split("-", 1)
-        else:
-            continue
-        btn_text = parts[0].strip()
-        btn_url = parts[1].strip()
-        if btn_text and btn_url.startswith("http"):
-            buttons.append({"text": btn_text, "url": btn_url})
+    if raw == "-":
+        buttons = []
+    else:
+        # Формат: каждая строка — ряд кнопок.
+        # Кнопки в ряду разделены " | ".
+        buttons = []
+        for line in raw.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            row = []
+            for btn_raw in line.split("|"):
+                btn_raw = btn_raw.strip()
+                # Поддерживаем em-dash (—), en-dash (–) и обычный дефис (-)
+                sep = None
+                if " — " in btn_raw:
+                    sep = " — "
+                elif " – " in btn_raw:
+                    sep = " – "
+                elif " - " in btn_raw:
+                    sep = " - "
+                elif "—" in btn_raw:
+                    sep = "—"
+                elif "–" in btn_raw:
+                    sep = "–"
+                elif "-" in btn_raw:
+                    sep = "-"
+                
+                if sep:
+                    idx = btn_raw.index(sep)
+                    btn_text = btn_raw[:idx].strip()
+                    btn_url  = btn_raw[idx + len(sep):].strip()
+                    if btn_text and btn_url.startswith("http"):
+                        row.append({"text": btn_text, "url": btn_url})
+            if row:
+                buttons.append(row)
 
-    if not buttons:
+    if not buttons and raw != "-":
         await message.answer(
-            "⚠️ Не удалось распознать кнопки. Формат: <code>Текст — https://ссылка</code>",
+            "⚠️ Не удалось распознать кнопки. Формат: <code>Текст — https://ссылка</code>\n"
+            "Допускается несколько кнопок через <code>|</code>",
             parse_mode="HTML",
         )
         return

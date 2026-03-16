@@ -1752,12 +1752,20 @@ async def on_ar_buttons_input(message: Message, state: FSMContext):
             row = []
             for btn_raw in line.split("|"):
                 btn_raw = btn_raw.strip()
-                # Поддерживаем en-dash (–) и обычный дефис (-)
+                # Поддерживаем em-dash (—), en-dash (–) и обычный дефис (-)
                 sep = None
-                if " – " in btn_raw:
+                if " — " in btn_raw:
+                    sep = " — "
+                elif " – " in btn_raw:
                     sep = " – "
                 elif " - " in btn_raw:
                     sep = " - "
+                elif "—" in btn_raw:
+                    sep = "—"
+                elif "–" in btn_raw:
+                    sep = "–"
+                elif "-" in btn_raw:
+                    sep = "-"
                 if sep:
                     idx = btn_raw.index(sep)
                     btn_text = btn_raw[:idx].strip()

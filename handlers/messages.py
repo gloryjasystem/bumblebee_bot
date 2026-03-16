@@ -750,7 +750,8 @@ async def on_ch_captcha_text(callback: CallbackQuery, state: FSMContext, platfor
         (ch.get("captcha_type") or "simple") if ch else "simple", "простой"
     )
     await state.set_state(MessagesFSM.waiting_for_captcha_text)
-    await state.update_data(chat_id=chat_id, owner_id=platform_user["user_id"])
+    await state.update_data(chat_id=chat_id, owner_id=platform_user["user_id"],
+                            editor_prompt_mid=callback.message.message_id)
     await callback.message.edit_text(
         f"Пришлите сообщение для <u>{ctype_label} капчи</u>.\n\n"
         "<b>Переменные:</b>\n"
@@ -770,6 +771,13 @@ async def on_captcha_text_input(message: Message, state: FSMContext):
     data     = await state.get_data()
     chat_id  = data["chat_id"]
     owner_id = data["owner_id"]
+    prompt_mid = data.get("editor_prompt_mid")
+
+    if prompt_mid:
+        try:
+            await message.bot.delete_message(chat_id=message.chat.id, message_id=prompt_mid)
+        except Exception:
+            pass
 
     # Поддержка текста и/или фото
     if message.photo:
@@ -806,7 +814,8 @@ async def on_ch_captcha_btns(callback: CallbackQuery, state: FSMContext, platfor
     ctypes_map = {"simple": "Простая", "random": "Рандомная"}
     ctype_label = ctypes_map.get((ch.get("captcha_type") or "simple") if ch else "simple", "Простая")
     await state.set_state(MessagesFSM.waiting_for_captcha_buttons)
-    await state.update_data(chat_id=chat_id, owner_id=platform_user["user_id"])
+    await state.update_data(chat_id=chat_id, owner_id=platform_user["user_id"],
+                            editor_prompt_mid=callback.message.message_id)
     await callback.message.edit_text(
         f"{ctype_label} капча:\n\n"
         "⸬ <b>Текст кнопок</b>\n\n"
@@ -826,6 +835,14 @@ async def on_captcha_btns_input(message: Message, state: FSMContext):
     data     = await state.get_data()
     chat_id  = data["chat_id"]
     owner_id = data["owner_id"]
+    prompt_mid = data.get("editor_prompt_mid")
+
+    if prompt_mid:
+        try:
+            await message.bot.delete_message(chat_id=message.chat.id, message_id=prompt_mid)
+        except Exception:
+            pass
+
     raw      = sanitize(message.text or "", max_len=256)
     await db.execute(
         "UPDATE bot_chats SET captcha_buttons_raw=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",

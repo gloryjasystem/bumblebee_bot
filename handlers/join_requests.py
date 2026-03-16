@@ -438,14 +438,8 @@ async def _send_welcome(bot: Bot, chat_id: int, user, settings_row: dict):
     ) if text_tpl else ""
 
     # Inline-кнопки
-    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-    import json as _json
-    inline_rows = []
-    if buttons_raw:
-        btns = buttons_raw if isinstance(buttons_raw, list) else _json.loads(buttons_raw)
-        for btn in btns:
-            inline_rows.append([InlineKeyboardButton(text=btn["text"], url=btn.get("url", ""))])
-    user_kb = InlineKeyboardMarkup(inline_keyboard=inline_rows) if inline_rows else None
+    from utils.keyboard import build_inline_keyboard
+    user_kb = build_inline_keyboard(buttons_raw)
 
     try:
         sent_msgs = []
@@ -535,12 +529,8 @@ async def _send_farewell(bot: Bot, chat_id: int, user, settings_row: dict):
         .replace("{day}", __import__("datetime").date.today().strftime("%d.%m.%Y"))
     ) if farewell_text_tpl else ""
 
-    fw_inline_rows = []
-    if farewell_buttons_raw:
-        fw_btns = farewell_buttons_raw if isinstance(farewell_buttons_raw, list) else _json.loads(farewell_buttons_raw)
-        for btn in fw_btns:
-            fw_inline_rows.append([InlineKeyboardButton(text=btn["text"], url=btn.get("url", ""))])
-    fw_kb = InlineKeyboardMarkup(inline_keyboard=fw_inline_rows) if fw_inline_rows else None
+    from utils.keyboard import build_inline_keyboard
+    fw_kb = build_inline_keyboard(farewell_buttons_raw)
 
     try:
         fw_sent = []

@@ -561,17 +561,11 @@ async def _handle_group_message(bot: Bot, child_bot_id: int, message):
         owner_id = settings["owner_id"]
 
         async def _send_ar(t, mid, mtype, mtop, prev, btns):
-            import json as _json
-            from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+            from utils.keyboard import build_inline_keyboard
             kr = None
             if btns:
                 try:
-                    p = _json.loads(btns)
-                    if p and isinstance(p[0], dict): p = [p]
-                    rows = []
-                    for r in p:
-                        rows.append([InlineKeyboardButton(text=b["text"], url=b["url"]) for b in r if b.get("text") and b.get("url")])
-                    if rows: kr = InlineKeyboardMarkup(inline_keyboard=rows)
+                    kr = build_inline_keyboard(btns)
                 except Exception:
                     pass
             if mid:

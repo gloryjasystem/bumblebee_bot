@@ -931,11 +931,15 @@ async def _show_global_mgmt(message, chat_id: int, owner_id: int):
             pass
 
     # -- Эхо сохранённого сообщения
+    from utils.keyboard import build_inline_keyboard
+    user_msg_kb = build_inline_keyboard(ch["general_reply_buttons"]) if ch else None
+
     if media_id:
         kwargs = {
             "caption": text or None,
             "parse_mode": "HTML",
             "show_caption_above_media": not media_top,
+            "reply_markup": user_msg_kb,
         }
         if media_type == "photo":
             echo_msg = await message.answer_photo(media_id, **kwargs)
@@ -945,10 +949,12 @@ async def _show_global_mgmt(message, chat_id: int, owner_id: int):
             echo_msg = await message.answer_document(media_id, **kwargs)
         else:
             echo_msg = await message.answer(text or "—", parse_mode="HTML",
-                                            disable_web_page_preview=not preview_on)
+                                            disable_web_page_preview=not preview_on,
+                                            reply_markup=user_msg_kb)
     else:
         echo_msg = await message.answer(text or "—", parse_mode="HTML",
-                                        disable_web_page_preview=not preview_on)
+                                        disable_web_page_preview=not preview_on,
+                                        reply_markup=user_msg_kb)
 
     # Сохраняем ID эхо-сообщения
     _gr_echo_ids[key] = echo_msg.message_id

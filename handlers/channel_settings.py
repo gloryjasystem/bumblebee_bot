@@ -646,12 +646,8 @@ async def _show_msg_editor(callback: CallbackQuery, chat_id_str: str, msg_type: 
     media_type = ch.get(f["media_type_col"])
     buttons_raw = ch.get(f["buttons_col"])
 
-    # Строим reply_markup из сохранённых кнопок
-    inline_rows = []
-    if buttons_raw:
-        btns = buttons_raw if isinstance(buttons_raw, list) else _json.loads(buttons_raw)
-        for btn in btns:
-            inline_rows.append([InlineKeyboardButton(text=btn["text"], url=btn.get("url", ""))])
+    from utils.keyboard import build_inline_keyboard
+    user_msg_kb = build_inline_keyboard(buttons_raw)
 
     editor_kb = _build_editor_kb(chat_id_str, msg_type, ch, scope)
 
@@ -661,7 +657,6 @@ async def _show_msg_editor(callback: CallbackQuery, chat_id_str: str, msg_type: 
         return
 
     # Отправляем эхо сообщения пользователю, затем меню
-    user_msg_kb = InlineKeyboardMarkup(inline_keyboard=inline_rows) if inline_rows else None
 
     try:
         await callback.message.delete()
@@ -990,13 +985,8 @@ async def on_ch_msg_media(callback: CallbackQuery, state: FSMContext, platform_u
             if echo_msg_id:
                 # Rebuild keyboard if necessary
                 buttons_raw = ch.get(f["buttons_col"])
-                inline_rows = []
-                if buttons_raw:
-                    import json as _json
-                    btns = buttons_raw if isinstance(buttons_raw, list) else _json.loads(buttons_raw)
-                    for btn in btns:
-                        inline_rows.append([InlineKeyboardButton(text=btn["text"], url=btn.get("url", ""))])
-                user_msg_kb = InlineKeyboardMarkup(inline_keyboard=inline_rows) if inline_rows else None
+                from utils.keyboard import build_inline_keyboard
+                user_msg_kb = build_inline_keyboard(buttons_raw)
                 
                 await callback.bot.edit_message_caption(
                     chat_id=callback.message.chat.id,

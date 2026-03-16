@@ -635,10 +635,11 @@ def _build_editor_kb(chat_id_str: str, msg_type: str, ch: dict, scope: str = "ch
     ])
 
 
-async def _show_msg_editor(callback: CallbackQuery, chat_id_str: str, msg_type: str,
+async def _show_msg_editor(event: Message | CallbackQuery, chat_id_str: str, msg_type: str,
                             ch: dict, scope: str = "ch",
                             state: FSMContext | None = None):
     """Экран редактора: сначала эхо текущего сообщения, затем меню."""
+    msg = event if isinstance(event, Message) else event.message
     f = _MSG_FIELDS[msg_type]
     label = f["label"]
     text = ch.get(f["text_col"]) or ""
@@ -659,7 +660,7 @@ async def _show_msg_editor(callback: CallbackQuery, chat_id_str: str, msg_type: 
     # Отправляем эхо сообщения пользователю, затем меню
 
     try:
-        await callback.message.delete()
+        await msg.delete()
     except Exception:
         pass
 
@@ -674,15 +675,15 @@ async def _show_msg_editor(callback: CallbackQuery, chat_id_str: str, msg_type: 
             "show_caption_above_media": media_below,
         }
         if media_type == "photo":
-            sent_echo = await callback.message.answer_photo(media_fid, **kwargs)
+            sent_echo = await msg.answer_photo(media_fid, **kwargs)
         elif media_type == "video":
-            sent_echo = await callback.message.answer_video(media_fid, **kwargs)
+            sent_echo = await msg.answer_video(media_fid, **kwargs)
         elif media_type == "animation":
-            sent_echo = await callback.message.answer_animation(media_fid, **kwargs)
+            sent_echo = await msg.answer_animation(media_fid, **kwargs)
         else:
-            sent_echo = await callback.message.answer_document(media_fid, **kwargs)
+            sent_echo = await msg.answer_document(media_fid, **kwargs)
     else:
-        sent_echo = await callback.message.answer(text, reply_markup=user_msg_kb,
+        sent_echo = await msg.answer(text or "—", reply_markup=user_msg_kb,
                                       parse_mode="HTML",
                                       disable_web_page_preview=not bool(ch.get(f["preview_col"])))
 
@@ -691,21 +692,22 @@ async def _show_msg_editor(callback: CallbackQuery, chat_id_str: str, msg_type: 
         try:
             await state.update_data(
                 editor_echo_mid=sent_echo.message_id,
-                editor_echo_chat_id=callback.message.chat.id,
+                editor_echo_chat_id=msg.chat.id,
             )
         except Exception:
             pass
     # Также обновляем in-memory cache как запасной вариант
     if sent_echo:
-        _echo_msg_ids[(chat_id_str, msg_type)] = (sent_echo.message_id, callback.message.chat.id)
+        _echo_msg_ids[(chat_id_str, msg_type)] = (sent_echo.message_id, msg.chat.id)
 
     # Отправить меню редактора под сообщением
-    await callback.message.answer(
+    await msg.answer(
         f"<b>{label}</b>",
         reply_markup=editor_kb,
         parse_mode="HTML",
     )
-    await callback.answer()
+    if isinstance(event, CallbackQuery):
+        await event.answer()
 
 
 async def _show_msg_prompt(callback: CallbackQuery, chat_id_str: str, msg_type: str, scope: str = "ch", cancel_cb: str | None = None):
@@ -1159,12 +1161,7 @@ async def on_msg_buttons_input(message: Message, state: FSMContext):
         ch = await _get_chat_by_bot(owner_id, child_bot_id)
 
     await state.clear()
-    # Отправляем только одно меню-сообщение с обновлёнными кнопками (без дублирования эхо)
-    await message.answer(
-        f"✅ Добавлено {len(buttons)} кнопок. <b>{_MSG_FIELDS[msg_type]['label']}</b>",
-        reply_markup=_build_editor_kb(chat_id_str, msg_type, dict(ch) if ch else {}, scope),
-        parse_mode="HTML",
-    )
+    await _show_msg_editor(message, chat_id_str, msg_type, dict(ch) if ch else {}, scope, state=None)
 
 
 @router.message(SettingsFSM.waiting_for_msg_media)
@@ -1213,12 +1210,7 @@ async def on_msg_media_input(message: Message, state: FSMContext):
         ch = await _get_chat_by_bot(owner_id, child_bot_id)
 
     await state.clear()
-    # Отправляем только одно меню (без дублей эхо)
-    await message.answer(
-        f"🎬 Медиа сохранено. <b>{_MSG_FIELDS[msg_type]['label']}</b>",
-        reply_markup=_build_editor_kb(chat_id_str, msg_type, dict(ch) if ch else {}, scope),
-        parse_mode="HTML",
-    )
+    await _show_msg_editor(message, chat_id_str, msg_type, dict(ch) if ch else {}, scope, state=None)
 
 
 # Legacy-обработчики для удаления (сохранены для обратной совместимости колбэков)

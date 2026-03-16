@@ -992,6 +992,12 @@ async def _show_global_mgmt(message, chat_id: int, owner_id: int):
         [InlineKeyboardButton(text="🗑 Удалить",          callback_data=f"ch_ar_delete_global:{chat_id}")],
         [InlineKeyboardButton(text="◀️ Назад",            callback_data=f"ch_ar_back_global:{chat_id}")],
     ])
+
+    try:
+        await message.delete()
+    except Exception:
+        pass
+        
     await message.answer("💬 <b>Автоответчик</b>", parse_mode="HTML", reply_markup=mgmt_kb)
 
 

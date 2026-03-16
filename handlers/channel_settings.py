@@ -574,10 +574,7 @@ _MSG_FIELDS = {
 
 _MSG_TIMER_CYCLE = [0, 5, 15, 30, 60, 120, 300]  # секунды
 
-# Кэш message_id эхо-сообщения: (owner_id, chat_id_str, msg_type) -> message_id
-# Используется чтобы надёжно удалить эхо при нажатии «◀️ Назад»
-_echo_msg_ids: dict = {}
-
+# Кэш message_id эхо-сообщения (теперь в БД): edit_welcome_mid, edit_farewell_mid
 import json as _json
 
 
@@ -601,6 +598,22 @@ async def _get_chat_by_bot(owner_id: int, child_bot_id: int):
         "SELECT * FROM bot_chats WHERE owner_id=$1 AND child_bot_id=$2 LIMIT 1",
         owner_id, child_bot_id,
     )
+
+
+async def _set_echo_mid(owner_id: int, chat_id: int, msg_type: str, mid: int | None):
+    col = "edit_welcome_mid" if msg_type == "welcome" else "edit_farewell_mid"
+    await db.execute(
+        f"UPDATE bot_chats SET {col}=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
+        mid, owner_id, chat_id,
+    )
+
+async def _get_echo_mid(owner_id: int, chat_id: int, msg_type: str) -> int | None:
+    col = "edit_welcome_mid" if msg_type == "welcome" else "edit_farewell_mid"
+    row = await db.fetchrow(
+        f"SELECT {col} FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint",
+        owner_id, chat_id,
+    )
+    return row[col] if row else None
 
 
 def _build_editor_kb(chat_id_str: str, msg_type: str, ch: dict, scope: str = "ch") -> InlineKeyboardMarkup:
@@ -687,7 +700,7 @@ async def _show_msg_editor(event: Message | CallbackQuery, chat_id_str: str, msg
                                       parse_mode="HTML",
                                       disable_web_page_preview=not bool(ch.get(f["preview_col"])))
 
-    # Сохраняем message_id эхо в FSM state (надёжно — переживает рестарты сервера)
+    # Сохраняем message_id эхо в БД и FSM state
     if sent_echo and state:
         try:
             await state.update_data(
@@ -696,9 +709,10 @@ async def _show_msg_editor(event: Message | CallbackQuery, chat_id_str: str, msg
             )
         except Exception:
             pass
-    # Также обновляем in-memory cache как запасной вариант
     if sent_echo:
-        _echo_msg_ids[(chat_id_str, msg_type)] = (sent_echo.message_id, msg.chat.id)
+        owner_id = (await state.get_data()).get("owner_id") if state else None
+        if owner_id:
+            await _set_echo_mid(owner_id, int(chat_id_str), msg_type, sent_echo.message_id)
 
     # Отправить меню редактора под сообщением
     await msg.answer(
@@ -857,13 +871,15 @@ async def _handle_msg_input(message: Message, state: FSMContext):
     else:
         sent_echo = await message.answer(text, parse_mode="HTML")
 
-    # Сохраняем echo_mid в FSM state (читаем потом в on_ch_msg_back)
+    # Сохраняем echo_mid в FSM state и БД
     if sent_echo:
         await state.update_data(
             editor_echo_mid=sent_echo.message_id,
             editor_echo_chat_id=message.chat.id,
         )
-        _echo_msg_ids[(chat_id_str, msg_type)] = (sent_echo.message_id, message.chat.id)
+        owner_id = (await state.get_data()).get("owner_id")
+        if owner_id:
+            await _set_echo_mid(owner_id, int(chat_id_str), msg_type, sent_echo.message_id)
 
     # Меню редактора
     await message.answer(
@@ -897,9 +913,8 @@ async def on_ch_msg_edit(callback: CallbackQuery, state: FSMContext, platform_us
     echo_mid = fsm_data.get("editor_echo_mid")
     echo_chat_id = fsm_data.get("editor_echo_chat_id") or callback.message.chat.id
     if not echo_mid:
-        cached = _echo_msg_ids.pop((chat_id_str, msg_type), None)
-        if cached:
-            echo_mid, echo_chat_id = cached
+        echo_mid = await _get_echo_mid(platform_user["user_id"], int(chat_id_str), msg_type)
+        echo_chat_id = callback.message.chat.id
     if echo_mid:
         try:
             await callback.bot.delete_message(chat_id=echo_chat_id, message_id=echo_mid)
@@ -928,9 +943,8 @@ async def on_ch_msg_btns(callback: CallbackQuery, state: FSMContext, platform_us
     echo_mid = fsm_data.get("editor_echo_mid")
     echo_chat_id = fsm_data.get("editor_echo_chat_id") or callback.message.chat.id
     if not echo_mid:
-        cached = _echo_msg_ids.pop((chat_id_str, msg_type), None)
-        if cached:
-            echo_mid, echo_chat_id = cached
+        echo_mid = await _get_echo_mid(platform_user["user_id"], int(chat_id_str), msg_type)
+        echo_chat_id = callback.message.chat.id
     if echo_mid:
         try:
             await callback.bot.delete_message(chat_id=echo_chat_id, message_id=echo_mid)
@@ -995,10 +1009,7 @@ async def on_ch_msg_media(callback: CallbackQuery, state: FSMContext, platform_u
                 echo_msg_id = state_data.get("editor_echo_mid")
             
             if not echo_msg_id:
-                cache_key = (chat_id_str, msg_type)
-                cached = _echo_msg_ids.get(cache_key)
-                if cached:
-                    echo_msg_id = cached[0]
+                echo_msg_id = await _get_echo_mid(platform_user["user_id"], int(chat_id_str), msg_type)
             
             if echo_msg_id:
                 # Rebuild keyboard if necessary
@@ -1105,11 +1116,10 @@ async def on_ch_msg_back(callback: CallbackQuery, state: FSMContext, platform_us
     echo_mid = fsm_data.get("editor_echo_mid")
     echo_chat_id = fsm_data.get("editor_echo_chat_id") or callback.message.chat.id
 
-    # Запасной вариант: in-memory cache
+    # Запасной вариант: БД
     if not echo_mid:
-        cached = _echo_msg_ids.pop((chat_id_str, msg_type), None)
-        if cached:
-            echo_mid, echo_chat_id = cached
+        echo_mid = await _get_echo_mid(owner_id, chat_id, msg_type)
+        echo_chat_id = callback.message.chat.id
 
     await state.clear()
 

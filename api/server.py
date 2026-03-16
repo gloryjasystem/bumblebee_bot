@@ -91,6 +91,8 @@ def create_app(bot: Bot, dp: Dispatcher) -> FastAPI:
                 "ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS reaction_emoji       TEXT    DEFAULT '👍'",
                 "ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS auto_delete_min      INT     DEFAULT 0",
                 "ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS feedback_lang        TEXT    DEFAULT 'ru'",
+                "ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS edit_welcome_mid     INTEGER",
+                "ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS edit_farewell_mid    INTEGER",
                 # Миграция captcha_lang: если колонка была BOOLEAN — конвертируем в TEXT
                 "ALTER TABLE bot_chats ALTER COLUMN captcha_lang TYPE TEXT USING CASE WHEN captcha_lang::text = 'true' THEN 'ru' ELSE 'off' END",
                 # Миграция captcha_button_style: старые значения 1x1/1x2/2x2 → inline

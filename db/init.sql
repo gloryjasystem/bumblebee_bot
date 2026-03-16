@@ -56,6 +56,8 @@ CREATE TABLE IF NOT EXISTS bot_chats (
     timezone        VARCHAR(64) DEFAULT 'UTC',
     added_at        TIMESTAMPTZ DEFAULT now(),
     media_bottom    BOOLEAN DEFAULT false,
+    edit_welcome_mid INTEGER,
+    edit_farewell_mid INTEGER,
     UNIQUE(owner_id, chat_id)
 );
 

@@ -47,6 +47,9 @@ class SettingsFSM(StatesGroup):
 
     # Карточка пользователя
     bs_um_waiting_pm        = State()
+    
+    # Обработка заявок (проценты)
+    waiting_for_req_percent = State()
 
 
 # ══════════════════════════════════════════════════════════════
@@ -131,8 +134,8 @@ async def _show_requests_menu(callback: CallbackQuery, platform_user: dict, chat
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text=auto_label,   callback_data=f"req_auto_toggle:{chat_id}")],
             [
-                InlineKeyboardButton(text="✔️ Принять всё",   callback_data=f"req_accept_all:{chat_id}"),
-                InlineKeyboardButton(text="✖️ Отклонить всё", callback_data=f"req_decline_all:{chat_id}"),
+                InlineKeyboardButton(text="✔️ Принять",   callback_data=f"req_decide:accept:ch:{chat_id}"),
+                InlineKeyboardButton(text="✖️ Отклонить", callback_data=f"req_decide:decline:ch:{chat_id}"),
             ],
             [InlineKeyboardButton(text=delay_label,  callback_data=f"req_delay_cycle:{chat_id}")],
             [InlineKeyboardButton(text="◀️ Назад",    callback_data=f"channel_by_chat:{chat_id}")],
@@ -187,133 +190,208 @@ async def on_req_delay_cycle(callback: CallbackQuery, platform_user: dict | None
     await _show_requests_menu(callback, platform_user, chat_id)
 
 
-@router.callback_query(F.data.startswith("req_accept_all:"))
-async def on_req_accept_all(callback: CallbackQuery, bot: Bot, platform_user: dict | None):
+@router.callback_query(F.data.startswith("req_decide:"))
+async def on_req_decide(callback: CallbackQuery, state: FSMContext, platform_user: dict | None):
     if not platform_user:
         return
-    chat_id = int(callback.data.split(":")[1])
+    # req_decide:accept:ch:1234  or req_decide:decline:bs:56
+    _, action, scope, target_id_str = callback.data.split(":")
+    target_id = int(target_id_str)
     owner_id = platform_user["user_id"]
+    
+    if scope == "ch":
+        pending = await db.fetchval(
+            "SELECT COUNT(*) FROM join_requests WHERE owner_id=$1 AND chat_id=$2::bigint AND status='pending'",
+            owner_id, target_id,
+        ) or 0
+    else:
+        pending = await db.fetchval(
+            "SELECT COUNT(*) FROM join_requests jr JOIN bot_chats bc ON jr.chat_id=bc.chat_id AND jr.owner_id=bc.owner_id WHERE bc.child_bot_id=$1 AND bc.owner_id=$2 AND jr.status='pending'",
+            target_id, owner_id,
+        ) or 0
 
-    # Получаем токен дочернего бота
-    bot_row = await db.fetchrow(
-        """SELECT cb.token_encrypted FROM child_bots cb
-           JOIN bot_chats bc ON bc.child_bot_id = cb.id
-           WHERE bc.owner_id=$1 AND bc.chat_id=$2::bigint""",
-        owner_id, chat_id,
-    )
-
-    pending = await db.fetch(
-        "SELECT user_id FROM join_requests WHERE owner_id=$1 AND chat_id=$2::bigint AND status='pending'",
-        owner_id, chat_id,
-    )
-    if not pending:
+    if pending == 0:
         await callback.answer("Нет заявок в очереди", show_alert=True)
         return
+
+    await state.set_state(SettingsFSM.waiting_for_req_percent)
+    await state.update_data(
+        req_action=action,
+        req_scope=scope,
+        req_target_id=target_id,
+        req_max_count=pending,
+        req_sel_count=0
+    )
+    await _show_req_percent_menu(callback, pending, 0, action, scope, target_id)
+
+
+async def _show_req_percent_menu(callback: CallbackQuery, max_count: int, sel_count: int, action: str, scope: str, target_id: int):
+    title = "заявок для принятия" if action == "accept" else "заявок для отклонения"
+    action_verb = "Принять" if action == "accept" else "Отклонить"
+    action_icon = "✅" if action == "accept" else "❌"
+    
+    text = (
+        f"🔍 <b>{title.capitalize()}</b>\n\n"
+        f"👤 Доступно: {max_count}\n\n"
+        f"🫂 Выбрано: {sel_count}\n\n"
+        f"Выберите необходимый процент заявок или отправьте своё значение и нажмите кнопку \"{action_icon} {action_verb}\""
+    )
+    
+    back_cb = f"ch_requests:{target_id}" if scope == "ch" else f"bs_requests:{target_id}"
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="10%", callback_data="req_pct:10"),
+            InlineKeyboardButton(text="25%", callback_data="req_pct:25"),
+        ],
+        [
+            InlineKeyboardButton(text="50%", callback_data="req_pct:50"),
+            InlineKeyboardButton(text="75%", callback_data="req_pct:75"),
+        ],
+        [InlineKeyboardButton(text="Все: 100%", callback_data="req_pct:100")],
+        [InlineKeyboardButton(text=f"{action_icon} {action_verb}", callback_data="req_confirm")],
+        [InlineKeyboardButton(text="◀️ Назад", callback_data=back_cb)],
+    ])
+    
+    await navigate(callback, text, reply_markup=kb)
+
+
+@router.callback_query(F.data.startswith("req_pct:"))
+async def on_req_pct(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    if not data or "req_action" not in data:
+        await callback.answer("Сессия истекла", show_alert=True)
+        return
+    
+    pct = int(callback.data.split(":")[1])
+    max_c = data["req_max_count"]
+    sel_c = max(1, int(max_c * (pct / 100.0))) if pct < 100 else max_c
+    
+    await state.update_data(req_sel_count=sel_c)
+    await _show_req_percent_menu(callback, max_c, sel_c, data["req_action"], data["req_scope"], data["req_target_id"])
+
+
+@router.message(SettingsFSM.waiting_for_req_percent)
+async def on_req_custom_count(message: Message, state: FSMContext):
+    data = await state.get_data()
+    if not data or "req_action" not in data:
+        return
+    
+    try:
+        val = int(message.text.strip())
+    except ValueError:
+        await message.answer("Пожалуйста, отправьте число.")
+        return
+        
+    max_c = data["req_max_count"]
+    sel_c = max(0, min(val, max_c))
+    
+    await state.update_data(req_sel_count=sel_c)
+    
+    class FakeCallback:
+        message = message
+        bot = message.bot
+        async def answer(self, *args, **kwargs): pass
+        
+    await _show_req_percent_menu(FakeCallback(), max_c, sel_c, data["req_action"], data["req_scope"], data["req_target_id"])
+
+
+@router.callback_query(F.data == "req_confirm")
+async def on_req_confirm(callback: CallbackQuery, bot: Bot, state: FSMContext, platform_user: dict | None):
+    if not platform_user:
+        return
+    data = await state.get_data()
+    if not data or "req_action" not in data:
+        await callback.answer("Сессия истекла", show_alert=True)
+        return
+        
+    sel_c = data.get("req_sel_count", 0)
+    if sel_c <= 0:
+        await callback.answer("Выберите количество заявок (процент или число)", show_alert=True)
+        return
+        
+    action = data["req_action"]
+    scope = data["req_scope"]
+    target_id = data["req_target_id"]
+    owner_id = platform_user["user_id"]
+    
+    await state.clear()
+    
+    await callback.message.edit_text(f"⏳ Обрабатывается {sel_c} заявок...")
+    
+    if scope == "ch":
+        chat_ids = [target_id]
+        bot_row = await db.fetchrow(
+            "SELECT cb.token_encrypted FROM child_bots cb JOIN bot_chats bc ON bc.child_bot_id = cb.id WHERE bc.owner_id=$1 AND bc.chat_id=$2::bigint",
+            owner_id, target_id,
+        )
+    else:
+        chat_rows = await db.fetch("SELECT chat_id FROM bot_chats WHERE owner_id=$1 AND child_bot_id=$2", owner_id, target_id)
+        chat_ids = [r["chat_id"] for r in chat_rows]
+        bot_row = await db.fetchrow("SELECT token_encrypted FROM child_bots WHERE id=$1", target_id)
 
     from aiogram import Bot as AioBot
     from services.security import decrypt_token
     child_bot = AioBot(token=decrypt_token(bot_row["token_encrypted"])) if bot_row else bot
 
-    # Находим единственную активную ссылку с типом request (для трекинга)
-    link_rows = await db.fetch(
-        "SELECT link FROM invite_links WHERE chat_id=$1::bigint AND link_type='request' AND is_active=true",
-        chat_id,
-    )
-    invite_link_url = link_rows[0]["link"] if len(link_rows) == 1 else None
+    total_processed = 0
+    
+    for c_id in chat_ids:
+        if total_processed >= sel_c:
+            break
+            
+        rem = sel_c - total_processed
+        
+        pending_full = await db.fetch(
+            "SELECT jr.user_id, jr.first_name, COALESCE(bu.language_code,'') AS language_code, COALESCE(bu.is_premium, false) AS is_premium "
+            "FROM join_requests jr LEFT JOIN bot_users bu ON bu.user_id=jr.user_id AND bu.chat_id=$2::bigint "
+            "WHERE jr.owner_id=$1 AND jr.chat_id=$2::bigint AND jr.status='pending' ORDER BY jr.requested_at ASC LIMIT $3",
+            owner_id, c_id, rem
+        )
+        
+        link_rows = await db.fetch("SELECT link FROM invite_links WHERE chat_id=$1::bigint AND link_type='request' AND is_active=true", c_id)
+        invite_link_url = link_rows[0]["link"] if len(link_rows) == 1 else None
 
-    # Получаем данные пользователей для трекинга демографии
-    pending_full = await db.fetch(
-        "SELECT jr.user_id, jr.first_name, COALESCE(bu.language_code,'') AS language_code, "
-        "       COALESCE(bu.is_premium, false) AS is_premium "
-        "FROM join_requests jr "
-        "LEFT JOIN bot_users bu ON bu.user_id=jr.user_id AND bu.chat_id=$2::bigint "
-        "WHERE jr.owner_id=$1 AND jr.chat_id=$2::bigint AND jr.status='pending'",
-        owner_id, chat_id,
-    )
+        for row in pending_full:
+            try:
+                if action == "accept":
+                    await child_bot.approve_chat_join_request(c_id, row["user_id"])
+                    await db.execute("UPDATE join_requests SET status='approved', resolved_at=now() WHERE owner_id=$1 AND chat_id=$2::bigint AND user_id=$3", owner_id, c_id, row["user_id"])
+                    
+                    if invite_link_url:
+                        from scheduler.child_bot_runner import _track_invite_link
+                        class _FakeUser:
+                            id = row["user_id"]
+                            first_name = row["first_name"] or ""
+                            last_name = None
+                            language_code = row["language_code"] or None
+                            is_premium = row["is_premium"]
+                        try:
+                            await _track_invite_link(invite_link_url, _FakeUser())
+                        except Exception: pass
+                else:
+                    await child_bot.decline_chat_join_request(c_id, row["user_id"])
+                    await db.execute("UPDATE join_requests SET status='declined', resolved_at=now() WHERE owner_id=$1 AND chat_id=$2::bigint AND user_id=$3", owner_id, c_id, row["user_id"])
+                
+                total_processed += 1
+            except Exception:
+                await db.execute("UPDATE join_requests SET status='expired', resolved_at=now() WHERE owner_id=$1 AND chat_id=$2::bigint AND user_id=$3", owner_id, c_id, row["user_id"])
+                pass
 
-    approved = 0
-    for row in pending_full:
-        try:
-            await child_bot.approve_chat_join_request(chat_id, row["user_id"])
-            approved += 1
-            await db.execute(
-                "UPDATE join_requests SET status='approved', resolved_at=now() "
-                "WHERE owner_id=$1 AND chat_id=$2::bigint AND user_id=$3",
-                owner_id, chat_id, row["user_id"])
-            # Трекинг статистики ссылки
-            if invite_link_url:
-                try:
-                    from scheduler.child_bot_runner import _track_invite_link
-
-                    class _FakeUser:
-                        id = row["user_id"]
-                        first_name = row["first_name"] or ""
-                        last_name = None
-                        language_code = row["language_code"] or None
-                        is_premium = row["is_premium"]
-
-                    await _track_invite_link(invite_link_url, _FakeUser())
-                except Exception:
-                    pass
-        except Exception:
-            await db.execute(
-                "UPDATE join_requests SET status='expired', resolved_at=now() "
-                "WHERE owner_id=$1 AND chat_id=$2::bigint AND user_id=$3",
-                owner_id, chat_id, row["user_id"])
-            pass
     if bot_row:
         await child_bot.session.close()
 
-    await callback.answer(f"✔️ Принято: {approved}", show_alert=True)
-    await _show_requests_menu(callback, platform_user, chat_id)
-
-
-@router.callback_query(F.data.startswith("req_decline_all:"))
-async def on_req_decline_all(callback: CallbackQuery, bot: Bot, platform_user: dict | None):
-    if not platform_user:
-        return
-    chat_id = int(callback.data.split(":")[1])
-    owner_id = platform_user["user_id"]
-
-    bot_row = await db.fetchrow(
-        """SELECT cb.token_encrypted FROM child_bots cb
-           JOIN bot_chats bc ON bc.child_bot_id = cb.id
-           WHERE bc.owner_id=$1 AND bc.chat_id=$2::bigint""",
-        owner_id, chat_id,
-    )
-
-    pending = await db.fetch(
-        "SELECT user_id FROM join_requests WHERE owner_id=$1 AND chat_id=$2::bigint AND status='pending'",
-        owner_id, chat_id,
-    )
-    if not pending:
-        await callback.answer("Нет заявок в очереди", show_alert=True)
-        return
-
-    from aiogram import Bot as AioBot
-    from services.security import decrypt_token
-    child_bot = AioBot(token=decrypt_token(bot_row["token_encrypted"])) if bot_row else bot
-
-    declined = 0
-    for row in pending:
-        try:
-            await child_bot.decline_chat_join_request(chat_id, row["user_id"])
-            declined += 1
-            await db.execute(
-                "UPDATE join_requests SET status='declined', resolved_at=now() "
-                "WHERE owner_id=$1 AND chat_id=$2::bigint AND user_id=$3",
-                owner_id, chat_id, row["user_id"])
-        except Exception:
-            await db.execute(
-                "UPDATE join_requests SET status='expired', resolved_at=now() "
-                "WHERE owner_id=$1 AND chat_id=$2::bigint AND user_id=$3",
-                owner_id, chat_id, row["user_id"])
-            pass
-    if bot_row:
-        await child_bot.session.close()
-
-    await callback.answer(f"✖️ Отклонено: {declined}", show_alert=True)
-    await _show_requests_menu(callback, platform_user, chat_id)
+    verb = "Принято" if action == "accept" else "Отклонено"
+    icon = "✔️" if action == "accept" else "✖️"
+    await callback.answer(f"{icon} {verb}: {total_processed}", show_alert=True)
+    
+    if scope == "ch":
+        callback.data = f"ch_requests:{target_id}"
+        await on_requests_menu(callback, platform_user)
+    else:
+        callback.data = f"bs_requests:{target_id}"
+        from handlers.channel_settings import on_bs_requests
+        await on_bs_requests(callback, platform_user)
 
 
 
@@ -1784,8 +1862,8 @@ async def _show_bs_requests(callback: CallbackQuery, platform_user: dict, child_
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text=auto_label,           callback_data=f"bs_req_auto:{child_bot_id}")],
             [
-                InlineKeyboardButton(text="✔️ Принять всё",  callback_data=f"bs_req_accept_all:{child_bot_id}"),
-                InlineKeyboardButton(text="✖️ Отклонить всё",callback_data=f"bs_req_decline_all:{child_bot_id}"),
+                InlineKeyboardButton(text="✔️ Принять",  callback_data=f"req_decide:accept:bs:{child_bot_id}"),
+                InlineKeyboardButton(text="✖️ Отклонить",callback_data=f"req_decide:decline:bs:{child_bot_id}"),
             ],
             [InlineKeyboardButton(text=delay_label,          callback_data=f"bs_req_delay:{child_bot_id}")],
             [InlineKeyboardButton(text="◀️ Назад",            callback_data=f"bot_settings:{child_bot_id}")],

@@ -220,12 +220,13 @@ async def on_req_decide(callback: CallbackQuery, state: FSMContext, platform_use
         req_scope=scope,
         req_target_id=target_id,
         req_max_count=pending,
-        req_sel_count=0
+        req_sel_count=0,
+        req_sel_pct=0
     )
-    await _show_req_percent_menu(callback, pending, 0, action, scope, target_id)
+    await _show_req_percent_menu(callback, pending, 0, action, scope, target_id, sel_pct=0)
 
 
-async def _show_req_percent_menu(callback: CallbackQuery, max_count: int, sel_count: int, action: str, scope: str, target_id: int):
+async def _show_req_percent_menu(callback: CallbackQuery, max_count: int, sel_count: int, action: str, scope: str, target_id: int, sel_pct: int = 0):
     title = "заявок для принятия" if action == "accept" else "заявок для отклонения"
     action_verb = "Принять" if action == "accept" else "Отклонить"
     action_icon = "✅" if action == "accept" else "❌"
@@ -239,16 +240,19 @@ async def _show_req_percent_menu(callback: CallbackQuery, max_count: int, sel_co
     
     back_cb = f"ch_requests:{target_id}" if scope == "ch" else f"bs_requests:{target_id}"
 
+    def _btn_text(pct: int, label: str) -> str:
+        return f"🔵 {label}" if sel_pct == pct else label
+
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="10%", callback_data="req_pct:10"),
-            InlineKeyboardButton(text="25%", callback_data="req_pct:25"),
+            InlineKeyboardButton(text=_btn_text(10, "10%"), callback_data="req_pct:10"),
+            InlineKeyboardButton(text=_btn_text(25, "25%"), callback_data="req_pct:25"),
         ],
         [
-            InlineKeyboardButton(text="50%", callback_data="req_pct:50"),
-            InlineKeyboardButton(text="75%", callback_data="req_pct:75"),
+            InlineKeyboardButton(text=_btn_text(50, "50%"), callback_data="req_pct:50"),
+            InlineKeyboardButton(text=_btn_text(75, "75%"), callback_data="req_pct:75"),
         ],
-        [InlineKeyboardButton(text="Все: 100%", callback_data="req_pct:100")],
+        [InlineKeyboardButton(text=_btn_text(100, "Все: 100%"), callback_data="req_pct:100")],
         [InlineKeyboardButton(text=f"{action_icon} {action_verb}", callback_data="req_confirm")],
         [InlineKeyboardButton(text="◀️ Назад", callback_data=back_cb)],
     ])
@@ -267,8 +271,8 @@ async def on_req_pct(callback: CallbackQuery, state: FSMContext):
     max_c = data["req_max_count"]
     sel_c = max(1, int(max_c * (pct / 100.0))) if pct < 100 else max_c
     
-    await state.update_data(req_sel_count=sel_c)
-    await _show_req_percent_menu(callback, max_c, sel_c, data["req_action"], data["req_scope"], data["req_target_id"])
+    await state.update_data(req_sel_count=sel_c, req_sel_pct=pct)
+    await _show_req_percent_menu(callback, max_c, sel_c, data["req_action"], data["req_scope"], data["req_target_id"], sel_pct=pct)
 
 
 @router.message(SettingsFSM.waiting_for_req_percent)
@@ -286,14 +290,15 @@ async def on_req_custom_count(message: Message, state: FSMContext):
     max_c = data["req_max_count"]
     sel_c = max(0, min(val, max_c))
     
-    await state.update_data(req_sel_count=sel_c)
+    # Custom input clears the percentage selection
+    await state.update_data(req_sel_count=sel_c, req_sel_pct=0)
     
     class FakeCallback:
         message = message
         bot = message.bot
         async def answer(self, *args, **kwargs): pass
         
-    await _show_req_percent_menu(FakeCallback(), max_c, sel_c, data["req_action"], data["req_scope"], data["req_target_id"])
+    await _show_req_percent_menu(FakeCallback(), max_c, sel_c, data["req_action"], data["req_scope"], data["req_target_id"], sel_pct=0)
 
 
 @router.callback_query(F.data == "req_confirm")

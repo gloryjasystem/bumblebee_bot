@@ -957,7 +957,10 @@ async def on_ch_msg_btns(callback: CallbackQuery, state: FSMContext, platform_us
         "<blockquote><code>Кнопка 1 — ссылка (webapp)</code></blockquote>\n\n"
         "ℹ️ Нажмите, чтобы скопировать.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="◀️ Отмена", callback_data=f"ch_msg_back:{chat_id_str}:{msg_type}")],
+            [InlineKeyboardButton(
+                text="◀️ Отмена",
+                callback_data=f"welcome_set:{chat_id_str}" if msg_type == "welcome" else f"farewell_set:{chat_id_str}"
+            )],
         ]),
         parse_mode="HTML",
     )

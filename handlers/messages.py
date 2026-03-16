@@ -1699,20 +1699,20 @@ async def on_ch_ar_kw_btns(
     await state.set_state(MessagesFSM.waiting_for_autoreply_buttons)
     await state.update_data(chat_id=chat_id, owner_id=owner_id, ar_id=ar_id, prompt_mid=callback.message.message_id)
     await callback.message.edit_text(
-        " Отправьте <b>кнопки</b>, которые будут добавлены к сообщению.\n\n"
-        "🔗 <b>URL-кнопки</b>\n\n"
+        "📎 Отправьте <b>кнопки</b>, которые будут добавлены к сообщению.\n\n"
+        "🔗 <u><b>URL-кнопки</b></u>\n\n"
         "<b>Одна кнопка в ряду:</b>\n"
-        "<code>Кнопка 1 — ссылка</code>\n"
-        "<code>Кнопка 2 — ссылка</code>\n\n"
+        "<blockquote><code>Кнопка 1 — ссылка</code>\n"
+        "<code>Кнопка 2 — ссылка</code></blockquote>\n\n"
         "<b>Несколько кнопок в ряду:</b>\n"
-        "<code>Кнопка 1 — ссылка | Кнопка 2 — ссылка</code>\n\n"
-        "🎨 <b>Цветные кнопки (добавь emoji перед названием):</b>\n"
-        "<code>🟦 Кнопка — ссылка</code> — синяя\n"
+        "<blockquote><code>Кнопка 1 — ссылка | Кнопка 2 — ссылка</code></blockquote>\n\n"
+        "🎨 <u><b>Цветные кнопки (добавь emoji перед названием):</b></u>\n"
+        "<blockquote><code>🟦 Кнопка — ссылка</code> — синяя\n"
         "<code>🟩 Кнопка — ссылка</code> — зелёная\n"
-        "<code>🟥 Кнопка — ссылка</code> — красная\n\n"
-        "*** <b>Другие виды кнопок</b>\n\n"
+        "<code>🟥 Кнопка — ссылка</code> — красная</blockquote>\n\n"
+        "*** <u><b>Другие виды кнопок</b></u>\n\n"
         "<b>WebApp кнопки:</b>\n"
-        "<code>Кнопка 1 — ссылка (webapp)</code>\n\n"
+        "<blockquote><code>Кнопка 1 — ссылка (webapp)</code></blockquote>\n\n"
         "ℹ️ Нажмите, чтобы скопировать.",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[

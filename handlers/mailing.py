@@ -1960,22 +1960,29 @@ async def on_mailing_run(callback: CallbackQuery, bot: Bot, platform_user: dict 
     bot_username = mailing.get("bot_username") or ""
     await db.execute("UPDATE mailings SET status='pending' WHERE id=$1", mailing_id)
 
+    # Удаляем эхо-сообщение (превью) и сообщение с настройками
+    await _delete_draft_echo(callback.bot, mailing_id)
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
+
     # Начальный экран «идём!»
     progress_text = _mailing_progress_text(mailing_id, 0, 0, 0, "running", bot_username)
     try:
-        progress_msg = await callback.message.edit_text(
+        progress_msg = await callback.message.answer(
             progress_text,
             parse_mode="HTML",
             reply_markup=kb_mailing_control(mailing_id, False, "low"),
         )
+        upd_chat_id = progress_msg.chat.id
+        upd_msg_id  = progress_msg.message_id
     except Exception:
         progress_msg = None
+        upd_chat_id = callback.message.chat.id
+        upd_msg_id  = callback.message.message_id
 
     await callback.answer("▶ Рассылка запущена")
-
-    # Захватываем chat_id / message_id для обновлений
-    upd_chat_id = callback.message.chat.id
-    upd_msg_id  = callback.message.message_id
 
     async def progress_callback(ml_id: int, sent: int, total: int,
                                 errors: int, status: str):

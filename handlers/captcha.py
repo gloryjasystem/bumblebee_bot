@@ -492,6 +492,17 @@ async def on_captcha_reply_message(message: Message, bot: Bot):
 # Вспомогательные функции
 # ══════════════════════════════════════════════════════════════
 
+async def _edit_captcha_message(message: Message, text: str):
+    """Редактирует текст сообщения (или подпись, если это медиа-сообщение)."""
+    try:
+        if message.text:
+            await message.edit_text(text)
+        else:
+            await message.edit_caption(caption=text)
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).debug(f"Failed to edit captcha message: {e}")
+
 async def _approve_user(
     callback: CallbackQuery, bot: Bot,
     chat_id: int, user_id: int, success: bool,
@@ -519,7 +530,8 @@ async def _approve_user(
                         logger.debug(f"captcha_events insert failed (group success): {ex}")
                 one_time_link = group_data.get("one_time_link")
                 if one_time_link:
-                    await callback.message.edit_text(
+                    await _edit_captcha_message(
+                        callback.message,
                         "✅ Капча пройдена! Нажмите кнопку ниже, чтобы войти:"
                     )
                     await bot.send_message(
@@ -528,7 +540,7 @@ async def _approve_user(
                         parse_mode="HTML",
                     )
                 else:
-                    await callback.message.edit_text("✅ Капча пройдена! Добро пожаловать.")
+                    await _edit_captcha_message(callback.message, "✅ Капча пройдена! Добро пожаловать.")
                 await callback.answer("✅ Отлично!")
                 logger.info(f"[GROUP CAPTCHA] Passed: user={user_id} chat={chat_id} — welcome deferred to on-join event")
             else:
@@ -540,7 +552,8 @@ async def _approve_user(
                         )
                     except Exception as ex:
                         logger.debug(f"captcha_events insert failed (group fail): {ex}")
-                await callback.message.edit_text(
+                await _edit_captcha_message(
+                    callback.message,
                     "❌ Неверный ответ.\n"
                     "Для вступления запросите доступ снова."
                 )
@@ -598,7 +611,7 @@ async def _approve_user(
                     await callback.answer("✅ Отлично!")
                     return
 
-            await callback.message.edit_text("✅ Капча пройдена! Добро пожаловать.")
+            await _edit_captcha_message(callback.message, "✅ Капча пройдена! Добро пожаловать.")
             await callback.answer("✅ Отлично!")
 
         else:
@@ -640,7 +653,8 @@ async def _approve_user(
                     pass
                 await callback.answer("✅ Капча пройдена!")
             else:
-                await callback.message.edit_text(
+                await _edit_captcha_message(
+                    callback.message,
                     "✅ Капча пройдена!\n\n"
                     "⏳ Ваша заявка на вступление отправлена администратору.\n"
                     "Ожидайте подтверждения."
@@ -663,7 +677,8 @@ async def _approve_user(
                 )
             except Exception as ex:
                 logger.debug(f"captcha_events insert failed: {ex}")
-        await callback.message.edit_text(
+        await _edit_captcha_message(
+            callback.message,
             "❌ Неверный ответ. Заявка отклонена.\n"
             "Вы можете подать заявку повторно."
         )

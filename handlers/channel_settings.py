@@ -670,7 +670,20 @@ async def _show_msg_editor(event: Message | CallbackQuery, chat_id_str: str, msg
         await _show_msg_prompt(callback, chat_id_str, msg_type, scope)
         return
 
-    # Отправляем эхо сообщения пользователю, затем меню
+    # Удаляем старое эхо перед отправкой нового (если оно есть)
+    fsm_data = (await state.get_data()) if state else {}
+    owner_id = fsm_data.get("owner_id") or ch.get("owner_id")
+
+    old_echo_mid = fsm_data.get("editor_echo_mid")
+    if not old_echo_mid and owner_id:
+        old_echo_mid = await _get_echo_mid(owner_id, int(chat_id_str), msg_type)
+
+    if old_echo_mid:
+        echo_chat_id = fsm_data.get("editor_echo_chat_id") or msg.chat.id
+        try:
+            await msg.bot.delete_message(chat_id=echo_chat_id, message_id=old_echo_mid)
+        except Exception:
+            pass
 
     try:
         await msg.delete()
@@ -855,38 +868,8 @@ async def _handle_msg_input(message: Message, state: FSMContext):
         else _get_chat_by_bot(owner_id, int(chat_id_str))
     )
 
-    label = _MSG_FIELDS[msg_type]["label"]
-
-    # Эхо отправлено, запоминаем message_id в FSM state
-    sent_echo = None
-    if media_fid:
-        if media_type == "photo":
-            sent_echo = await message.answer_photo(media_fid, caption=text or None, parse_mode="HTML")
-        elif media_type == "video":
-            sent_echo = await message.answer_video(media_fid, caption=text or None, parse_mode="HTML")
-        elif media_type == "animation":
-            sent_echo = await message.answer_animation(media_fid, caption=text or None, parse_mode="HTML")
-        else:
-            sent_echo = await message.answer_document(media_fid, caption=text or None, parse_mode="HTML")
-    else:
-        sent_echo = await message.answer(text, parse_mode="HTML")
-
-    # Сохраняем echo_mid в FSM state и БД
-    if sent_echo:
-        await state.update_data(
-            editor_echo_mid=sent_echo.message_id,
-            editor_echo_chat_id=message.chat.id,
-        )
-        owner_id = (await state.get_data()).get("owner_id")
-        if owner_id:
-            await _set_echo_mid(owner_id, int(chat_id_str), msg_type, sent_echo.message_id)
-
-    # Меню редактора
-    await message.answer(
-        f"<b>{label}</b>",
-        reply_markup=_build_editor_kb(chat_id_str, msg_type, dict(ch) if ch else {}, scope),
-        parse_mode="HTML",
-    )
+    # Делегируем отрисовку редактору (чтобы сохранились кнопки и превью)
+    await _show_msg_editor(message, chat_id_str, msg_type, dict(ch) if ch else {}, scope, state)
 
 
 @router.message(SettingsFSM.waiting_for_welcome_text)

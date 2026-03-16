@@ -710,7 +710,7 @@ async def _show_msg_editor(event: Message | CallbackQuery, chat_id_str: str, msg
         await event.answer()
 
 
-async def _show_msg_prompt(callback: CallbackQuery, chat_id_str: str, msg_type: str, scope: str = "ch", cancel_cb: str | None = None):
+async def _show_msg_prompt(callback: CallbackQuery, chat_id_str: str, msg_type: str, scope: str = "ch", cancel_cb: str | None = None, state: FSMContext | None = None):
     """Экран-приглашение ввести текст (скрин 3)."""
     emoji = "👋" if msg_type == "welcome" else "🤚"
     subject = "новые подписчики при подаче заявки" if msg_type == "welcome" else "отписавшиеся участники"
@@ -721,7 +721,7 @@ async def _show_msg_prompt(callback: CallbackQuery, chat_id_str: str, msg_type: 
         else:
             cancel_cb = f"bs_messages:{chat_id_str}"
 
-    await navigate(
+    prompt_msg = await navigate(
         callback,
         f"<b>{emoji} Пришлите сообщение, которое будут получать {subject}.</b>\n\n"
         "<b>Переменные:</b>\n"
@@ -735,6 +735,11 @@ async def _show_msg_prompt(callback: CallbackQuery, chat_id_str: str, msg_type: 
             [InlineKeyboardButton(text="◀️ Отмена", callback_data=cancel_cb)],
         ]),
     )
+    if prompt_msg and hasattr(prompt_msg, "message_id") and state:
+        try:
+            await state.update_data(editor_prompt_mid=prompt_msg.message_id)
+        except Exception:
+            pass
 
 
 # ─────────────────────── Кнопка "Приветствие" ──────────────────────────
@@ -754,7 +759,7 @@ async def on_welcome_set(callback: CallbackQuery, state: FSMContext, platform_us
                                  msg_type="welcome", scope="ch")
         # Сообщения нет — «Отмена» возвращает на экран Сообщений (скрин 1), а не на редактор
         await _show_msg_prompt(callback, chat_id_str, "welcome", scope="ch",
-                               cancel_cb=f"ch_messages:{chat_id_str}")
+                               cancel_cb=f"ch_messages:{chat_id_str}", state=state)
 
 
 @router.callback_query(F.data.startswith("farewell_set:"))
@@ -771,7 +776,7 @@ async def on_farewell_set(callback: CallbackQuery, state: FSMContext, platform_u
                                  msg_type="farewell", scope="ch")
         # Сообщения нет — «Отмена» возвращает на экран Сообщений (скрин 1), а не на редактор
         await _show_msg_prompt(callback, chat_id_str, "farewell", scope="ch",
-                               cancel_cb=f"ch_messages:{chat_id_str}")
+                               cancel_cb=f"ch_messages:{chat_id_str}", state=state)
 
 
 # ─────────────────────── FSM: ввод текста ──────────────────────────
@@ -786,6 +791,14 @@ async def _handle_msg_input(message: Message, state: FSMContext):
     f = _MSG_FIELDS[msg_type]
 
     text = sanitize(message.text or message.caption or "", max_len=1024)
+    
+    # Удаляем сообщение-приглашение, если оно было сохранено в FSM
+    prompt_mid = data.get("editor_prompt_mid")
+    if prompt_mid:
+        try:
+            await message.bot.delete_message(chat_id=message.chat.id, message_id=prompt_mid)
+        except Exception:
+            pass
 
     # Определяем media
     media_fid = None
@@ -901,7 +914,7 @@ async def on_ch_msg_edit(callback: CallbackQuery, state: FSMContext, platform_us
                              msg_type=msg_type, scope="ch")
     # Редактируем существующее сообщение — «Отмена» возвращает на скрин 2 (редактор)
     back_to_editor = f"welcome_set:{chat_id_str}" if msg_type == "welcome" else f"farewell_set:{chat_id_str}"
-    await _show_msg_prompt(callback, chat_id_str, msg_type, scope="ch", cancel_cb=back_to_editor)
+    await _show_msg_prompt(callback, chat_id_str, msg_type, scope="ch", cancel_cb=back_to_editor, state=state)
 
 
 @router.callback_query(F.data.startswith("ch_msg_btns:"))
@@ -926,7 +939,7 @@ async def on_ch_msg_btns(callback: CallbackQuery, state: FSMContext, platform_us
 
     await state.set_state(SettingsFSM.waiting_for_msg_buttons)
     await state.update_data(chat_id=int(chat_id_str), owner_id=platform_user["user_id"],
-                             msg_type=msg_type, scope="ch")
+                             msg_type=msg_type, scope="ch", editor_prompt_mid=callback.message.message_id)
     await callback.message.edit_text(
         "📎 Отправьте <b>кнопки</b>, которые будут добавлены к сообщению.\n\n"
         "🔗 <b>URL-кнопки</b>\n\n"
@@ -1119,6 +1132,14 @@ async def on_msg_buttons_input(message: Message, state: FSMContext):
     msg_type = data.get("msg_type", "welcome")
     scope = data.get("scope", "ch")
     f = _MSG_FIELDS[msg_type]
+    
+    # Удаляем сообщение-приглашение, если оно было сохранено в FSM
+    prompt_mid = data.get("editor_prompt_mid")
+    if prompt_mid:
+        try:
+            await message.bot.delete_message(chat_id=message.chat.id, message_id=prompt_mid)
+        except Exception:
+            pass
 
     raw = sanitize(message.text or "", max_len=2048)
     buttons = []
@@ -1171,6 +1192,14 @@ async def on_msg_media_input(message: Message, state: FSMContext):
     msg_type = data.get("msg_type", "welcome")
     scope = data.get("scope", "ch")
     f = _MSG_FIELDS[msg_type]
+    
+    # Удаляем сообщение-приглашение, если оно было сохранено в FSM
+    prompt_mid = data.get("editor_prompt_mid")
+    if prompt_mid:
+        try:
+            await message.bot.delete_message(chat_id=message.chat.id, message_id=prompt_mid)
+        except Exception:
+            pass
 
     media_fid = None
     media_type = None

@@ -723,7 +723,8 @@ async def _show_msg_editor(event: Message | CallbackQuery, chat_id_str: str, msg
         except Exception:
             pass
     if sent_echo:
-        owner_id = (await state.get_data()).get("owner_id") if state else None
+        fsm_owner = (await state.get_data()).get("owner_id") if state else None
+        owner_id = fsm_owner or ch.get("owner_id")
         if owner_id:
             await _set_echo_mid(owner_id, int(chat_id_str), msg_type, sent_echo.message_id)
 
@@ -1178,7 +1179,7 @@ async def on_msg_buttons_input(message: Message, state: FSMContext):
         ch = await _get_chat_by_bot(owner_id, child_bot_id)
 
     await state.clear()
-    await _show_msg_editor(message, chat_id_str, msg_type, dict(ch) if ch else {}, scope, state=None)
+    await _show_msg_editor(message, chat_id_str, msg_type, dict(ch) if ch else {}, scope, state=state)
 
 
 @router.message(SettingsFSM.waiting_for_msg_media)
@@ -1235,7 +1236,7 @@ async def on_msg_media_input(message: Message, state: FSMContext):
         ch = await _get_chat_by_bot(owner_id, child_bot_id)
 
     await state.clear()
-    await _show_msg_editor(message, chat_id_str, msg_type, dict(ch) if ch else {}, scope, state=None)
+    await _show_msg_editor(message, chat_id_str, msg_type, dict(ch) if ch else {}, scope, state=state)
 
 
 # Legacy-обработчики для удаления (сохранены для обратной совместимости колбэков)

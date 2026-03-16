@@ -292,6 +292,7 @@ async def _show_captcha(callback: CallbackQuery, chat_id: int, owner_id: int):
             ]
 
         buttons += [
+            [
                 InlineKeyboardButton(
                     text=f"🔄 Сброс капчи",
                     callback_data=f"ch_cap_reset:{chat_id}",

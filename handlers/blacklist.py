@@ -15,6 +15,7 @@ from services.blacklist import (
 )
 from services.security import validate_bl_file
 from config import settings
+from utils.nav import navigate
 
 router = Router()
 
@@ -46,13 +47,13 @@ async def on_protection_menu(callback: CallbackQuery, platform_user: dict | None
     tariff = platform_user["tariff"]
     limit = settings.blacklist_limits.get(tariff, 0)
 
-    await callback.message.edit_text(
+    await navigate(
+        callback,
         f"🛡 <b>Чёрный список</b>\n\n"
         f"📊 Записей: {count:,} / {limit:,} (тариф {tariff.title()})\n\n"
         f"Чёрный список автоматически защищает все ваши площадки.",
         reply_markup=kb_blacklist_main(chat_id),
     )
-    await callback.answer()
 
 
 # ── Ручное добавление ─────────────────────────────────────────
@@ -63,7 +64,8 @@ async def on_bl_manual(callback: CallbackQuery, state: FSMContext, platform_user
     chat_id = callback.data.split(":")[1]
     await state.update_data(chat_id=chat_id)
     await state.set_state(BlacklistFSM.waiting_for_manual_input)
-    await callback.message.edit_text(
+    await navigate(
+        callback,
         "✏️ <b>Добавить в базу</b>\n\n"
         "Отправьте @username или Telegram ID.\n"
         "Можно несколько через пробел или с новой строки.\n\n"
@@ -72,7 +74,6 @@ async def on_bl_manual(callback: CallbackQuery, state: FSMContext, platform_user
             [InlineKeyboardButton(text="🚫 Отменить", callback_data=f"ch_protection:{chat_id}")]
         ]),
     )
-    await callback.answer()
 
 
 @router.message(BlacklistFSM.waiting_for_manual_input)
@@ -124,7 +125,8 @@ async def on_bl_upload(callback: CallbackQuery, platform_user: dict | None):
         await callback.answer("Загрузка файлов доступна с тарифа Старт.", show_alert=True)
         return
     chat_id = callback.data.split(":")[1]
-    await callback.message.edit_text(
+    await navigate(
+        callback,
         "📂 <b>Загрузка файла ЧС</b>\n\n"
         "Отправьте файл <b>TXT</b> или <b>CSV</b> с @username или ID.\n"
         "Максимум: 20 MB, до 100,000 записей.\n\n"
@@ -133,7 +135,6 @@ async def on_bl_upload(callback: CallbackQuery, platform_user: dict | None):
             [InlineKeyboardButton(text="🚫 Отменить", callback_data=f"ch_protection:{chat_id}")]
         ]),
     )
-    await callback.answer()
 
 
 @router.message(F.document, StateFilter(None))

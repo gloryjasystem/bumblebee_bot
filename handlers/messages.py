@@ -15,6 +15,7 @@ from aiogram.fsm.state import State, StatesGroup
 
 import db.pool as db
 from services.security import sanitize
+from utils.nav import navigate
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -89,7 +90,8 @@ async def _show_ch_messages(callback: CallbackQuery, chat_id: int, owner_id: int
     reaction_label = f"❤️ Реакции: {reaction if reaction else 'выкл'}"
     delete_label  = f"🗑 Удаление: {'выкл' if delete_min == 0 else f'{delete_min} мин'}"
 
-    await callback.message.edit_text(
+    await navigate(
+        callback,
         "<blockquote>"
         "🗑 <b>Удаление сообщений</b> — позволяет удалять отправленные ботом сообщения.\n\n"
         "🖨 <b>Печать</b> — бот имитирует написание текста при отправке сообщений.\n\n"
@@ -111,7 +113,6 @@ async def _show_ch_messages(callback: CallbackQuery, chat_id: int, owner_id: int
             [InlineKeyboardButton(text="◀️ Назад",    callback_data=back_cb)],
         ]),
     )
-    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("ch_messages:"))
@@ -167,11 +168,11 @@ async def on_ch_reactions(callback: CallbackQuery, platform_user: dict | None):
         callback_data=f"ch_set_reaction:{chat_id}:{e}",
     )] for e in _REACTION_OPTIONS]
     buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"ch_messages:{chat_id}")])
-    await callback.message.edit_text(
+    await navigate(
+        callback,
         "❤️ <b>Реакции</b>\n\nВыберите реакцию, которую бот будет ставить на сообщения:",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
     )
-    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("ch_set_reaction:"))
@@ -316,12 +317,11 @@ async def _show_captcha(callback: CallbackQuery, chat_id: int, owner_id: int):
 
     buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"ch_messages:{chat_id}")])
 
-    await callback.message.edit_text(
+    await navigate(
+        callback,
         info,
-        parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
     )
-    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("ch_captcha:"))
@@ -425,19 +425,18 @@ async def on_ch_cap_reset(callback: CallbackQuery, platform_user: dict | None):
     if not platform_user:
         return
     chat_id = int(callback.data.split(":")[1])
-    await callback.message.edit_text(
+    await navigate(
+        callback,
         "🔄 <b>Сброс капчи</b>\n\n"
         "Это действие сбросит <u>текст капчи</u>, <u>текст кнопок</u> и <u>медиа</u> "
         "к стандартным значениям.\n\n"
         "Настройки (тип, таймер, переключатели) <b>не изменятся</b>.\n\n"
         "Подтвердить сброс?",
-        parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="✅ Подтвердить", callback_data=f"ch_cap_reset_ok:{chat_id}")],
             [InlineKeyboardButton(text="◀️ Отмена",     callback_data=f"ch_captcha:{chat_id}")],
         ]),
     )
-    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("ch_cap_reset_ok:"))
@@ -478,11 +477,11 @@ async def on_ch_captcha_emoji(callback: CallbackQuery, platform_user: dict | Non
     )] for i, es in enumerate(_EMOJI_SETS)]
     buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"ch_captcha:{chat_id}")])
 
-    await callback.message.edit_text(
-        "🎲 <b>Вид рандомной капчи</b>\n\nВыберите набор эмодзи:",
+    await navigate(
+        callback,
+        "🎲 <b>Вид рандомной капчи</b>\n\nВыберите набор эмоджи:",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
     )
-    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("ch_cap_set_emoji:"))

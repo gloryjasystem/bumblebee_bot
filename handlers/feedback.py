@@ -10,6 +10,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
 import db.pool as db
+from utils.nav import navigate
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -85,11 +86,11 @@ async def show_bot_feedback(callback: CallbackQuery, platform_user: dict, child_
     keyboard += _mk_lang_rows(child_bot_id, "bsf_lang", lang)
     keyboard.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"bot_settings:{child_bot_id}")])
 
-    await callback.message.edit_text(
+    await navigate(
+        callback,
         _feedback_text(),
         reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard),
     )
-    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("bsf_toggle:"))
@@ -223,7 +224,8 @@ async def _show_feedback(callback: CallbackQuery, platform_user: dict, chat_id: 
     keyboard += _lang_rows(chat_id, lang)
     keyboard.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"channel_by_chat:{chat_id}")])
 
-    await callback.message.edit_text(
+    await navigate(
+        callback,
         "📣 <b>Обратная связь</b>\n\n"
         "🛎 Сообщения от пользователей будут приходить в диалог с ботом.\n\n"
         "🤖 Язык технических сообщений \"обратной связи\" зависит от выбранных настроек.\n\n"
@@ -231,7 +233,6 @@ async def _show_feedback(callback: CallbackQuery, platform_user: dict, chat_id: 
         "<b>Выберите действие 👇</b>",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard),
     )
-    await callback.answer()
 
 
 # ── Тоггл вкл/выкл ───────────────────────────────────────────

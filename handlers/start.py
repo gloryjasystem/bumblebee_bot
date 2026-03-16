@@ -7,6 +7,7 @@ from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKe
 
 import db.pool as db
 from config import settings
+from utils.nav import navigate
 
 router = Router()
 
@@ -190,11 +191,11 @@ async def on_language_select(callback: CallbackQuery, platform_user: dict | None
 
 
     text = "🇷🇺 Язык установлен: Русский" if lang == "ru" else "🇺🇸 Language set: English"
-    await callback.message.edit_text(
+    await navigate(
+        callback,
         f"{text}{trial_msg}\n\n⇨ Главное меню",
         reply_markup=kb_main_menu(),
     )
-    await callback.answer()
 
 
 # ── Главное меню ──────────────────────────────────────────────
@@ -244,7 +245,8 @@ async def on_settings_menu(callback: CallbackQuery, platform_user: dict | None):
 
     lang_cur = "🇷🇺 Русский" if platform_user.get("language", "ru") == "ru" else "🇺🇸 English"
 
-    await callback.message.edit_text(
+    await navigate(
+        callback,
         f"🔑 <b>Управление аккаунтом</b>\n\n"
         f"👤 ID: <code>{platform_user['user_id']}</code>\n"
         f"📦 Тариф: {label}{until}\n"
@@ -255,12 +257,12 @@ async def on_settings_menu(callback: CallbackQuery, platform_user: dict | None):
             [InlineKeyboardButton(text="◀️ Назад",           callback_data="menu:main")],
         ]),
     )
-    await callback.answer()
 
 
 @router.callback_query(F.data == "settings:lang")
 async def on_settings_lang(callback: CallbackQuery):
-    await callback.message.edit_text(
+    await navigate(
+        callback,
         "🌍 <b>Выберите язык / Choose language:</b>",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🇷🇺 Русский", callback_data="lang:ru")],
@@ -268,5 +270,4 @@ async def on_settings_lang(callback: CallbackQuery):
             [InlineKeyboardButton(text="◀️ Назад",    callback_data="menu:settings")],
         ]),
     )
-    await callback.answer()
 

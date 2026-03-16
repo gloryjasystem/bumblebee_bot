@@ -20,6 +20,7 @@ from aiogram.fsm.state import State, StatesGroup
 
 import db.pool as db
 from services.security import sanitize, decrypt_token
+from utils.nav import navigate
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -124,7 +125,8 @@ async def _show_requests_menu(callback: CallbackQuery, platform_user: dict, chat
         "   через заданное время. Используется для прогрева."
     )
 
-    await callback.message.edit_text(
+    await navigate(
+        callback,
         text,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text=auto_label,   callback_data=f"req_auto_toggle:{chat_id}")],
@@ -136,7 +138,6 @@ async def _show_requests_menu(callback: CallbackQuery, platform_user: dict, chat
             [InlineKeyboardButton(text="◀️ Назад",    callback_data=f"channel_by_chat:{chat_id}")],
         ]),
     )
-    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("ch_requests:"))
@@ -345,11 +346,11 @@ async def on_captcha_settings(callback: CallbackQuery, platform_user: dict | Non
     tariff = platform_user["tariff"]
     pro_note = "" if tariff in ("pro", "business") else "\n\n⚠️ Авто-удаление сообщений капчи — только Про+"
 
-    await callback.message.edit_text(
+    await navigate(
+        callback,
         f"🔑 <b>Настройки капчи</b>{pro_note}",
         reply_markup=kb_captcha_settings(dict(ch)),
     )
-    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("captcha_delete:"))
@@ -382,7 +383,8 @@ async def on_captcha_timer(callback: CallbackQuery, state: FSMContext, platform_
     chat_id = callback.data.split(":")[1]
     await state.set_state(SettingsFSM.waiting_for_captcha_timer)
     await state.update_data(chat_id=int(chat_id), owner_id=platform_user["user_id"])
-    await callback.message.edit_text(
+    await navigate(
+        callback,
         "⏱ <b>Таймер капчи</b>\n\n"
         "Сколько секунд есть у пользователя для прохождения?\n"
         "Минимум 30, максимум 600 сек.",
@@ -393,7 +395,6 @@ async def on_captcha_timer(callback: CallbackQuery, state: FSMContext, platform_
             [InlineKeyboardButton(text="🚫 Отмена", callback_data=f"captcha_settings:{chat_id}")],
         ]),
     )
-    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("timer_preset:"))
@@ -418,7 +419,8 @@ async def on_captcha_text(callback: CallbackQuery, state: FSMContext, platform_u
     chat_id = callback.data.split(":")[1]
     await state.set_state(SettingsFSM.waiting_for_captcha_text)
     await state.update_data(chat_id=int(chat_id), owner_id=platform_user["user_id"])
-    await callback.message.edit_text(
+    await navigate(
+        callback,
         "✏️ <b>Текст капчи</b>\n\n"
         "Отправьте новый текст. Можно использовать переменные:\n"
         "• <code>{name}</code> — имя пользователя\n"
@@ -427,7 +429,6 @@ async def on_captcha_text(callback: CallbackQuery, state: FSMContext, platform_u
             [InlineKeyboardButton(text="🚫 Отмена", callback_data=f"captcha_settings:{chat_id}")]
         ]),
     )
-    await callback.answer()
 
 
 @router.message(SettingsFSM.waiting_for_captcha_text)
@@ -624,7 +625,8 @@ async def _show_msg_prompt(callback: CallbackQuery, chat_id_str: str, msg_type: 
         else:
             cancel_cb = f"bs_messages:{chat_id_str}"
 
-    await callback.message.edit_text(
+    await navigate(
+        callback,
         f"<b>{emoji} Пришлите сообщение, которое будут получать {subject}.</b>\n\n"
         "<b>Переменные:</b>\n"
         "├ Имя: <code>{name}</code>\n"
@@ -636,9 +638,7 @@ async def _show_msg_prompt(callback: CallbackQuery, chat_id_str: str, msg_type: 
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="◀️ Отмена", callback_data=cancel_cb)],
         ]),
-        parse_mode="HTML",
     )
-    await callback.answer()
 
 
 # ─────────────────────── Кнопка "Приветствие" ──────────────────────────

@@ -20,6 +20,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
 import db.pool as db
+from utils.nav import navigate
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -141,12 +142,11 @@ async def _show_links_screen(callback: CallbackQuery, platform_user: dict,
     else:
         body = "Выберите ссылку или создайте новую:"
 
-    await callback.message.edit_text(
+    await navigate(
+        callback,
         f"🔗 <b>Ссылки</b>\n\n{body}",
-        parse_mode="HTML",
         reply_markup=kb_links_list(list(links), chat_id, child_bot_id, page),
     )
-    await callback.answer()
 
 
 # ── Экран 1: список ссылок ────────────────────────────────────
@@ -198,12 +198,11 @@ async def on_link_create(callback: CallbackQuery, state: FSMContext,
         child_bot_id=child_bot_id,
         owner_id=platform_user["user_id"],
     )
-    await callback.message.edit_text(
+    await navigate(
+        callback,
         "➕ <b>Какую ссылку необходимо создать?</b>",
-        parse_mode="HTML",
         reply_markup=kb_link_types(chat_id, child_bot_id),
     )
-    await callback.answer()
 
 
 # ── Выбор типа → ввод имени ──────────────────────────────────
@@ -546,12 +545,11 @@ async def on_link_detail(callback: CallbackQuery, platform_user: dict | None):
             f"📅 Дата создания: {created_at}"
         )
 
-        await callback.message.edit_text(
+        await navigate(
+            callback,
             text,
-            parse_mode="HTML",
             reply_markup=kb_link_detail(link_id, chat_id, child_bot_id, auto_accept),
         )
-        await callback.answer()
 
     except Exception as e:
         logger.error(f"on_link_detail error: {e}")
@@ -586,16 +584,15 @@ async def on_link_share(callback: CallbackQuery, platform_user: dict | None):
     import urllib.parse
     share_url = f"https://t.me/share/url?url={urllib.parse.quote(link_url)}"
 
-    await callback.message.edit_text(
+    await navigate(
+        callback,
         f"↗️ <b>Поделиться ссылкой</b>\n\n"
         f"Скопируйте ссылку:\n<code>{link_url}</code>",
-        parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="↗️ Поделиться в Telegram", url=share_url)],
             [InlineKeyboardButton(text="◀️ Назад", callback_data=f"link_detail:{link_id}:{chat_id}:{child_bot_id}")],
         ]),
     )
-    await callback.answer()
 
 
 # ── Автопринятие: переключение ────────────────────────────────
@@ -642,9 +639,9 @@ async def on_link_delete_ask(callback: CallbackQuery, platform_user: dict | None
     chat_id = int(parts[2]) if len(parts) > 2 else 0
     child_bot_id = int(parts[3]) if len(parts) > 3 else 0
 
-    await callback.message.edit_text(
+    await navigate(
+        callback,
         "🗑 <b>Удалить ссылку?</b>",
-        parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(
                 text="✅ Удалить",
@@ -656,7 +653,6 @@ async def on_link_delete_ask(callback: CallbackQuery, platform_user: dict | None
             )],
         ]),
     )
-    await callback.answer()
 
 
 # ── Удаление ссылки ───────────────────────────────────────────
@@ -674,9 +670,9 @@ async def on_link_delete(callback: CallbackQuery, platform_user: dict | None):
         "UPDATE invite_links SET is_active=false WHERE id=$1 AND owner_id=$2",
         link_id, platform_user["user_id"],
     )
-    await callback.message.edit_text(
+    await navigate(
+        callback,
         "✅ <b>Ссылка удалена</b>",
-        parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(
                 text="➡ Перейти к ссылкам",
@@ -684,4 +680,3 @@ async def on_link_delete(callback: CallbackQuery, platform_user: dict | None):
             )],
         ]),
     )
-    await callback.answer()

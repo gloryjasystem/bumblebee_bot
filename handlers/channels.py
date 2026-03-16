@@ -14,6 +14,7 @@ from aiogram.fsm.state import State, StatesGroup
 import db.pool as db
 from services.child_bot_service import validate_and_save_child_bot, verify_bot_is_admin
 from config import settings
+from utils.nav import navigate
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -82,12 +83,12 @@ async def on_channels_menu(callback: CallbackQuery, platform_user: dict | None):
 
     buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data="menu:main")])
 
-    await callback.message.edit_text(
+    await navigate(
+        callback,
         f"🤖 <b>Мои боты</b>\n\n"
         f"Подключено: {own_count}/{limit} (тариф {tariff.capitalize()})",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
     )
-    await callback.answer()
 
 
 # ══════════════════════════════════════════════════════════════
@@ -303,11 +304,11 @@ async def on_bot_settings(callback: CallbackQuery, platform_user: dict | None):
             [InlineKeyboardButton(text="📣 Обратная связь",    callback_data=f"bs_feedback:{child_bot_id}")],
             [InlineKeyboardButton(text="◀️ Назад",             callback_data="menu:channels")],
         ]
-    await callback.message.edit_text(
+    await navigate(
+        callback,
         text,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard),
     )
-    await callback.answer()
 
 
 # ══════════════════════════════════════════════════════════════
@@ -369,7 +370,8 @@ async def on_bot_chats_list(callback: CallbackQuery, platform_user: dict | None)
         "</blockquote>"
     )
     count = len(chats)
-    await callback.message.edit_text(
+    await navigate(
+        callback,
         f"📍 <b>Площадки @{username}</b>\n\n"
         f"{hint}\n\n"
         f"Подключено площадок: {count}\n\n"
@@ -380,7 +382,6 @@ async def on_bot_chats_list(callback: CallbackQuery, platform_user: dict | None)
         "Нажмите <b>Подключение</b> чтобы добавить.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
     )
-    await callback.answer()
 
 
 # ══════════════════════════════════════════════════════════════
@@ -405,7 +406,8 @@ async def on_bot_connect(callback: CallbackQuery, platform_user: dict | None):
     deep_channel = f"https://t.me/{username}?startchannel=true&admin=post_messages+delete_messages+invite_users+restrict_members+pin_messages"
     deep_group   = f"https://t.me/{username}?startgroup=true&admin=post_messages+delete_messages+invite_users+restrict_members+pin_messages"
 
-    await callback.message.edit_text(
+    await navigate(
+        callback,
         f"➕ Добавьте <b>@{username}</b> в <b>канал или группу</b> "
         f"в качестве администратора с правами на "
         f"«Добавление участников» (ios) → «Пригласительные ссылки» (android).\n\n"
@@ -418,7 +420,6 @@ async def on_bot_connect(callback: CallbackQuery, platform_user: dict | None):
             [InlineKeyboardButton(text="◀️ Назад", callback_data=f"bot_chats_list:{child_bot_id}")],
         ]),
     )
-    await callback.answer()
 
 
 # ══════════════════════════════════════════════════════════════
@@ -457,7 +458,8 @@ async def on_bot_delete(callback: CallbackQuery, platform_user: dict | None):
     if not platform_user:
         return
     child_bot_id = int(callback.data.split(":")[1])
-    await callback.message.edit_text(
+    await navigate(
+        callback,
         "⚠️ <b>Удалить бота?</b>\n\n"
         "Все площадки, пользователи и настройки этого бота будут удалены.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
@@ -465,7 +467,6 @@ async def on_bot_delete(callback: CallbackQuery, platform_user: dict | None):
             [InlineKeyboardButton(text="🚫 Отмена",     callback_data=f"bot_settings:{child_bot_id}")],
         ]),
     )
-    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("bot_delete_confirm:"))
@@ -474,20 +475,19 @@ async def on_bot_delete_confirm(callback: CallbackQuery, platform_user: dict | N
     if not platform_user:
         return
     child_bot_id = int(callback.data.split(":")[1])
-    await callback.message.edit_text(
+    await navigate(
+        callback,
         "🚨 <b>Вы точно уверены?</b>\n\n"
         "После удаления <b>восстановить ничего будет невозможно</b>. Будут навсегда удалены:\n\n"
         "❌ Все настроенные параметры бота\n"
         "❌ База ваших пользователей и статистика\n"
         "❌ Ссылки, рассылки и обратная связь\n"
         "❌ Все подключённые площадки",
-        parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="❗️ Да, удалить навсегда", callback_data=f"bot_delete_final:{child_bot_id}")],
             [InlineKeyboardButton(text="🚧 Нет, оставить бот",          callback_data=f"bot_settings:{child_bot_id}")],
         ]),
     )
-    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("bot_delete_final:"))
@@ -512,7 +512,8 @@ async def on_channel_new(callback: CallbackQuery, state: FSMContext, platform_us
     if not platform_user:
         return
     await state.clear()
-    await callback.message.edit_text(
+    await navigate(
+        callback,
         "🐝 <b>Создай бота</b> — и получи полное управление "
         "каналом или группой в одном месте.\n\n"
         "Что сможет твой бот:\n\n"
@@ -537,7 +538,6 @@ async def on_channel_new(callback: CallbackQuery, state: FSMContext, platform_us
             [InlineKeyboardButton(text="🚫 Отменить",         callback_data="menu:channels")],
         ]),
     )
-    await callback.answer()
 
 
 
@@ -552,7 +552,8 @@ async def on_bot_type_welcome(callback: CallbackQuery, state: FSMContext, platfo
     await state.set_state(ChannelFSM.waiting_for_token)
     await state.update_data(owner_id=platform_user["user_id"])
 
-    await callback.message.edit_text(
+    await navigate(
+        callback,
         "⚡ Чтобы создать бота, который закроет все задачи по "
         "управлению каналом и возьмёт рутину на себя, мне нужен токен:\n\n"
         "① Перейдите в @BotFather\n\n"
@@ -566,7 +567,6 @@ async def on_bot_type_welcome(callback: CallbackQuery, state: FSMContext, platfo
             [InlineKeyboardButton(text="🚫 Отменить", callback_data="menu:channels")],
         ]),
     )
-    await callback.answer()
 
 
 @router.message(ChannelFSM.waiting_for_token)
@@ -861,7 +861,8 @@ async def _show_channel_detail(callback: CallbackQuery, platform_user: dict, ch_
     ch_id_b = ch["id"]
     cbot_id = ch["child_bot_id"]
 
-    await callback.message.edit_text(
+    await navigate(
+        callback,
         text,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="✅ Обработка заявок",    callback_data=f"ch_requests:{chat_id}")],
@@ -882,7 +883,6 @@ async def _show_channel_detail(callback: CallbackQuery, platform_user: dict, ch_
             [InlineKeyboardButton(text="◀️ Назад",               callback_data=f"bot_chats_list:{cbot_id}")],
         ]),
     )
-    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("channel:"))
@@ -919,7 +919,8 @@ async def on_channel_in_bot(callback: CallbackQuery, platform_user: dict | None)
     title = ch["chat_title"] or f"Чат {ch['chat_id']}"
     back_cb = f"bot_chats_list:{child_bot_id}" if child_bot_id else "menu:channels"
 
-    await callback.message.edit_text(
+    await navigate(
+        callback,
         f"📍 <b>Площадка:</b> {type_icon} {title}\n\n"
         f"📅 <b>Дата добавления:</b> {added}\n\n"
         f"Выберите действие ⬇️",
@@ -929,7 +930,6 @@ async def on_channel_in_bot(callback: CallbackQuery, platform_user: dict | None)
             [InlineKeyboardButton(text="◀️ Назад",    callback_data=back_cb)],
         ]),
     )
-    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("ch_in_bot_toggle:"))
@@ -1016,14 +1016,14 @@ async def on_ch_delete(callback: CallbackQuery, platform_user: dict | None):
     cbot_id = int(parts[2]) if len(parts) > 2 else None
     back_cb = f"bot_chats_list:{cbot_id}" if cbot_id else "menu:channels"
 
-    await callback.message.edit_text(
+    await navigate(
+        callback,
         "⚠️ <b>Удалить площадку?</b>\n\nВся история, настройки и ЧС для этой площадки будут удалены.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="✅ Да, удалить", callback_data=f"ch_delete_confirm:{ch_id}:{cbot_id or ''}")],
             [InlineKeyboardButton(text="🚫 Отмена",      callback_data=f"channel_in_bot:{ch_id}:{cbot_id or ''}")],
         ]),
     )
-    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("ch_delete_confirm:"))

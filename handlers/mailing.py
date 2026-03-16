@@ -16,6 +16,7 @@ from aiogram.fsm.state import State, StatesGroup
 import db.pool as db
 from services import mailing as mailing_svc
 from services.security import sanitize
+from utils.nav import navigate
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -92,7 +93,8 @@ async def _show_mass_mailing(callback: CallbackQuery, state: FSMContext,
         callback_data="menu:main",
     )])
 
-    await callback.message.edit_text(
+    await navigate(
+        callback,
         "<blockquote>"
         "📣 Здесь вы можете запустить или запланировать рассылку "
         "одновременно на несколько ботов."
@@ -102,7 +104,6 @@ async def _show_mass_mailing(callback: CallbackQuery, state: FSMContext,
         "Выберите действие ⬇️",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
     )
-    await callback.answer()
 
 
 @router.callback_query(F.data == "menu:mailing")
@@ -163,7 +164,8 @@ async def on_ml_mass_start(callback: CallbackQuery, state: FSMContext,
     ) or 0
 
     await state.set_state(MassMailingFSM.waiting_for_text)
-    await callback.message.edit_text(
+    await navigate(
+        callback,
         "📨 <b>Массовая рассылка</b>\n\n"
         "Отправьте сообщение для рассылки.\n\n"
         "<b>Переменные:</b>\n"
@@ -178,7 +180,6 @@ async def on_ml_mass_start(callback: CallbackQuery, state: FSMContext,
             [InlineKeyboardButton(text="◀️ Назад", callback_data="menu:mailing")],
         ]),
     )
-    await callback.answer()
 
 
 @router.message(MassMailingFSM.waiting_for_text)
@@ -575,7 +576,8 @@ async def on_ch_mailing(callback: CallbackQuery, platform_user: dict | None):
     )
     title = ch["chat_title"] if ch else "Площадка"
 
-    await callback.message.edit_text(
+    await navigate(
+        callback,
         f"📨 <b>Рассылка</b>\n\nВыберите действие ⬇️",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="➕ Создать рассылку", callback_data=f"mailing_start:{chat_id}")],
@@ -583,7 +585,6 @@ async def on_ch_mailing(callback: CallbackQuery, platform_user: dict | None):
             [InlineKeyboardButton(text="◀️ Назад",             callback_data=f"channel_by_chat:{chat_id}")],
         ]),
     )
-    await callback.answer()
 
 
 # ══════════════════════════════════════════════════════════════
@@ -611,7 +612,8 @@ async def on_mailing_bot_start(callback: CallbackQuery, state: FSMContext,
     await state.update_data(child_bot_id=child_bot_id, chat_id=None, owner_id=owner_id)
     await state.set_state(MailingFSM.waiting_for_text)
 
-    await callback.message.edit_text(
+    await navigate(
+        callback,
         f"📨 Отправьте сообщение для рассылки.\n\n"
         f"<b>Переменные:</b>\n"
         f"├ Имя: <code>{{name}}</code>\n"
@@ -626,7 +628,6 @@ async def on_mailing_bot_start(callback: CallbackQuery, state: FSMContext,
                                    callback_data=f"bs_mailing:{child_bot_id}")],
         ]),
     )
-    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("mailing_bot_scheduled:"))

@@ -1295,10 +1295,8 @@ async def on_ch_ar_btns_global(
         "<code>🟩 Кнопка — ссылка</code> — зелёная\n"
         "<code>🟥 Кнопка — ссылка</code> — красная</blockquote>\n\n"
         "*** <u><b>Другие виды кнопок</b></u>\n\n"
-        "<b>Отправка Опроса (Telegram Poll):</b>\n"
-        "<blockquote><code>Какой ваш любимый цвет? — (poll)</code>\n"
-        "<code>🔴 Красный — (poll)</code>\n"
-        "<code>🔵 Синий — (poll)</code></blockquote>\n\n"
+        "<b>WebApp кнопки:</b>\n"
+        "<blockquote><code>Кнопка 1 — ссылка (webapp)</code></blockquote>\n\n"
         "ℹ️ Нажмите, чтобы скопировать.",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
@@ -1858,10 +1856,8 @@ async def on_ch_ar_kw_btns(
         "<code>🟩 Кнопка — ссылка</code> — зелёная\n"
         "<code>🟥 Кнопка — ссылка</code> — красная</blockquote>\n\n"
         "*** <u><b>Другие виды кнопок</b></u>\n\n"
-        "<b>Отправка Опроса (Telegram Poll):</b>\n"
-        "<blockquote><code>Какой ваш любимый цвет? — (poll)</code>\n"
-        "<code>🔴 Красный — (poll)</code>\n"
-        "<code>🔵 Синий — (poll)</code></blockquote>\n\n"
+        "<b>WebApp кнопки:</b>\n"
+        "<blockquote><code>Кнопка 1 — ссылка (webapp)</code></blockquote>\n\n"
         "ℹ️ Нажмите, чтобы скопировать.",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[

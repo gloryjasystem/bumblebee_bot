@@ -902,7 +902,7 @@ async def _handle_message(bot: Bot, child_bot_id: int, owner_id: int, message):
                 if typing_on:
                     try:
                         await bot.send_chat_action(chat_id=message.chat.id, action="typing")
-                        await asyncio.sleep(1.5)
+                        await asyncio.sleep(3)
                     except Exception:
                         pass
 

@@ -151,6 +151,21 @@ async def on_ch_toggle_typing(callback: CallbackQuery, platform_user: dict | Non
 
 # ── Toggle: Реакции ────────────────────────────────────────────
 
+def _build_reaction_keyboard(chat_id: int, current: str) -> InlineKeyboardMarkup:
+    """Строит клавиатуру выбора реакции с галочкой рядом с текущей."""
+    no_check = " ✅" if current == "" else ""
+    buttons = [[InlineKeyboardButton(
+        text=f"Выкл{no_check}",
+        callback_data=f"ch_set_reaction:{chat_id}:none",
+    )]]
+    buttons += [[InlineKeyboardButton(
+        text=e + (" ✅" if e == current else ""),
+        callback_data=f"ch_set_reaction:{chat_id}:{e}",
+    )] for e in _REACTION_OPTIONS]
+    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"ch_messages:{chat_id}")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
 @router.callback_query(F.data.startswith("ch_reactions:"))
 async def on_ch_reactions(callback: CallbackQuery, platform_user: dict | None):
     if not platform_user:
@@ -162,21 +177,10 @@ async def on_ch_reactions(callback: CallbackQuery, platform_user: dict | None):
         owner_id, chat_id,
     )
     current = (ch["reaction_emoji"] if ch else None) or ""
-    # Кнопка «Нету» — самая первая
-    no_reaction_check = " ✅" if current == "" else ""
-    buttons = [[InlineKeyboardButton(
-        text=f"Выкл{no_reaction_check}",
-        callback_data=f"ch_set_reaction:{chat_id}:none",
-    )]]
-    buttons += [[InlineKeyboardButton(
-        text=e + (" ✅" if e == current else ""),
-        callback_data=f"ch_set_reaction:{chat_id}:{e}",
-    )] for e in _REACTION_OPTIONS]
-    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"ch_messages:{chat_id}")])
     await navigate(
         callback,
         "❤️ <b>Реакции</b>\n\nВыберите реакцию, которую бот будет ставить на сообщения:",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+        reply_markup=_build_reaction_keyboard(chat_id, current),
     )
 
 
@@ -188,16 +192,22 @@ async def on_ch_set_reaction(callback: CallbackQuery, platform_user: dict | None
     chat_id  = int(parts[1])
     emoji    = parts[2]
     owner_id = platform_user["user_id"]
-    # «none» — отключить реакцию (сохраняем NULL)
+    # « none» — отключить реакцию (сохраняем NULL)
     save_val = None if emoji == "none" else emoji
     await db.execute(
         "UPDATE bot_chats SET reaction_emoji=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
         save_val, owner_id, chat_id,
     )
+    current = save_val or ""
+    # Редактируем клавиатуру на месте — галочка перемещается мгновенно
+    try:
+        await callback.message.edit_reply_markup(
+            reply_markup=_build_reaction_keyboard(chat_id, current)
+        )
+    except Exception:
+        pass
     answer_text = "Реакции: выкл" if emoji == "none" else f"Реакция: {emoji}"
     await callback.answer(answer_text)
-    callback.data = f"ch_reactions:{chat_id}"
-    await on_ch_reactions(callback, platform_user)
 
 
 # ── Toggle: Авто-удаление ──────────────────────────────────────

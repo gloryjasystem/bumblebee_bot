@@ -1094,9 +1094,9 @@ async def _handle_my_chat_member(
         logger.info(f"Child bot @{bot_username} added to {chat.title} ({chat.id}) as {new_status}")
 
     elif new_status in ("kicked", "left"):
-        # Бот удалён — деактивируем площадку
+        # Бот удалён — удаляем площадку из базы
         await db.execute(
-            "UPDATE bot_chats SET is_active=false WHERE child_bot_id=$1 AND chat_id=$2",
+            "DELETE FROM bot_chats WHERE child_bot_id=$1 AND chat_id=$2",
             child_bot_id, event.chat.id,
         )
         if _main_bot:

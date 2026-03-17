@@ -890,6 +890,22 @@ async def _handle_message(bot: Bot, child_bot_id: int, owner_id: int, message):
                     
                 return main_msg
 
+            # ── Получаем настройку Печати (typing_action) ──
+            typing_row = await db.fetchrow(
+                "SELECT typing_action FROM bot_chats WHERE child_bot_id=$1 AND is_active=true LIMIT 1",
+                child_bot_id
+            )
+            typing_on = bool(typing_row["typing_action"]) if typing_row else False
+
+            async def _typing_before_send():
+                """Имитирует печать перед отправкой автоответа."""
+                if typing_on:
+                    try:
+                        await bot.send_chat_action(chat_id=message.chat.id, action="typing")
+                        await asyncio.sleep(1.5)
+                    except Exception:
+                        pass
+
             # ── Сначала проверяем Keyword-ответы ──
             matched_keyword = False
             rules = await db.fetch(
@@ -913,6 +929,7 @@ async def _handle_message(bot: Bot, child_bot_id: int, owner_id: int, message):
                         r_mtop  = rule["reply_media_top"] if rule["reply_media_top"] is not None else True
                         r_prev  = bool(rule["reply_preview"])
                         r_btns  = rule["reply_buttons"]
+                        await _typing_before_send()
                         reply = await _send_ar(r_text, r_mid, r_mtype, r_mtop, r_prev, r_btns)
                         # Авто-удаление ответа бота в личке
                         delete_min = int(rule.get("auto_delete_min") or 0)
@@ -946,6 +963,7 @@ async def _handle_message(bot: Bot, child_bot_id: int, owner_id: int, message):
                             g_mtop  = general_chat.get("general_reply_media_top") if general_chat.get("general_reply_media_top") is not None else True
                             g_prev  = bool(general_chat.get("general_reply_preview"))
                             g_btns  = general_chat.get("general_reply_buttons")
+                            await _typing_before_send()
                             reply = await _send_ar(general_text, general_media, g_mtype, g_mtop, g_prev, g_btns)
                             delete_min = int(general_chat.get("auto_delete_min") or 0)
                             if delete_min > 0 and reply and hasattr(reply, 'message_id'):

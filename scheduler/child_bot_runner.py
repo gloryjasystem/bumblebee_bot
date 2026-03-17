@@ -556,18 +556,7 @@ async def _handle_group_message(bot: Bot, child_bot_id: int, message):
 
     text = message.text or message.caption or ""
 
-    # ── 1. Автоответчик (перемещён в личные сообщения бота) ──
-    # ── 2. Реакции (только на сообщения с текстом, не системные) ───
-    emoji = settings.get("reaction_emoji")
-    if emoji and text:  # text='' для системных сообщений о вступлении/выходе
-        try:
-            await bot.set_message_reaction(
-                chat_id=chat_id,
-                message_id=message.message_id,
-                reaction=[ReactionTypeEmoji(emoji=emoji)],
-            )
-        except Exception as e:
-            logger.debug(f"[REACTION] failed for chat {chat_id}: {e}")
+    # ── 1. Автоответчик и 2. Реакции (перемещены в личные сообщения бота) ──
 
 
 async def _delete_later(bot: Bot, chat_id: int, message_id: int, delay_min: int):
@@ -783,8 +772,24 @@ async def _handle_message(bot: Bot, child_bot_id: int, owner_id: int, message):
             await _approve_user_from_message(message, bot, _captcha_chat_id, user.id, success=True)
             return
 
-        # ── 3a. Автоответчик (в личку бота) ───────────────
+        # ── 3a. Автоответчик и Реакции (в личку бота) ───────────────
         if text:
+            # ── Реакции ──
+            reaction_row = await db.fetchrow(
+                "SELECT reaction_emoji FROM bot_chats WHERE child_bot_id=$1 AND is_active=true AND reaction_emoji IS NOT NULL LIMIT 1",
+                child_bot_id
+            )
+            if reaction_row and reaction_row["reaction_emoji"]:
+                try:
+                    await bot.set_message_reaction(
+                        chat_id=message.chat.id,
+                        message_id=message.message_id,
+                        reaction=[ReactionTypeEmoji(emoji=reaction_row["reaction_emoji"])],
+                    )
+                except Exception as e:
+                    logger.debug(f"[REACTION PM] failed for bot {child_bot_id}: {e}")
+
+            # ── Автоответчик ──
             async def _send_ar(t, mid, mtype, mtop, prev, btns):
                 if t:
                     # Подставляем переменные: {name}, {allname}, {username}, {chat}, {day}

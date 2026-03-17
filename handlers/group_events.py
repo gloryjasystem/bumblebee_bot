@@ -63,17 +63,7 @@ async def on_group_message(message: Message, bot: Bot):
                     logger.debug(f"[AUTOREPLY] failed: {e}")
                 break  # только первое совпадение
 
-    # ── 2. Реакции ─────────────────────────────────────────────
-    emoji = settings.get("reaction_emoji")
-    if emoji:
-        try:
-            await bot.set_message_reaction(
-                chat_id=chat_id,
-                message_id=message.message_id,
-                reaction=[ReactionTypeEmoji(emoji=emoji)],
-            )
-        except Exception as e:
-            logger.debug(f"[REACTION] failed for chat {chat_id}: {e}")
+    # ── 2. Реакции (перемещены в личные сообщения бота) ──
 
 
 # ── Вспомогательная: отложенное удаление сообщения ────────────

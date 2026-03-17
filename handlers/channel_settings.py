@@ -4483,7 +4483,7 @@ async def _show_bs_team(callback: CallbackQuery, bot: Bot,
 
     members = await db.fetch(
         "SELECT user_id, username, role FROM team_members "
-        "WHERE owner_id=$1 AND child_bot_id=$2 "
+        "WHERE owner_id=$1 AND child_bot_id=$2 AND is_active=true "
         "ORDER BY added_at",
         owner_id, child_bot_id,
     )
@@ -4567,7 +4567,7 @@ async def on_bs_team_members(callback: CallbackQuery, platform_user: dict | None
 
     members = await db.fetch(
         "SELECT id, user_id, username, role, added_at FROM team_members "
-        "WHERE owner_id=$1 AND child_bot_id=$2 "
+        "WHERE owner_id=$1 AND child_bot_id=$2 AND is_active=true "
         "ORDER BY added_at",
         owner_id, child_bot_id,
     )

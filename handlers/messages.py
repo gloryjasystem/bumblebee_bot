@@ -1098,7 +1098,7 @@ async def on_ch_ar_toggle_global(
     else:
         # Текста нет — FSM-ввод
         await state.set_state(MessagesFSM.waiting_for_general_reply_text)
-        await state.update_data(chat_id=chat_id, owner_id=owner_id)
+        await state.update_data(chat_id=chat_id, owner_id=owner_id, prompt_mid=callback.message.message_id)
         await callback.message.edit_text(
             "<blockquote>⟲ Пришлите сообщение, которое будет "
             "использоваться для автоматического ответа.</blockquote>\n\n"
@@ -1126,12 +1126,14 @@ async def on_general_reply_text_input(message: Message, state: FSMContext):
     if prompt_mid:
         try:
             await message.bot.delete_message(message.chat.id, prompt_mid)
-        except Exception:
-            pass
+        except Exception as e:
+            from core.logger import logger
+            logger.error(f"Failed to delete prompt_mid {prompt_mid}: {e}")
     try:
         await message.delete()
-    except Exception:
-        pass
+    except Exception as e:
+        from core.logger import logger
+        logger.error(f"Failed to delete user msg {message.message_id}: {e}")
 
     # Поддержка медиа
     if message.photo:
@@ -1407,7 +1409,7 @@ async def on_ch_ar_add(callback: CallbackQuery, state: FSMContext, platform_user
         return
     chat_id = int(callback.data.split(":")[1])
     await state.set_state(MessagesFSM.waiting_for_autoreply_kw)
-    await state.update_data(chat_id=chat_id, owner_id=platform_user["user_id"])
+    await state.update_data(chat_id=chat_id, owner_id=platform_user["user_id"], prompt_mid=callback.message.message_id)
     await callback.message.edit_text(
         "Отправьте триггер.\n\n"
         "<blockquote>① Триггер — это сообщение для вызова автоматического ответа.</blockquote>\n\n"
@@ -1424,11 +1426,23 @@ async def on_ch_ar_add(callback: CallbackQuery, state: FSMContext, platform_user
 
 @router.message(MessagesFSM.waiting_for_autoreply_kw)
 async def on_ar_kw_input(message: Message, state: FSMContext):
-    kw = sanitize(message.text or "", max_len=64)
-    await state.update_data(keyword=kw)
-    await state.set_state(MessagesFSM.waiting_for_autoreply_text)
     data = await state.get_data()
-    await message.answer(
+    prompt_mid = data.get("prompt_mid")
+    if prompt_mid:
+        try:
+            await message.bot.delete_message(message.chat.id, prompt_mid)
+        except Exception as e:
+            from core.logger import logger
+            logger.error(f"Failed to delete prompt_mid in kw: {e}")
+    try:
+        await message.delete()
+    except Exception as e:
+        from core.logger import logger
+        logger.error(f"Failed to delete msg in kw: {e}")
+
+    kw = sanitize(message.text or "", max_len=64)
+    await state.set_state(MessagesFSM.waiting_for_autoreply_text)
+    prompt_msg = await message.answer(
         "💬 <b>Автоответчик</b>\n\n"
         "<blockquote>⟲ Пришлите сообщение, которое будет "
         "использоваться для автоматического ответа.</blockquote>\n\n"
@@ -1444,6 +1458,7 @@ async def on_ar_kw_input(message: Message, state: FSMContext):
             [InlineKeyboardButton(text="◀️ Назад", callback_data=f"ch_autoreply:{data['chat_id']}")],
         ]),
     )
+    await state.update_data(keyword=kw, prompt_mid=prompt_msg.message_id)
 
 
 @router.message(MessagesFSM.waiting_for_autoreply_text)

@@ -54,7 +54,22 @@ _BUTTON_PLACEMENTS = ["inline", "reply"]
 _TIMER_CYCLE = [1, 2, 5, 10, 30]
 
 # Авто-удаление сообщений (цикл, в минутах; 0 = выкл)
-_DELETE_CYCLE = [0, 5, 10, 15, 30, 60]
+_DELETE_CYCLE = [0, 30, 60, 180, 360, 720, 1440, 2160, 2880]
+
+def _delete_label(minutes: int) -> str:
+    """Читаемые метки для времени удаления."""
+    if minutes == 0:
+        return "выкл"
+    if minutes < 60:
+        return f"{minutes} мин"
+    hours = minutes // 60
+    if hours % 10 == 1 and hours != 11:
+        word = "час"
+    elif hours % 10 in (2, 3, 4) and hours not in (12, 13, 14):
+        word = "часа"
+    else:
+        word = "часов"
+    return f"{hours} {word}"
 
 # Реакции (выбор)
 _REACTION_OPTIONS = ["👍", "❤️", "🔥", "🎉", "👏", "😍", "🤩", "💯"]
@@ -93,7 +108,7 @@ async def _show_ch_messages(callback: CallbackQuery, chat_id: int, owner_id: int
                      "random": "🔒 Капча: рандомная"}.get(captcha_type, "🔒 Капча")
     typing_label  = f"🖨 Печать: {'вкл' if typing_on else 'выкл'}"
     reaction_label = f"❤️ Реакции: {reaction if reaction else 'выкл'}"
-    delete_label  = f"🗑 Удаление: {'выкл' if delete_min == 0 else f'{delete_min} мин'}"
+    delete_label  = f"🗑 Удаление сообщений: {_delete_label(delete_min)}"
 
     await navigate(
         callback,
@@ -232,8 +247,7 @@ async def on_ch_delete_toggle(callback: CallbackQuery, platform_user: dict | Non
         "UPDATE bot_chats SET auto_delete_min=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
         new_val, owner_id, chat_id,
     )
-    label = "выкл" if new_val == 0 else f"{new_val} мин"
-    await callback.answer(f"🗑 Удаление: {label}")
+    await callback.answer(f"🗑 Удаление сообщений: {_delete_label(new_val)}")
     await _show_ch_messages(callback, chat_id, owner_id)
 
 

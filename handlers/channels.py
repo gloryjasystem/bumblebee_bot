@@ -553,8 +553,13 @@ async def on_bot_type_welcome(callback: CallbackQuery, state: FSMContext, platfo
     await state.set_state(ChannelFSM.waiting_for_token)
     await state.update_data(owner_id=platform_user["user_id"])
 
-    await navigate(
-        callback,
+    # Убираем старый текст, отправляем новый вниз
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
+
+    msg = await callback.message.answer(
         "⚡ Чтобы создать бота, который закроет все задачи по "
         "управлению каналом и возьмёт рутину на себя, мне нужен токен:\n\n"
         "① Перейдите в @BotFather\n\n"
@@ -568,6 +573,8 @@ async def on_bot_type_welcome(callback: CallbackQuery, state: FSMContext, platfo
             [InlineKeyboardButton(text="🚫 Отменить", callback_data="menu:channels")],
         ]),
     )
+    await state.update_data(prompt_msg_id=msg.message_id)
+    await callback.answer()
 
 
 @router.message(ChannelFSM.waiting_for_token)
@@ -576,6 +583,9 @@ async def on_token_received(message: Message, state: FSMContext, platform_user: 
         return
 
     token = message.text.strip() if message.text else ""
+    data = await state.get_data()
+    prompt_msg_id = data.get("prompt_msg_id")
+
     msg = await message.answer("⏳ Проверяю токен...")
 
     try:
@@ -619,6 +629,14 @@ async def on_token_received(message: Message, state: FSMContext, platform_user: 
 
     deep_channel = f"https://t.me/{username}?startchannel=true&admin=post_messages+delete_messages+invite_users+restrict_members+pin_messages"
     deep_group   = f"https://t.me/{username}?startgroup=true&admin=post_messages+delete_messages+invite_users+restrict_members+pin_messages"
+
+    # Удаляем сообщение с инструкцией (prompt_msg_id) и сообщение пользователя с токеном
+    try:
+        if prompt_msg_id:
+            await message.bot.delete_message(chat_id=message.chat.id, message_id=prompt_msg_id)
+        await message.delete()
+    except Exception:
+        pass
 
     await msg.edit_text(
         f"✅ Бот: @{username} создан\n\n"

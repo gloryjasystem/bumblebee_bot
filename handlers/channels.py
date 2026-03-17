@@ -263,9 +263,10 @@ async def on_bot_settings(callback: CallbackQuery, platform_user: dict | None):
         f"<u>\U0001f4ac Сообщений</u>\n"
         f"├ Сегодня ≈ {msg_today}\n"
         f"├ Вчера ≈ {msg_yesterday}\n"
-        f"├ Всего ≈ {msg_total}\n"
-        f"🟢 Живые ≈ {alive_users}\n"
-        f"🔴 Мёртвые ≈ {dead_users}"
+        f"└ Всего ≈ {msg_total}\n"
+        f"\n"
+        f"🟢 Живые ≈ {alive_users} (состоят в канале/группе)\n"
+        f"🔴 Мёртвые ≈ {dead_users} (покинули канал/группу)"
     )
 
     if is_owner:
@@ -853,9 +854,10 @@ async def _show_channel_detail(callback: CallbackQuery, platform_user: dict, ch_
         f"<u>\U0001f4ac Сообщений</u>\n"
         f"├ Сегодня ≈ {ch_msg_today}\n"
         f"├ Вчера ≈ {ch_msg_yesterday}\n"
-        f"├ Всего ≈ {ch_msg_total}\n"
-        f"🟢 Живые ≈ {alive_users}\n"
-        f"🔴 Мёртвые ≈ {dead_users}"
+        f"└ Всего ≈ {ch_msg_total}\n"
+        f"\n"
+        f"🟢 Живые ≈ {alive_users} (состоят в канале/группе)\n"
+        f"🔴 Мёртвые ≈ {dead_users} (покинули канал/группу)"
     )
 
     ch_id_b = ch["id"]

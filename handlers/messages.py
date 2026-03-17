@@ -62,7 +62,8 @@ _REACTION_OPTIONS = ["👍", "❤️", "🔥", "🎉", "👏", "😍", "🤩", "
 
 # Хранит message_id эхо-сообщения панели «Общий ответ»
 # ключ: (owner_id, chat_id) → message_id
-_gr_echo_ids: dict = {}
+# Хранит message_id панели глобального автоответа: (owner_id, chat_id) -> list[echo_msg_id]
+_gr_echo_ids: dict[tuple, list[int]] = {}
 
 
 # ══════════════════════════════════════════════════════════════
@@ -944,41 +945,85 @@ async def _show_global_mgmt(message, chat_id: int, owner_id: int):
 
     # Удалить старое эхо, если оно уже есть (обновление панели)
     key = (owner_id, chat_id)
-    old_echo_id = _gr_echo_ids.pop(key, None)
-    if old_echo_id:
+    old_echo_ids = _gr_echo_ids.pop(key, [])
+    for eid in old_echo_ids:
         try:
-            await message.bot.delete_message(message.chat.id, old_echo_id)
+            await message.bot.delete_message(message.chat.id, eid)
         except Exception:
             pass
 
     # -- Эхо сохранённого сообщения
     from utils.keyboard import build_inline_keyboard
-    user_msg_kb = build_inline_keyboard(ch["general_reply_buttons"]) if ch else None
+    
+    poll_question = None
+    poll_options = []
+    user_msg_kb = None
+    
+    raw_btns = ch["general_reply_buttons"] if ch else None
+    if raw_btns:
+        try:
+            import json as _json
+            parsed_btns = _json.loads(raw_btns) if isinstance(raw_btns, str) else raw_btns
+            clean_btns = []
+            rows_b = parsed_btns if (parsed_btns and isinstance(parsed_btns[0], list)) else [[b] for b in parsed_btns]
+            for r_b in rows_b:
+                clean_row = []
+                for b in r_b:
+                    url = str(b.get("url", "")).strip()
+                    text_b = str(b.get("text", ""))
+                    if url.endswith("(poll)"):
+                        if not poll_question: poll_question = text_b
+                        else: poll_options.append(text_b)
+                    else: clean_row.append(b)
+                if clean_row: clean_btns.append(clean_row)
+            user_msg_kb = build_inline_keyboard(clean_btns) if clean_btns else None
+        except Exception:
+            try:
+                user_msg_kb = build_inline_keyboard(raw_btns)
+            except Exception:
+                pass
 
-    if media_id:
-        kwargs = {
-            "caption": text or None,
-            "parse_mode": "HTML",
-            "show_caption_above_media": not media_top,
-            "reply_markup": user_msg_kb,
-        }
-        if media_type == "photo":
-            echo_msg = await message.answer_photo(media_id, **kwargs)
-        elif media_type == "video":
-            echo_msg = await message.answer_video(media_id, **kwargs)
-        elif media_type == "document":
-            echo_msg = await message.answer_document(media_id, **kwargs)
+    main_msg = None
+    has_content = bool(text) or bool(media_id) or bool(user_msg_kb)
+    
+    if has_content or not poll_question:
+        if media_id:
+            kwargs = {
+                "caption": text or None,
+                "parse_mode": "HTML",
+                "show_caption_above_media": not media_top,
+                "reply_markup": user_msg_kb,
+            }
+            if media_type == "photo":
+                main_msg = await message.answer_photo(media_id, **kwargs)
+            elif media_type == "video":
+                main_msg = await message.answer_video(media_id, **kwargs)
+            elif media_type == "document":
+                main_msg = await message.answer_document(media_id, **kwargs)
+            else:
+                main_msg = await message.answer(text or "—", parse_mode="HTML",
+                                                disable_web_page_preview=not preview_on,
+                                                reply_markup=user_msg_kb)
         else:
-            echo_msg = await message.answer(text or "—", parse_mode="HTML",
+            main_msg = await message.answer(text or "—", parse_mode="HTML",
                                             disable_web_page_preview=not preview_on,
                                             reply_markup=user_msg_kb)
-    else:
-        echo_msg = await message.answer(text or "—", parse_mode="HTML",
-                                        disable_web_page_preview=not preview_on,
-                                        reply_markup=user_msg_kb)
+
+    poll_msg = None
+    if poll_question:
+        if len(poll_options) < 2:
+            poll_options.extend(["Да", "Нет"] if not poll_options else ["Нет"])
+        poll_msg = await message.answer_poll(
+            question=poll_question,
+            options=poll_options[:10],
+            is_anonymous=False
+        )
 
     # Сохраняем ID эхо-сообщения
-    _gr_echo_ids[key] = echo_msg.message_id
+    cur_ids = []
+    if main_msg: cur_ids.append(main_msg.message_id)
+    if poll_msg: cur_ids.append(poll_msg.message_id)
+    _gr_echo_ids[key] = cur_ids
 
     # -- Панель управления
     media_icon = "⬆️" if media_top else "⬇️"
@@ -1012,10 +1057,10 @@ async def on_ch_ar_back_global(callback: CallbackQuery, platform_user: dict | No
 
     # Удалить эхо-сообщение, если оно зарегистрировано
     key = (owner_id, chat_id)
-    echo_id = _gr_echo_ids.pop(key, None)
-    if echo_id:
+    echo_ids = _gr_echo_ids.pop(key, [])
+    for eid in echo_ids:
         try:
-            await callback.message.bot.delete_message(callback.message.chat.id, echo_id)
+            await callback.message.bot.delete_message(callback.message.chat.id, eid)
         except Exception:
             pass
 
@@ -1126,10 +1171,10 @@ async def on_ch_ar_edit_global(
     owner_id = platform_user["user_id"]
     # Удаляем эхо-сообщение перед открытием формы
     key = (owner_id, chat_id)
-    echo_id = _gr_echo_ids.pop(key, None)
-    if echo_id:
+    echo_ids = _gr_echo_ids.pop(key, [])
+    for eid in echo_ids:
         try:
-            await callback.bot.delete_message(chat_id=callback.message.chat.id, message_id=echo_id)
+            await callback.bot.delete_message(chat_id=callback.message.chat.id, message_id=eid)
         except Exception:
             pass
 
@@ -1222,10 +1267,10 @@ async def on_ch_ar_btns_global(
     owner_id = platform_user["user_id"]
     # Удаляем эхо-сообщение перед открытием формы
     key = (owner_id, chat_id)
-    echo_id = _gr_echo_ids.pop(key, None)
-    if echo_id:
+    echo_ids = _gr_echo_ids.pop(key, [])
+    for eid in echo_ids:
         try:
-            await callback.bot.delete_message(chat_id=callback.message.chat.id, message_id=echo_id)
+            await callback.bot.delete_message(chat_id=callback.message.chat.id, message_id=eid)
         except Exception:
             pass
 
@@ -1244,8 +1289,10 @@ async def on_ch_ar_btns_global(
         "<code>🟩 Кнопка — ссылка</code> — зелёная\n"
         "<code>🟥 Кнопка — ссылка</code> — красная</blockquote>\n\n"
         "*** <u><b>Другие виды кнопок</b></u>\n\n"
-        "<b>WebApp кнопки:</b>\n"
-        "<blockquote><code>Кнопка 1 — ссылка (webapp)</code></blockquote>\n\n"
+        "<b>Отправка Опроса (Telegram Poll):</b>\n"
+        "<blockquote><code>Какой ваш любимый цвет? — (poll)</code>\n"
+        "<code>🔴 Красный — (poll)</code>\n"
+        "<code>🔵 Синий — (poll)</code></blockquote>\n\n"
         "ℹ️ Нажмите, чтобы скопировать.",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
@@ -1325,10 +1372,10 @@ async def on_ch_ar_delete_global(callback: CallbackQuery, platform_user: dict | 
 
     # Удалить эхо-сообщение из чата
     key = (owner_id, chat_id)
-    echo_id = _gr_echo_ids.pop(key, None)
-    if echo_id:
+    echo_ids = _gr_echo_ids.pop(key, [])
+    for eid in echo_ids:
         try:
-            await callback.message.bot.delete_message(callback.message.chat.id, echo_id)
+            await callback.message.bot.delete_message(callback.message.chat.id, eid)
         except Exception:
             pass
 
@@ -1457,8 +1504,8 @@ async def on_ar_text_input(message: Message, state: FSMContext):
 
 # ── Просмотр и управление keyword-ответом ──────────────────────
 
-# Хранит message_id эхо-сообщения панели keyword-ответа: (owner_id, chat_id, ar_id) -> echo_msg_id
-_kw_echo_ids: dict[tuple, int] = {}
+# Хранит message_id эхо-сообщения панели keyword-ответа: (owner_id, chat_id, ar_id) -> list[echo_msg_id]
+_kw_echo_ids: dict[tuple, list[int]] = {}
 
 
 async def _show_keyword_mgmt(message, chat_id: int, owner_id: int, ar_id: int):
@@ -1480,38 +1527,80 @@ async def _show_keyword_mgmt(message, chat_id: int, owner_id: int, ar_id: int):
 
     # Удалить старое эхо, если есть
     key = (owner_id, chat_id, ar_id)
-    old_echo_id = _kw_echo_ids.pop(key, None)
-    if old_echo_id:
+    old_echo_ids = _kw_echo_ids.pop(key, [])
+    for eid in old_echo_ids:
         try:
-            await message.bot.delete_message(message.chat.id, old_echo_id)
+            await message.bot.delete_message(message.chat.id, eid)
         except Exception:
             pass
 
     # -- Строим инлайн-клавиатуру из сохранённых кнопок
     from utils.keyboard import build_inline_keyboard
+    
+    poll_question = None
+    poll_options = []
+    echo_kb = None
+    
     raw_btns = row["reply_buttons"] if row else None
-    echo_kb = build_inline_keyboard(raw_btns) if raw_btns else None
+    if raw_btns:
+        try:
+            import json as _json
+            parsed_btns = _json.loads(raw_btns) if isinstance(raw_btns, str) else raw_btns
+            clean_btns = []
+            rows_b = parsed_btns if (parsed_btns and isinstance(parsed_btns[0], list)) else [[b] for b in parsed_btns]
+            for r_b in rows_b:
+                clean_row = []
+                for b in r_b:
+                    url = str(b.get("url", "")).strip()
+                    text_b = str(b.get("text", ""))
+                    if url.endswith("(poll)"):
+                        if not poll_question: poll_question = text_b
+                        else: poll_options.append(text_b)
+                    else: clean_row.append(b)
+                if clean_row: clean_btns.append(clean_row)
+            echo_kb = build_inline_keyboard(clean_btns) if clean_btns else None
+        except Exception:
+            try:
+                echo_kb = build_inline_keyboard(raw_btns)
+            except Exception:
+                pass
 
-    # -- Эхо сохранённого ответа
-    if media_id:
-        kwargs = {
-            "caption": text or None,
-            "parse_mode": "HTML",
-            "reply_markup": echo_kb,
-            "show_caption_above_media": not media_top,
-        }
-        if media_type == "photo":
-            echo_msg = await message.answer_photo(media_id, **kwargs)
-        elif media_type == "video":
-            echo_msg = await message.answer_video(media_id, **kwargs)
-        elif media_type == "document":
-            echo_msg = await message.answer_document(media_id, **kwargs)
+    main_msg = None
+    has_content = bool(text) or bool(media_id) or bool(echo_kb)
+    
+    if has_content or not poll_question:
+        if media_id:
+            kwargs = {
+                "caption": text or None,
+                "parse_mode": "HTML",
+                "reply_markup": echo_kb,
+                "show_caption_above_media": not media_top,
+            }
+            if media_type == "photo":
+                main_msg = await message.answer_photo(media_id, **kwargs)
+            elif media_type == "video":
+                main_msg = await message.answer_video(media_id, **kwargs)
+            elif media_type == "document":
+                main_msg = await message.answer_document(media_id, **kwargs)
+            else:
+                main_msg = await message.answer(text or "—", parse_mode="HTML", reply_markup=echo_kb)
         else:
-            echo_msg = await message.answer(text or "—", parse_mode="HTML", reply_markup=echo_kb)
-    else:
-        echo_msg = await message.answer(text or "—", parse_mode="HTML", reply_markup=echo_kb)
+            main_msg = await message.answer(text or "—", parse_mode="HTML", reply_markup=echo_kb)
 
-    _kw_echo_ids[key] = echo_msg.message_id
+    poll_msg = None
+    if poll_question:
+        if len(poll_options) < 2:
+            poll_options.extend(["Да", "Нет"] if not poll_options else ["Нет"])
+        poll_msg = await message.answer_poll(
+            question=poll_question,
+            options=poll_options[:10],
+            is_anonymous=False
+        )
+
+    cur_ids = []
+    if main_msg: cur_ids.append(main_msg.message_id)
+    if poll_msg: cur_ids.append(poll_msg.message_id)
+    _kw_echo_ids[key] = cur_ids
 
     # -- Панель управления
     if media_id:
@@ -1560,10 +1649,10 @@ async def on_ch_ar_kw_back(callback: CallbackQuery, platform_user: dict | None):
     owner_id = platform_user["user_id"]
 
     key = (owner_id, chat_id, ar_id)
-    echo_id = _kw_echo_ids.pop(key, None)
-    if echo_id:
+    echo_ids = _kw_echo_ids.pop(key, [])
+    for eid in echo_ids:
         try:
-            await callback.message.bot.delete_message(callback.message.chat.id, echo_id)
+            await callback.message.bot.delete_message(callback.message.chat.id, eid)
         except Exception:
             pass
 
@@ -1591,10 +1680,10 @@ async def on_ch_ar_kw_edit(
 
     # Удаляем эхо перед открытием формы редактирования
     key = (owner_id, chat_id, ar_id)
-    echo_id = _kw_echo_ids.pop(key, None)
-    if echo_id:
+    echo_ids = _kw_echo_ids.pop(key, [])
+    for eid in echo_ids:
         try:
-            await callback.bot.delete_message(chat_id=callback.message.chat.id, message_id=echo_id)
+            await callback.bot.delete_message(chat_id=callback.message.chat.id, message_id=eid)
         except Exception:
             pass
 
@@ -1648,8 +1737,8 @@ async def on_ch_ar_kw_media(
     # Редактируем эхо-сообщение если есть медиа
     if row["reply_media"]:
         key = (owner_id, chat_id, ar_id)
-        echo_id = _kw_echo_ids.get(key)
-        if echo_id:
+        echo_ids = _kw_echo_ids.get(key, [])
+        if echo_ids:
             try:
                 # Получаем текст и кнопки для эха
                 text = row.get("reply_text")
@@ -1675,7 +1764,7 @@ async def on_ch_ar_kw_media(
                 
                 await callback.bot.edit_message_caption(
                     chat_id=callback.message.chat.id,
-                    message_id=echo_id,
+                    message_id=echo_ids[0],
                     caption=text or None,
                     parse_mode="HTML",
                     reply_markup=echo_kb,
@@ -1720,10 +1809,10 @@ async def on_ch_ar_kw_btns(
 
     # Удаляем эхо-сообщение
     key = (owner_id, chat_id, ar_id)
-    echo_id = _kw_echo_ids.pop(key, None)
-    if echo_id:
+    echo_ids = _kw_echo_ids.pop(key, [])
+    for eid in echo_ids:
         try:
-            await callback.message.bot.delete_message(callback.message.chat.id, echo_id)
+            await callback.message.bot.delete_message(callback.message.chat.id, eid)
         except Exception:
             pass
 
@@ -1742,8 +1831,10 @@ async def on_ch_ar_kw_btns(
         "<code>🟩 Кнопка — ссылка</code> — зелёная\n"
         "<code>🟥 Кнопка — ссылка</code> — красная</blockquote>\n\n"
         "*** <u><b>Другие виды кнопок</b></u>\n\n"
-        "<b>WebApp кнопки:</b>\n"
-        "<blockquote><code>Кнопка 1 — ссылка (webapp)</code></blockquote>\n\n"
+        "<b>Отправка Опроса (Telegram Poll):</b>\n"
+        "<blockquote><code>Какой ваш любимый цвет? — (poll)</code>\n"
+        "<code>🔴 Красный — (poll)</code>\n"
+        "<code>🔵 Синий — (poll)</code></blockquote>\n\n"
         "ℹ️ Нажмите, чтобы скопировать.",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
@@ -1853,10 +1944,10 @@ async def on_ch_ar_del(callback: CallbackQuery, platform_user: dict | None):
 
     # Удаляем эхо-сообщение панели управления, если есть
     key = (owner_id, chat_id, ar_id)
-    echo_id = _kw_echo_ids.pop(key, None)
-    if echo_id:
+    echo_ids = _kw_echo_ids.pop(key, [])
+    for eid in echo_ids:
         try:
-            await callback.message.bot.delete_message(callback.message.chat.id, echo_id)
+            await callback.message.bot.delete_message(callback.message.chat.id, eid)
         except Exception:
             pass
 

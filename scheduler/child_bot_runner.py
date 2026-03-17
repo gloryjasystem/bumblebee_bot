@@ -576,45 +576,87 @@ async def _handle_group_message(bot: Bot, child_bot_id: int, message):
                       .replace("{chat}", chat_title)
                       .replace("{day}", today_str))
 
+            import json as _json
             from utils.keyboard import build_inline_keyboard
+            
             kr = None
+            poll_question = None
+            poll_options = []
+            
             if btns:
                 try:
-                    kr = build_inline_keyboard(btns)
+                    parsed_btns = _json.loads(btns) if isinstance(btns, str) else btns
+                    clean_btns = []
+                    rows = parsed_btns if (parsed_btns and isinstance(parsed_btns[0], list)) else [[b] for b in parsed_btns]
+                    for row in rows:
+                        clean_row = []
+                        for b in row:
+                            url = str(b.get("url", "")).strip()
+                            text_b = str(b.get("text", ""))
+                            if url.endswith("(poll)"):
+                                if not poll_question:
+                                    poll_question = text_b
+                                else:
+                                    poll_options.append(text_b)
+                            else:
+                                clean_row.append(b)
+                        if clean_row:
+                            clean_btns.append(clean_row)
+                    kr = build_inline_keyboard(clean_btns) if clean_btns else None
                 except Exception:
-                    pass
-            if mid:
-                kw_args = {
-                    "caption": t or None,
-                    "parse_mode": "HTML",
-                    "reply_markup": kr,
-                    "show_caption_above_media": not mtop
-                }
-                async def do_send(fid):
-                    if mtype == "photo": return await message.reply_photo(fid, **kw_args)
-                    elif mtype == "video": return await message.reply_video(fid, **kw_args)
-                    elif mtype == "animation": return await message.reply_animation(fid, **kw_args)
-                    else: return await message.reply_document(fid, **kw_args)
-                try:
-                    return await do_send(mid)
-                except Exception as e:
-                    error_msg = str(e).lower()
-                    if "wrong file identifier" in error_msg or "file reference" in error_msg or "invalid file" in error_msg:
-                        try:
-                            from config import settings as sys_settings
-                            from aiogram import Bot as AioBot
-                            from aiogram.types import BufferedInputFile
-                            mb = AioBot(token=sys_settings.bot_token)
-                            fi = await mb.get_file(mid)
-                            fb = await mb.download_file(fi.file_path)
-                            await mb.session.close()
-                            return await do_send(BufferedInputFile(fb.read(), filename=f"ar.{mtype}"))
-                        except Exception:
-                            return await message.reply(t or "—", parse_mode="HTML", reply_markup=kr, disable_web_page_preview=not prev)
-                    else:
-                        return await message.reply(t or "—", parse_mode="HTML", reply_markup=kr, disable_web_page_preview=not prev)
-            else:
-                return await message.reply(t or "—", parse_mode="HTML", reply_markup=kr, disable_web_page_preview=not prev)
+                    try:
+                        kr = build_inline_keyboard(btns)
+                    except Exception:
+                        pass
+
+            main_msg = None
+            has_content = bool(t) or bool(mid) or bool(kr)
+            
+            if has_content or not poll_question:
+                if mid:
+                    kw_args = {
+                        "caption": t or None,
+                        "parse_mode": "HTML",
+                        "reply_markup": kr,
+                        "show_caption_above_media": not mtop
+                    }
+                    async def do_send(fid):
+                        if mtype == "photo": return await message.reply_photo(fid, **kw_args)
+                        elif mtype == "video": return await message.reply_video(fid, **kw_args)
+                        elif mtype == "animation": return await message.reply_animation(fid, **kw_args)
+                        else: return await message.reply_document(fid, **kw_args)
+                    try:
+                        main_msg = await do_send(mid)
+                    except Exception as e:
+                        error_msg = str(e).lower()
+                        if "wrong file identifier" in error_msg or "file reference" in error_msg or "invalid file" in error_msg:
+                            try:
+                                from config import settings as sys_settings
+                                from aiogram import Bot as AioBot
+                                from aiogram.types import BufferedInputFile
+                                mb = AioBot(token=sys_settings.bot_token)
+                                fi = await mb.get_file(mid)
+                                fb = await mb.download_file(fi.file_path)
+                                await mb.session.close()
+                                main_msg = await do_send(BufferedInputFile(fb.read(), filename=f"ar.{mtype}"))
+                            except Exception:
+                                main_msg = await message.reply(t or "—", parse_mode="HTML", reply_markup=kr, disable_web_page_preview=not prev)
+                        else:
+                            main_msg = await message.reply(t or "—", parse_mode="HTML", reply_markup=kr, disable_web_page_preview=not prev)
+                else:
+                    main_msg = await message.reply(t or "—", parse_mode="HTML", reply_markup=kr, disable_web_page_preview=not prev)
+
+            if poll_question:
+                if len(poll_options) < 2:
+                    poll_options.extend(["Да", "Нет"] if not poll_options else ["Нет"])
+                poll_msg = await message.answer_poll(
+                    question=poll_question,
+                    options=poll_options[:10],
+                    is_anonymous=False
+                )
+                return main_msg or poll_msg
+                
+            return main_msg
 
         # ── Сначала проверяем Keyword-ответы ──
         matched_keyword = False

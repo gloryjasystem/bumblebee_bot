@@ -1178,8 +1178,10 @@ async def on_msg_buttons_input(message: Message, state: FSMContext):
 
     if not buttons and raw != "-":
         await message.answer(
-            "⚠️ Не удалось распознать кнопки. Формат: <code>Текст — https://ссылка</code>\n"
-            "Допускается несколько кнопок через <code>|</code>",
+            "⚠️ <b>Не удалось распознать кнопки.</b>\n\n"
+            "Проверьте формат: <code>Текст — https://ссылка</code>\n"
+            "Несколько кнопок в ряд — через <code>|</code>\n\n"
+            "✏️ Попробуйте ещё раз — введите кнопки в поле ниже.",
             parse_mode="HTML",
         )
         return

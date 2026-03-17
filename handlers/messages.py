@@ -1414,8 +1414,8 @@ async def on_ch_ar_add(callback: CallbackQuery, state: FSMContext, platform_user
         "Отправьте триггер.\n\n"
         "<blockquote>① Триггер — это сообщение для вызова автоматического ответа.</blockquote>\n\n"
         "<b>Пример:</b>\n"
-        "├ Бонус\n"
-        "└ /bonus",
+        "├ <code>Бонус</code>\n"
+        "└ <code>/bonus</code>",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="◀️ Отмена", callback_data=f"ch_autoreply:{chat_id}")],

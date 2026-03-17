@@ -779,6 +779,11 @@ async def _handle_message(bot: Bot, child_bot_id: int, owner_id: int, message):
                 "SELECT reaction_emojis FROM bot_chats WHERE child_bot_id=$1 AND is_active=true AND array_length(reaction_emojis, 1) > 0 LIMIT 1",
                 child_bot_id
             )
+            try:
+                with open('reaction_debug.txt', 'a') as f:
+                    f.write(f"Found reaction_row: {repr(reaction_row)}\n")
+            except Exception: pass
+
             if reaction_row and reaction_row["reaction_emojis"]:
                 try:
                     from aiogram.types import ReactionTypeEmoji
@@ -788,7 +793,15 @@ async def _handle_message(bot: Bot, child_bot_id: int, owner_id: int, message):
                         message_id=message.message_id,
                         reaction=reactions,
                     )
+                    try:
+                        with open('reaction_debug.txt', 'a') as f:
+                            f.write(f"Reaction success.\n")
+                    except Exception: pass
                 except Exception as e:
+                    try:
+                        with open('reaction_debug.txt', 'a') as f:
+                            f.write(f"REACTION ERROR: {repr(e)}\n")
+                    except Exception: pass
                     logger.debug(f"[REACTION PM] failed for bot {child_bot_id}: {e}")
 
             # ── Автоответчик ──

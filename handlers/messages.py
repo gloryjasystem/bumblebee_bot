@@ -1488,26 +1488,9 @@ async def _show_keyword_mgmt(message, chat_id: int, owner_id: int, ar_id: int):
             pass
 
     # -- Строим инлайн-клавиатуру из сохранённых кнопок
-    import json as _json
+    from utils.keyboard import build_inline_keyboard
     raw_btns = row["reply_buttons"] if row else None
-    echo_kb = None
-    if raw_btns:
-        try:
-            parsed = _json.loads(raw_btns)
-            # Новый формат: [[{text, url}, ...], ...]
-            # Старый формат (плоский): [{text, url}, ...]
-            if parsed and isinstance(parsed[0], dict):
-                parsed = [parsed]  # совместимость со старым форматом
-            kb_rows = []
-            for btn_row in parsed:
-                kb_rows.append([
-                    InlineKeyboardButton(text=b["text"], url=b["url"])
-                    for b in btn_row if b.get("text") and b.get("url")
-                ])
-            if kb_rows:
-                echo_kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
-        except Exception:
-            pass
+    echo_kb = build_inline_keyboard(raw_btns) if raw_btns else None
 
     # -- Эхо сохранённого ответа
     if media_id:

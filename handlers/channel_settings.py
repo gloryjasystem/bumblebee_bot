@@ -101,7 +101,7 @@ async def _show_requests_menu(callback: CallbackQuery, platform_user: dict, chat
     #    (возникают при перезапуске бота: asyncio.create_task теряется)
     auto   = ch["autoaccept"]
     delay  = ch["autoaccept_delay"] or 0
-    if auto and delay > 0:
+    if delay > 0:
         from datetime import timedelta
         await db.execute(
             "UPDATE join_requests SET status='approved', resolved_at=now() "
@@ -1901,7 +1901,7 @@ async def _show_bs_requests(callback: CallbackQuery, platform_user: dict, child_
     # 2. Зависшие отложенные задачи (потерянные при перезапуске бота)
     auto  = ch["autoaccept"]
     delay = ch["autoaccept_delay"] or 0
-    if auto and delay > 0:
+    if delay > 0:
         from datetime import timedelta
         await db.execute(
             """UPDATE join_requests SET status='approved', resolved_at=now()

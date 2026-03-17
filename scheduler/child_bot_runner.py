@@ -1362,8 +1362,8 @@ async def _handle_join_request(bot: Bot, child_bot_id: int, event: ChatJoinReque
     autoaccept = chat_settings["autoaccept"]
     delay      = chat_settings["autoaccept_delay"] or 0
 
-    if autoaccept:
-        # Авто-принятие
+    if autoaccept or delay > 0:
+        # Авто-принятие или отложенное принятие
         if delay > 0:
             await asyncio.sleep(delay * 60)
         try:
@@ -1399,7 +1399,7 @@ async def _handle_join_request(bot: Bot, child_bot_id: int, event: ChatJoinReque
                 await _try_send_dm(bot, user.id, welcome)
         except Exception as e:
             logger.warning(f"approve join request error: {e}")
-    # Если autoaccept=false — заявка остаётся в очереди со статусом pending
+    # Если autoaccept=false и delay=0 — заявка остаётся в очереди со статусом pending
 
 
 async def _handle_chat_member(bot: Bot, child_bot_id: int, event: ChatMemberUpdated):

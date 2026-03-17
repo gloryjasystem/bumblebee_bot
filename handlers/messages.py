@@ -1128,6 +1128,10 @@ async def on_general_reply_text_input(message: Message, state: FSMContext):
             await message.bot.delete_message(message.chat.id, prompt_mid)
         except Exception:
             pass
+    try:
+        await message.delete()
+    except Exception:
+        pass
 
     # Поддержка медиа
     if message.photo:
@@ -1315,6 +1319,10 @@ async def on_general_reply_buttons_input(message: Message, state: FSMContext):
             await message.bot.delete_message(message.chat.id, prompt_mid)
         except Exception:
             pass
+    try:
+        await message.delete()
+    except Exception:
+        pass
 
     if raw == "-":
         buttons_json = None
@@ -1452,6 +1460,10 @@ async def on_ar_text_input(message: Message, state: FSMContext):
              await message.bot.delete_message(message.chat.id, prompt_mid)
          except Exception:
              pass
+    try:
+        await message.delete()
+    except Exception:
+        pass
 
     # Поддержка медиа
     if message.photo:
@@ -1859,6 +1871,10 @@ async def on_ar_buttons_input(message: Message, state: FSMContext):
              await message.bot.delete_message(message.chat.id, prompt_mid)
          except Exception:
              pass
+    try:
+        await message.delete()
+    except Exception:
+        pass
 
     if raw == "-":
         buttons_json = None

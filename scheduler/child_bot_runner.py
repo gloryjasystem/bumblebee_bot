@@ -556,162 +556,7 @@ async def _handle_group_message(bot: Bot, child_bot_id: int, message):
 
     text = message.text or message.caption or ""
 
-    # ── 1. Автоответчик ─────────────────────────────────────────
-    if text:
-        owner_id = settings["owner_id"]
-
-        async def _send_ar(t, mid, mtype, mtop, prev, btns):
-            if t:
-                # Подставляем переменные: {name}, {allname}, {username}, {chat}, {day}
-                first_name = user.first_name or "Пользователь"
-                last_name  = user.last_name or ""
-                full_name  = f"{first_name} {last_name}".strip()
-                username   = getattr(user, "username", "")
-                chat_title = message.chat.title or "группа"
-                today_str  = __import__("datetime").date.today().strftime("%d.%m.%Y")
-                
-                t = (t.replace("{name}", first_name)
-                      .replace("{allname}", full_name)
-                      .replace("{username}", f"@{username}" if username else "")
-                      .replace("{chat}", chat_title)
-                      .replace("{day}", today_str))
-
-            import json as _json
-            from utils.keyboard import build_inline_keyboard
-            
-            kr = None
-            poll_question = None
-            poll_options = []
-            
-            if btns:
-                try:
-                    parsed_btns = _json.loads(btns) if isinstance(btns, str) else btns
-                    clean_btns = []
-                    rows = parsed_btns if (parsed_btns and isinstance(parsed_btns[0], list)) else [[b] for b in parsed_btns]
-                    for row in rows:
-                        clean_row = []
-                        for b in row:
-                            url = str(b.get("url", "")).strip()
-                            text_b = str(b.get("text", ""))
-                            if url.endswith("(poll)"):
-                                if not poll_question:
-                                    poll_question = text_b
-                                else:
-                                    poll_options.append(text_b)
-                            else:
-                                clean_row.append(b)
-                        if clean_row:
-                            clean_btns.append(clean_row)
-                    kr = build_inline_keyboard(clean_btns) if clean_btns else None
-                except Exception:
-                    try:
-                        kr = build_inline_keyboard(btns)
-                    except Exception:
-                        pass
-
-            main_msg = None
-            has_content = bool(t) or bool(mid) or bool(kr)
-            
-            if has_content or not poll_question:
-                if mid:
-                    kw_args = {
-                        "caption": t or None,
-                        "parse_mode": "HTML",
-                        "reply_markup": kr,
-                        "show_caption_above_media": not mtop
-                    }
-                    async def do_send(fid):
-                        if mtype == "photo": return await message.reply_photo(fid, **kw_args)
-                        elif mtype == "video": return await message.reply_video(fid, **kw_args)
-                        elif mtype == "animation": return await message.reply_animation(fid, **kw_args)
-                        else: return await message.reply_document(fid, **kw_args)
-                    try:
-                        main_msg = await do_send(mid)
-                    except Exception as e:
-                        error_msg = str(e).lower()
-                        if "wrong file identifier" in error_msg or "file reference" in error_msg or "invalid file" in error_msg:
-                            try:
-                                from config import settings as sys_settings
-                                from aiogram import Bot as AioBot
-                                from aiogram.types import BufferedInputFile
-                                mb = AioBot(token=sys_settings.bot_token)
-                                fi = await mb.get_file(mid)
-                                fb = await mb.download_file(fi.file_path)
-                                await mb.session.close()
-                                main_msg = await do_send(BufferedInputFile(fb.read(), filename=f"ar.{mtype}"))
-                            except Exception:
-                                main_msg = await message.reply(t or "—", parse_mode="HTML", reply_markup=kr, disable_web_page_preview=not prev)
-                        else:
-                            main_msg = await message.reply(t or "—", parse_mode="HTML", reply_markup=kr, disable_web_page_preview=not prev)
-                else:
-                    main_msg = await message.reply(t or "—", parse_mode="HTML", reply_markup=kr, disable_web_page_preview=not prev)
-
-            if poll_question:
-                if len(poll_options) < 2:
-                    poll_options.extend(["Да", "Нет"] if not poll_options else ["Нет"])
-                poll_msg = await message.answer_poll(
-                    question=poll_question,
-                    options=poll_options[:10],
-                    is_anonymous=False
-                )
-                return main_msg or poll_msg
-                
-            return main_msg
-
-        # ── Сначала проверяем Keyword-ответы ──
-        matched_keyword = False
-        rules = await db.fetch(
-            "SELECT * FROM autoreplies "
-            "WHERE owner_id=$1 AND chat_id=$2::bigint",
-            owner_id, chat_id,
-        )
-        for rule in rules:
-            kw = (rule["keyword"] or "").lower().strip()
-            if kw and kw in text.lower():
-                matched_keyword = True
-                try:
-                    r_text  = rule["reply_text"] or ""
-                    r_mid   = rule["reply_media"]
-                    r_mtype = rule["reply_media_type"]
-                    r_mtop  = rule["reply_media_top"] if rule["reply_media_top"] is not None else True
-                    r_prev  = bool(rule["reply_preview"])
-                    r_btns  = rule["reply_buttons"]
-                    reply = await _send_ar(r_text, r_mid, r_mtype, r_mtop, r_prev, r_btns)
-                    # Авто-удаление ответа бота
-                    delete_min = int(settings.get("auto_delete_min") or 0)
-                    if delete_min > 0:
-                        import asyncio as _asyncio
-                        _asyncio.create_task(
-                            _delete_later(bot, chat_id, reply.message_id, delete_min)
-                        )
-                    logger.info(f"[AUTOREPLY] keyword='{kw}' matched in chat {chat_id}")
-                except Exception as e:
-                    logger.warning(f"[AUTOREPLY] failed in chat {chat_id}: {e}")
-                break  # только первое совпадение
-
-        # ── Если ключевые слова не сработали, проверяем Общий ответ ──
-        if not matched_keyword:
-            general_on    = bool(settings.get("general_reply_enabled", False))
-            general_text  = (settings.get("general_reply_text") or "").strip()
-            general_media = settings.get("general_reply_media")
-
-            if general_on and (general_text or general_media):
-                try:
-                    g_mtype = settings.get("general_reply_media_type")
-                    g_mtop  = settings.get("general_reply_media_top") if settings.get("general_reply_media_top") is not None else True
-                    g_prev  = bool(settings.get("general_reply_preview"))
-                    g_btns  = settings.get("general_reply_buttons")
-                    reply = await _send_ar(general_text, general_media, g_mtype, g_mtop, g_prev, g_btns)
-                    delete_min = int(settings.get("auto_delete_min") or 0)
-                    if delete_min > 0:
-                        import asyncio as _asyncio
-                        _asyncio.create_task(
-                            _delete_later(bot, chat_id, reply.message_id, delete_min)
-                        )
-                    logger.info(f"[AUTOREPLY] general reply sent in chat {chat_id}")
-                except Exception as e:
-                    logger.warning(f"[AUTOREPLY] general reply failed in chat {chat_id}: {e}")
-
+    # ── 1. Автоответчик (перемещён в личные сообщения бота) ──
     # ── 2. Реакции (только на сообщения с текстом, не системные) ───
     emoji = settings.get("reaction_emoji")
     if emoji and text:  # text='' для системных сообщений о вступлении/выходе
@@ -937,6 +782,167 @@ async def _handle_message(bot: Bot, child_bot_id: int, owner_id: int, message):
             logger.debug(f"[CAPTCHA REPLY] Processing reply captcha for user {user.id} chat {_captcha_chat_id}")
             await _approve_user_from_message(message, bot, _captcha_chat_id, user.id, success=True)
             return
+
+        # ── 3a. Автоответчик (в личку бота) ───────────────
+        ar_chat = await db.fetchrow(
+            "SELECT * FROM bot_chats WHERE child_bot_id=$1 AND is_active=true LIMIT 1",
+            child_bot_id
+        )
+        if text and ar_chat:
+            ar_owner_id = ar_chat["owner_id"]
+            ar_chat_id = ar_chat["chat_id"]
+
+            async def _send_ar(t, mid, mtype, mtop, prev, btns):
+                if t:
+                    # Подставляем переменные: {name}, {allname}, {username}, {chat}, {day}
+                    first_name = user.first_name or "Пользователь"
+                    last_name  = user.last_name or ""
+                    full_name  = f"{first_name} {last_name}".strip()
+                    username   = getattr(user, "username", "")
+                    chat_title = "бот"
+                    today_str  = __import__("datetime").date.today().strftime("%d.%m.%Y")
+                    
+                    t = (t.replace("{name}", first_name)
+                          .replace("{allname}", full_name)
+                          .replace("{username}", f"@{username}" if username else "")
+                          .replace("{chat}", chat_title)
+                          .replace("{day}", today_str))
+
+                import json as _json
+                from utils.keyboard import build_inline_keyboard
+                
+                kr = None
+                poll_question = None
+                poll_options = []
+                
+                if btns:
+                    try:
+                        parsed_btns = _json.loads(btns) if isinstance(btns, str) else btns
+                        clean_btns = []
+                        rows = parsed_btns if (parsed_btns and isinstance(parsed_btns[0], list)) else [[b] for b in parsed_btns]
+                        for row in rows:
+                            clean_row = []
+                            for b in row:
+                                url = str(b.get("url", "")).strip()
+                                text_b = str(b.get("text", ""))
+                                if url.endswith("(poll)"):
+                                    if not poll_question:
+                                        poll_question = text_b
+                                    else:
+                                        poll_options.append(text_b)
+                                else:
+                                    clean_row.append(b)
+                            if clean_row:
+                                clean_btns.append(clean_row)
+                        kr = build_inline_keyboard(clean_btns) if clean_btns else None
+                    except Exception:
+                        try:
+                            kr = build_inline_keyboard(btns)
+                        except Exception:
+                            pass
+
+                main_msg = None
+                has_content = bool(t) or bool(mid) or bool(kr)
+                
+                if has_content or not poll_question:
+                    if mid:
+                        kw_args = {
+                            "caption": t or None,
+                            "parse_mode": "HTML",
+                            "reply_markup": kr,
+                            "show_caption_above_media": not mtop
+                        }
+                        async def do_send(fid):
+                            if mtype == "photo": return await message.reply_photo(fid, **kw_args)
+                            elif mtype == "video": return await message.reply_video(fid, **kw_args)
+                            elif mtype == "animation": return await message.reply_animation(fid, **kw_args)
+                            else: return await message.reply_document(fid, **kw_args)
+                        try:
+                            main_msg = await do_send(mid)
+                        except Exception as e:
+                            error_msg = str(e).lower()
+                            if "wrong file identifier" in error_msg or "file reference" in error_msg or "invalid file" in error_msg:
+                                try:
+                                    from config import settings as sys_settings
+                                    from aiogram import Bot as AioBot
+                                    from aiogram.types import BufferedInputFile
+                                    mb = AioBot(token=sys_settings.bot_token)
+                                    fi = await mb.get_file(mid)
+                                    fb = await mb.download_file(fi.file_path)
+                                    await mb.session.close()
+                                    main_msg = await do_send(BufferedInputFile(fb.read(), filename=f"ar.{mtype}"))
+                                except Exception:
+                                    main_msg = await message.reply(t or "—", parse_mode="HTML", reply_markup=kr, disable_web_page_preview=not prev)
+                            else:
+                                main_msg = await message.reply(t or "—", parse_mode="HTML", reply_markup=kr, disable_web_page_preview=not prev)
+                    else:
+                        main_msg = await message.reply(t or "—", parse_mode="HTML", reply_markup=kr, disable_web_page_preview=not prev)
+
+                if poll_question:
+                    if len(poll_options) < 2:
+                        poll_options.extend(["Да", "Нет"] if not poll_options else ["Нет"])
+                    poll_msg = await message.answer_poll(
+                        question=poll_question,
+                        options=poll_options[:10],
+                        is_anonymous=False
+                    )
+                    return main_msg or poll_msg
+                    
+                return main_msg
+
+            # ── Сначала проверяем Keyword-ответы ──
+            matched_keyword = False
+            rules = await db.fetch(
+                "SELECT * FROM autoreplies "
+                "WHERE owner_id=$1 AND chat_id=$2::bigint",
+                ar_owner_id, ar_chat_id,
+            )
+            for rule in rules:
+                kw = (rule["keyword"] or "").lower().strip()
+                if kw and kw in text.lower():
+                    matched_keyword = True
+                    try:
+                        r_text  = rule["reply_text"] or ""
+                        r_mid   = rule["reply_media"]
+                        r_mtype = rule["reply_media_type"]
+                        r_mtop  = rule["reply_media_top"] if rule["reply_media_top"] is not None else True
+                        r_prev  = bool(rule["reply_preview"])
+                        r_btns  = rule["reply_buttons"]
+                        reply = await _send_ar(r_text, r_mid, r_mtype, r_mtop, r_prev, r_btns)
+                        # Авто-удаление ответа бота в личке
+                        delete_min = int(ar_chat.get("auto_delete_min") or 0)
+                        if delete_min > 0 and reply and hasattr(reply, 'message_id'):
+                            import asyncio as _asyncio
+                            _asyncio.create_task(
+                                _delete_later(bot, user.id, reply.message_id, delete_min)
+                            )
+                        logger.info(f"[AUTOREPLY PM] keyword='{kw}' matched via bot {child_bot_id}")
+                    except Exception as e:
+                        logger.warning(f"[AUTOREPLY PM] failed via bot {child_bot_id}: {e}")
+                    break  # только первое совпадение
+
+            # ── Будем ли применять Общий ответ? ──
+            if not matched_keyword:
+                general_on    = bool(ar_chat.get("general_reply_enabled", False))
+                general_text  = (ar_chat.get("general_reply_text") or "").strip()
+                general_media = ar_chat.get("general_reply_media")
+
+                if general_on and (general_text or general_media):
+                    try:
+                        g_mtype = ar_chat.get("general_reply_media_type")
+                        g_mtop  = ar_chat.get("general_reply_media_top") if ar_chat.get("general_reply_media_top") is not None else True
+                        g_prev  = bool(ar_chat.get("general_reply_preview"))
+                        g_btns  = ar_chat.get("general_reply_buttons")
+                        reply = await _send_ar(general_text, general_media, g_mtype, g_mtop, g_prev, g_btns)
+                        delete_min = int(ar_chat.get("auto_delete_min") or 0)
+                        if delete_min > 0 and reply and hasattr(reply, 'message_id'):
+                            import asyncio as _asyncio
+                            _asyncio.create_task(
+                                _delete_later(bot, user.id, reply.message_id, delete_min)
+                            )
+                        logger.info(f"[AUTOREPLY PM] general reply sent via bot {child_bot_id}")
+                    except Exception as e:
+                        logger.warning(f"[AUTOREPLY PM] general reply failed via bot {child_bot_id}: {e}")
 
         # JOIN с bot_users убран намеренно: feedback работает даже если
         # пользователь ещё не нажимал /start и нет записи в bot_users.

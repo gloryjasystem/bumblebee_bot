@@ -163,10 +163,16 @@ async def on_req_auto_toggle(callback: CallbackQuery, platform_user: dict | None
     if not ch:
         return
     new_auto = not ch["autoaccept"]
-    await db.execute(
-        "UPDATE bot_chats SET autoaccept=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
-        new_auto, platform_user["user_id"], chat_id,
-    )
+    if new_auto:
+        await db.execute(
+            "UPDATE bot_chats SET autoaccept=$1, autoaccept_delay=0 WHERE owner_id=$2 AND chat_id=$3::bigint",
+            new_auto, platform_user["user_id"], chat_id,
+        )
+    else:
+        await db.execute(
+            "UPDATE bot_chats SET autoaccept=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
+            new_auto, platform_user["user_id"], chat_id,
+        )
     await callback.answer("✅ ВКЛ" if new_auto else "🔴 ВЫКЛ")
     await _show_requests_menu(callback, platform_user, chat_id)
 
@@ -177,9 +183,16 @@ async def on_req_delay_cycle(callback: CallbackQuery, platform_user: dict | None
         return
     chat_id = int(callback.data.split(":")[1])
     ch = await db.fetchrow(
-        "SELECT autoaccept_delay FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint",
+        "SELECT autoaccept, autoaccept_delay FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint",
         platform_user["user_id"], chat_id,
     )
+    
+    if ch and ch["autoaccept"]:
+        await db.execute(
+            "UPDATE bot_chats SET autoaccept=false WHERE owner_id=$1 AND chat_id=$2::bigint",
+            platform_user["user_id"], chat_id,
+        )
+        
     current = ch["autoaccept_delay"] or 0 if ch else 0
     new_delay = _next_delay(current)
     await db.execute(
@@ -1947,10 +1960,18 @@ async def on_bs_req_auto(callback: CallbackQuery, platform_user: dict | None):
     if not ch:
         return
     new_val = not ch["autoaccept"]
-    await db.execute(
-        "UPDATE bot_chats SET autoaccept=$1 WHERE child_bot_id=$2 AND owner_id=$3",
-        new_val, child_bot_id, owner_id,
-    )
+    
+    if new_val:
+        await db.execute(
+            "UPDATE bot_chats SET autoaccept=$1, autoaccept_delay=0 WHERE child_bot_id=$2 AND owner_id=$3",
+            new_val, child_bot_id, owner_id,
+        )
+    else:
+        await db.execute(
+            "UPDATE bot_chats SET autoaccept=$1 WHERE child_bot_id=$2 AND owner_id=$3",
+            new_val, child_bot_id, owner_id,
+        )
+        
     await callback.answer("✅ ВКЛ" if new_val else "🔴 ВЫКЛ")
     await _show_bs_requests(callback, platform_user, child_bot_id)
 
@@ -1965,6 +1986,13 @@ async def on_bs_req_delay(callback: CallbackQuery, platform_user: dict | None):
         await callback.answer("Нет доступа", show_alert=True)
         return
     ch = await _get_bot_first_chat(owner_id, child_bot_id)
+    
+    if ch and ch["autoaccept"]:
+        await db.execute(
+            "UPDATE bot_chats SET autoaccept=false WHERE child_bot_id=$1 AND owner_id=$2",
+            child_bot_id, owner_id,
+        )
+        
     current = ch["autoaccept_delay"] or 0 if ch else 0
     new_delay = _next_delay(current)
     await db.execute(

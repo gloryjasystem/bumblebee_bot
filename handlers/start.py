@@ -201,7 +201,25 @@ async def on_language_select(callback: CallbackQuery, platform_user: dict | None
 # ── Главное меню ──────────────────────────────────────────────
 @router.callback_query(F.data == "menu:main")
 async def on_main_menu(callback: CallbackQuery, platform_user: dict | None):
-    await _show_main_menu(callback.message, platform_user)
+    tariff = platform_user["tariff"] if platform_user else "free"
+    tariff_labels = {
+        "free":     "🆓 Free",
+        "start":    "🌱 Старт",
+        "pro":      "⭐ Про",
+        "business": "💼 Бизнес",
+    }
+    label = tariff_labels.get(tariff, "🆓 Free")
+    until = ""
+    if platform_user and platform_user.get("tariff_until"):
+        until = f" · до {platform_user['tariff_until'].strftime('%d.%m.%Y')}"
+
+    await navigate(
+        callback,
+        f"⚡ <b>Bumblebee Bot</b> — ваш главный помощник для работы с трафиком.\n\n"
+        f"Тариф: {label}{until}\n\n"
+        f"⇨ Главное меню",
+        reply_markup=kb_main_menu(),
+    )
     await callback.answer()
 
 

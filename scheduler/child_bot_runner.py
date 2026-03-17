@@ -561,6 +561,21 @@ async def _handle_group_message(bot: Bot, child_bot_id: int, message):
         owner_id = settings["owner_id"]
 
         async def _send_ar(t, mid, mtype, mtop, prev, btns):
+            if t:
+                # Подставляем переменные: {name}, {allname}, {username}, {chat}, {day}
+                first_name = user.first_name or "Пользователь"
+                last_name  = user.last_name or ""
+                full_name  = f"{first_name} {last_name}".strip()
+                username   = getattr(user, "username", "")
+                chat_title = message.chat.title or "группа"
+                today_str  = __import__("datetime").date.today().strftime("%d.%m.%Y")
+                
+                t = (t.replace("{name}", first_name)
+                      .replace("{allname}", full_name)
+                      .replace("{username}", f"@{username}" if username else "")
+                      .replace("{chat}", chat_title)
+                      .replace("{day}", today_str))
+
             from utils.keyboard import build_inline_keyboard
             kr = None
             if btns:
@@ -601,56 +616,59 @@ async def _handle_group_message(bot: Bot, child_bot_id: int, message):
             else:
                 return await message.reply(t or "—", parse_mode="HTML", reply_markup=kr, disable_web_page_preview=not prev)
 
-        # Проверяем общий ответ (отвечает на ЛЮБОЕ сообщение)
-        general_on    = bool(settings.get("general_reply_enabled", False))
-        general_text  = (settings.get("general_reply_text") or "").strip()
-        general_media = settings.get("general_reply_media")
+        # ── Сначала проверяем Keyword-ответы ──
+        matched_keyword = False
+        rules = await db.fetch(
+            "SELECT * FROM autoreplies "
+            "WHERE owner_id=$1 AND chat_id=$2::bigint",
+            owner_id, chat_id,
+        )
+        for rule in rules:
+            kw = (rule["keyword"] or "").lower().strip()
+            if kw and kw in text.lower():
+                matched_keyword = True
+                try:
+                    r_text  = rule["reply_text"] or ""
+                    r_mid   = rule["reply_media"]
+                    r_mtype = rule["reply_media_type"]
+                    r_mtop  = rule["reply_media_top"] if rule["reply_media_top"] is not None else True
+                    r_prev  = bool(rule["reply_preview"])
+                    r_btns  = rule["reply_buttons"]
+                    reply = await _send_ar(r_text, r_mid, r_mtype, r_mtop, r_prev, r_btns)
+                    # Авто-удаление ответа бота
+                    delete_min = int(settings.get("auto_delete_min") or 0)
+                    if delete_min > 0:
+                        import asyncio as _asyncio
+                        _asyncio.create_task(
+                            _delete_later(bot, chat_id, reply.message_id, delete_min)
+                        )
+                    logger.info(f"[AUTOREPLY] keyword='{kw}' matched in chat {chat_id}")
+                except Exception as e:
+                    logger.warning(f"[AUTOREPLY] failed in chat {chat_id}: {e}")
+                break  # только первое совпадение
 
-        if general_on and (general_text or general_media):
-            try:
-                g_mtype = settings.get("general_reply_media_type")
-                g_mtop  = settings.get("general_reply_media_top") if settings.get("general_reply_media_top") is not None else True
-                g_prev  = bool(settings.get("general_reply_preview"))
-                g_btns  = settings.get("general_reply_buttons")
-                reply = await _send_ar(general_text, general_media, g_mtype, g_mtop, g_prev, g_btns)
-                delete_min = int(settings.get("auto_delete_min") or 0)
-                if delete_min > 0:
-                    import asyncio as _asyncio
-                    _asyncio.create_task(
-                        _delete_later(bot, chat_id, reply.message_id, delete_min)
-                    )
-                logger.info(f"[AUTOREPLY] general reply sent in chat {chat_id}")
-            except Exception as e:
-                logger.warning(f"[AUTOREPLY] general reply failed in chat {chat_id}: {e}")
-        else:
-            # Keyword-ответы
-            rules = await db.fetch(
-                "SELECT * FROM autoreplies "
-                "WHERE owner_id=$1 AND chat_id=$2::bigint",
-                owner_id, chat_id,
-            )
-            for rule in rules:
-                kw = (rule["keyword"] or "").lower().strip()
-                if kw and kw in text.lower():
-                    try:
-                        r_text  = rule["reply_text"] or ""
-                        r_mid   = rule["reply_media"]
-                        r_mtype = rule["reply_media_type"]
-                        r_mtop  = rule["reply_media_top"] if rule["reply_media_top"] is not None else True
-                        r_prev  = bool(rule["reply_preview"])
-                        r_btns  = rule["reply_buttons"]
-                        reply = await _send_ar(r_text, r_mid, r_mtype, r_mtop, r_prev, r_btns)
-                        # Авто-удаление ответа бота
-                        delete_min = int(settings.get("auto_delete_min") or 0)
-                        if delete_min > 0:
-                            import asyncio as _asyncio
-                            _asyncio.create_task(
-                                _delete_later(bot, chat_id, reply.message_id, delete_min)
-                            )
-                        logger.info(f"[AUTOREPLY] keyword='{kw}' matched in chat {chat_id}")
-                    except Exception as e:
-                        logger.warning(f"[AUTOREPLY] failed in chat {chat_id}: {e}")
-                    break  # только первое совпадение
+        # ── Если ключевые слова не сработали, проверяем Общий ответ ──
+        if not matched_keyword:
+            general_on    = bool(settings.get("general_reply_enabled", False))
+            general_text  = (settings.get("general_reply_text") or "").strip()
+            general_media = settings.get("general_reply_media")
+
+            if general_on and (general_text or general_media):
+                try:
+                    g_mtype = settings.get("general_reply_media_type")
+                    g_mtop  = settings.get("general_reply_media_top") if settings.get("general_reply_media_top") is not None else True
+                    g_prev  = bool(settings.get("general_reply_preview"))
+                    g_btns  = settings.get("general_reply_buttons")
+                    reply = await _send_ar(general_text, general_media, g_mtype, g_mtop, g_prev, g_btns)
+                    delete_min = int(settings.get("auto_delete_min") or 0)
+                    if delete_min > 0:
+                        import asyncio as _asyncio
+                        _asyncio.create_task(
+                            _delete_later(bot, chat_id, reply.message_id, delete_min)
+                        )
+                    logger.info(f"[AUTOREPLY] general reply sent in chat {chat_id}")
+                except Exception as e:
+                    logger.warning(f"[AUTOREPLY] general reply failed in chat {chat_id}: {e}")
 
     # ── 2. Реакции (только на сообщения с текстом, не системные) ───
     emoji = settings.get("reaction_emoji")

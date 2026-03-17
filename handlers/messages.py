@@ -112,6 +112,7 @@ async def _show_ch_messages(callback: CallbackQuery, chat_id: int, owner_id: int
 
     await navigate(
         callback,
+        "💬 <b>Сообщения</b>\n\n"
         "<blockquote>"
         "🗑 <b>Удаление сообщений</b> — позволяет удалять отправленные ботом сообщения.\n\n"
         "🖨 <b>Печать</b> — бот имитирует написание текста при отправке сообщений.\n\n"

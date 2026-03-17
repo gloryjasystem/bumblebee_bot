@@ -896,3 +896,37 @@ def _split_emojis(s: str) -> list[str]:
         if char.strip():
             result.append(char)
     return result
+
+
+async def cleanup_captcha_and_send_welcome(bot: Bot, chat_id: int, user_id: int):
+    """
+    Called when a user actually enters the chat.
+    Deletes the original long captcha message and sends a short self-deleting welcome.
+    """
+    key = (chat_id, user_id)
+    msg_id = _captcha_msg_ids.pop(key, None)
+    
+    if msg_id:
+        try:
+            await bot.delete_message(user_id, msg_id)
+        except Exception as e:
+            logger.debug(f"[CAPTCHA CLEANUP] Could not delete msg {msg_id}: {e}")
+            
+        try:
+            welcome_msg = await bot.send_message(
+                user_id, 
+                "✅ Капча пройдена! Добро пожаловать."
+            )
+            asyncio.create_task(_delete_temp_welcome(bot, user_id, welcome_msg.message_id, 60))
+        except Exception as e:
+            logger.debug(f"[CAPTCHA CLEANUP] Could not send welcome: {e}")
+
+
+async def _delete_temp_welcome(bot: Bot, chat_id: int, msg_id: int, delay: int):
+    """Wait and delete a message."""
+    await asyncio.sleep(delay)
+    try:
+        await bot.delete_message(chat_id, msg_id)
+    except Exception:
+        pass
+

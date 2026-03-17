@@ -635,7 +635,8 @@ async def _approve_user(
             await callback.answer("✅ Отлично!")
 
         else:
-            # Автопринятие выключено — капча пройдена, но заявка ждёт ручного одобрения
+            delay = settings_row.get("autoaccept_delay") or 0 if settings_row else 0
+            # Автопринятие выключено — капча пройдена, но заявка ждёт ручного одобрения (или отложенного)
             try:
                 await db.execute(
                     "INSERT INTO captcha_events (owner_id, chat_id, user_id, passed) VALUES ($1,$2,$3,true)",
@@ -664,7 +665,22 @@ async def _approve_user(
                 except Exception as e:
                     logger.warning(f"[LINK TRACK manual] failed: {e}")
 
-            logger.info(f"[CAPTCHA] Passed (autoaccept=off) user={callback.from_user.id} chat={chat_id} — waiting for admin")
+            if delay > 0:
+                from scheduler.child_bot_runner import _delayed_approve_join_request
+                asyncio.create_task(
+                    _delayed_approve_join_request(
+                        bot=bot,
+                        owner_id=settings_row["owner_id"],
+                        chat_id=chat_id,
+                        user=callback.from_user,
+                        delay_min=delay,
+                        invite_link_url=inv_url,
+                        welcome=settings_row.get("welcome_text"),
+                    )
+                )
+                logger.info(f"[CAPTCHA] Passed (delay={delay}) user={callback.from_user.id} chat={chat_id} — queued delayed approval")
+            else:
+                logger.info(f"[CAPTCHA] Passed (autoaccept=off) user={callback.from_user.id} chat={chat_id} — waiting for admin")
 
             if settings_row.get("captcha_delete"):
                 try:
@@ -792,7 +808,8 @@ async def _approve_user_from_message(
         logger.info(f"[CAPTCHA REPLY] Passed join_request (autoaccept=on): user={user_id} chat={chat_id}")
 
     else:
-        # Автопринятие выключено — капча пройдена, ждём ручного одобрения
+        delay = settings_row.get("autoaccept_delay") or 0 if settings_row else 0
+        # Автопринятие выключено — капча пройдена, ждём ручного одобрения (или отложенного)
         if settings_row:
             try:
                 await db.execute(
@@ -827,7 +844,23 @@ async def _approve_user_from_message(
             "⏳ Ваша заявка на вступление отправлена администратору.\n"
             "Ожидайте подтверждения.",
         )
-        logger.info(f"[CAPTCHA REPLY] Passed join_request (autoaccept=off): user={user_id} chat={chat_id} — waiting for admin")
+        
+        if delay > 0 and settings_row:
+            from scheduler.child_bot_runner import _delayed_approve_join_request
+            asyncio.create_task(
+                _delayed_approve_join_request(
+                    bot=bot,
+                    owner_id=settings_row["owner_id"],
+                    chat_id=chat_id,
+                    user=message.from_user,
+                    delay_min=delay,
+                    invite_link_url=inv_url,
+                    welcome=settings_row.get("welcome_text"),
+                )
+            )
+            logger.info(f"[CAPTCHA REPLY] Passed (delay={delay}): user={user_id} chat={chat_id} — queued delayed approval")
+        else:
+            logger.info(f"[CAPTCHA REPLY] Passed join_request (autoaccept=off): user={user_id} chat={chat_id} — waiting for admin")
 
 
 

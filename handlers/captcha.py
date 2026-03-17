@@ -506,9 +506,9 @@ async def _edit_captcha_message(message: Message, text: str):
     """Редактирует текст сообщения (или подпись, если это медиа-сообщение)."""
     try:
         if message.text:
-            await message.edit_text(text)
+            await message.edit_text(text, reply_markup=None)
         else:
-            await message.edit_caption(caption=text)
+            await message.edit_caption(caption=text, reply_markup=None)
     except Exception as e:
         import logging
         logging.getLogger(__name__).debug(f"Failed to edit captcha message: {e}")
@@ -550,10 +550,12 @@ async def _approve_user(
                         parse_mode="HTML",
                     )
                 else:
-                    try:
-                        await callback.message.edit_reply_markup(reply_markup=None)
-                    except Exception:
-                        pass
+                    await _edit_captcha_message(
+                        callback.message,
+                        "✅ Капча пройдена!\n\n"
+                        "⏳ Ваша заявка на вступление отправлена администратору.\n"
+                        "Ожидайте подтверждения."
+                    )
                 await callback.answer("✅ Отлично!")
                 logger.info(f"[GROUP CAPTCHA] Passed: user={user_id} chat={chat_id} — welcome deferred to on-join event")
             else:
@@ -624,10 +626,12 @@ async def _approve_user(
                 await callback.answer("✅ Отлично!")
                 return
 
-            try:
-                await callback.message.edit_reply_markup(reply_markup=None)
-            except Exception:
-                pass
+            await _edit_captcha_message(
+                callback.message,
+                "✅ Капча пройдена!\n\n"
+                "⏳ Ваша заявка на вступление отправлена администратору.\n"
+                "Ожидайте подтверждения."
+            )
             await callback.answer("✅ Отлично!")
 
         else:

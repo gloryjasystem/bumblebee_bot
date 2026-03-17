@@ -1192,6 +1192,44 @@ async def _check_join_limit(
     return False
 
 
+async def _delayed_approve_join_request(bot: Bot, owner_id: int, chat_id: int, user, delay_min: int, invite_link_url: str | None, welcome: str | None):
+    """Фоновая задача для отложенного (или мгновенного) принятия заявки, чтобы не блокировать webhook."""
+    if delay_min > 0:
+        await asyncio.sleep(delay_min * 60)
+    try:
+        await bot.approve_chat_join_request(chat_id, user.id)
+        # Регистрируем в bot_users после одобрения
+        await db.execute(
+            """
+            INSERT INTO bot_users (owner_id, chat_id, user_id, username, first_name,
+                                   language_code, is_premium, joined_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, now())
+            ON CONFLICT (owner_id, chat_id, user_id) DO UPDATE
+                SET is_active=true, left_at=NULL,
+                    joined_at=now(),
+                    username=EXCLUDED.username,
+                    is_premium=EXCLUDED.is_premium,
+                    bot_activated = (bot_users.bot_activated OR EXCLUDED.bot_activated)
+            """,
+            owner_id, chat_id, user.id,
+            user.username, user.first_name, user.language_code,
+            getattr(user, "is_premium", False),
+        )
+        await db.execute(
+            "UPDATE join_requests SET status='approved', resolved_at=now() "
+            "WHERE owner_id=$1 AND chat_id=$2 AND user_id=$3",
+            owner_id, chat_id, user.id,
+        )
+        # Трекинг ссылки-приглашения
+        if invite_link_url:
+            await _track_invite_link(invite_link_url, user)
+        # Приветственное сообщение
+        if welcome:
+            await _try_send_dm(bot, user.id, welcome)
+    except Exception as e:
+        logger.warning(f"delayed approve join request error: {e}")
+
+
 async def _handle_join_request(bot: Bot, child_bot_id: int, event: ChatJoinRequest):
     """Заявка на вступление — проверяем настройки и обрабатываем."""
     chat_id = event.chat.id
@@ -1363,42 +1401,18 @@ async def _handle_join_request(bot: Bot, child_bot_id: int, event: ChatJoinReque
     delay      = chat_settings["autoaccept_delay"] or 0
 
     if autoaccept or delay > 0:
-        # Авто-принятие или отложенное принятие
-        if delay > 0:
-            await asyncio.sleep(delay * 60)
-        try:
-            await bot.approve_chat_join_request(chat_id, user.id)
-            # Регистрируем в bot_users после одобрения
-            await db.execute(
-                """
-                INSERT INTO bot_users (owner_id, chat_id, user_id, username, first_name,
-                                       language_code, is_premium, joined_at)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, now())
-                ON CONFLICT (owner_id, chat_id, user_id) DO UPDATE
-                    SET is_active=true, left_at=NULL,
-                        joined_at=now(),
-                        username=EXCLUDED.username,
-                        is_premium=EXCLUDED.is_premium,
-                        bot_activated = (bot_users.bot_activated OR EXCLUDED.bot_activated)
-                """,
-                owner_id, chat_id, user.id,
-                user.username, user.first_name, user.language_code,
-                getattr(user, "is_premium", False),
+        # Авто-принятие или отложенное принятие запускаем в фоне
+        asyncio.create_task(
+            _delayed_approve_join_request(
+                bot=bot,
+                owner_id=owner_id,
+                chat_id=chat_id,
+                user=user,
+                delay_min=delay if delay > 0 else 0,
+                invite_link_url=invite_link_url,
+                welcome=chat_settings.get("welcome_text"),
             )
-            await db.execute(
-                "UPDATE join_requests SET status='approved', resolved_at=now() "
-                "WHERE owner_id=$1 AND chat_id=$2 AND user_id=$3",
-                owner_id, chat_id, user.id,
-            )
-            # Трекинг ссылки-приглашения (fallback уже вычислен выше в invite_link_url)
-            if invite_link_url:
-                await _track_invite_link(invite_link_url, user)
-            # Приветственное сообщение
-            welcome = chat_settings.get("welcome_text")
-            if welcome:
-                await _try_send_dm(bot, user.id, welcome)
-        except Exception as e:
-            logger.warning(f"approve join request error: {e}")
+        )
     # Если autoaccept=false и delay=0 — заявка остаётся в очереди со статусом pending
 
 

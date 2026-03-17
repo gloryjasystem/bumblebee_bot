@@ -1625,6 +1625,12 @@ async def _handle_chat_member(bot: Bot, child_bot_id: int, event: ChatMemberUpda
         welcome_text = chat_settings.get("welcome_text")
         welcome_media = chat_settings.get("welcome_media")
         
+        try:
+            from handlers.captcha import cleanup_captcha_and_send_welcome
+            await cleanup_captcha_and_send_welcome(bot, chat_id, user.id)
+        except Exception as _ce:
+            logger.debug(f"[CAPTCHA CLEANUP] Failed: {_ce}")
+
         logger.info(f"[WELCOME] user={user.id} captcha={captcha_type} has_text={bool(welcome_text)} has_media={bool(welcome_media)}")
         if welcome_text or welcome_media:
             from handlers.join_requests import _send_welcome

@@ -87,6 +87,10 @@ _expected: dict[tuple[int, int], str] = {}
 # Хранилище invite_link_url для трекинга (fallback когда Telegram не шлёт invite_link)
 _pending_link_urls: dict[tuple[int, int], str] = {}
 
+# Хранилище message_id (ID сообщения от бота для очистки после вступления)
+_captcha_msg_ids: dict[tuple[int, int], int] = {}
+
+
 # ── Групповой режим (join via regular link) ────────────────────────────────
 # {(chat_id, user_id): {captcha_type, one_time_link, welcome_text, owner_id, ...}}
 _pending_group: dict[tuple[int, int], dict] = {}
@@ -261,6 +265,9 @@ async def send_captcha(bot: Bot, event: ChatJoinRequest, settings_row: dict):
                     parse_mode="HTML",
                     reply_markup=kb,
                 )
+                
+        _captcha_msg_ids[key] = msg.message_id
+        
         asyncio.create_task(
             _captcha_timeout(bot, event, settings_row, msg.message_id)
         )
@@ -389,6 +396,9 @@ async def send_captcha_group(
             msg = await bot.send_photo(user.id, photo=media_id, caption=text, parse_mode="HTML", reply_markup=kb)
         else:
             msg = await bot.send_message(user.id, text, parse_mode="HTML", reply_markup=kb)
+            
+        _captcha_msg_ids[key] = msg.message_id
+        
         asyncio.create_task(
             _captcha_timeout_group(bot, chat_id, user.id, timer_min, msg.message_id)
         )
@@ -540,7 +550,10 @@ async def _approve_user(
                         parse_mode="HTML",
                     )
                 else:
-                    await _edit_captcha_message(callback.message, "✅ Капча пройдена! Добро пожаловать.")
+                    try:
+                        await callback.message.edit_reply_markup(reply_markup=None)
+                    except Exception:
+                        pass
                 await callback.answer("✅ Отлично!")
                 logger.info(f"[GROUP CAPTCHA] Passed: user={user_id} chat={chat_id} — welcome deferred to on-join event")
             else:
@@ -603,15 +616,18 @@ async def _approve_user(
                     except Exception as e:
                         logger.warning(f"[LINK TRACK] failed: {e}")
 
-                if settings_row.get("captcha_delete"):
-                    try:
-                        await callback.message.delete()
-                    except Exception:
-                        pass
-                    await callback.answer("✅ Отлично!")
-                    return
+            if settings_row.get("captcha_delete"):
+                try:
+                    await callback.message.delete()
+                except Exception:
+                    pass
+                await callback.answer("✅ Отлично!")
+                return
 
-            await _edit_captcha_message(callback.message, "✅ Капча пройдена! Добро пожаловать.")
+            try:
+                await callback.message.edit_reply_markup(reply_markup=None)
+            except Exception:
+                pass
             await callback.answer("✅ Отлично!")
 
         else:
@@ -659,6 +675,7 @@ async def _approve_user(
                     "⏳ Ваша заявка на вступление отправлена администратору.\n"
                     "Ожидайте подтверждения."
                 )
+                _captcha_msg_ids[key] = callback.message.message_id
                 await callback.answer("✅ Готово!")
 
     else:

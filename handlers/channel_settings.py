@@ -407,12 +407,12 @@ async def on_req_confirm(callback: CallbackQuery, bot: Bot, state: FSMContext, p
     await callback.answer(f"{icon} {verb}: {total_processed}", show_alert=True)
     
     if scope == "ch":
-        callback.data = f"ch_requests:{target_id}"
-        await on_requests_menu(callback, platform_user)
+        fake_cb = callback.model_copy(update={"data": f"ch_requests:{target_id}"})
+        await on_requests_menu(fake_cb, platform_user)
     else:
-        callback.data = f"bs_requests:{target_id}"
+        fake_cb = callback.model_copy(update={"data": f"bs_requests:{target_id}"})
         from handlers.channel_settings import on_bs_requests
-        await on_bs_requests(callback, platform_user)
+        await on_bs_requests(fake_cb, platform_user)
 
 
 
@@ -471,8 +471,8 @@ async def on_captcha_delete_toggle(callback: CallbackQuery, platform_user: dict 
     )
     await callback.answer("✅ Изменено")
     # Обновляем экран
-    callback.data = f"captcha_settings:{chat_id}"
-    await on_captcha_settings(callback, platform_user)
+    fake_cb = callback.model_copy(update={"data": f"captcha_settings:{chat_id}"})
+    await on_captcha_settings(fake_cb, platform_user)
 
 
 @router.callback_query(F.data.startswith("captcha_timer:"))
@@ -506,9 +506,9 @@ async def on_timer_preset(callback: CallbackQuery, state: FSMContext):
     )
     await state.clear()
     await callback.answer(f"✅ Таймер: {secs} сек")
-    callback.data = f"captcha_settings:{data['chat_id']}"
+    fake_cb = callback.model_copy(update={"data": f"captcha_settings:{data['chat_id']}"})
     fake_pu = {"user_id": data["owner_id"], "tariff": "pro"}
-    await on_captcha_settings(callback, fake_pu)
+    await on_captcha_settings(fake_cb, fake_pu)
 
 
 @router.callback_query(F.data.startswith("captcha_text:"))
@@ -1082,9 +1082,9 @@ async def on_ch_msg_del(callback: CallbackQuery, platform_user: dict | None):
         platform_user["user_id"], int(chat_id_str),
     )
     await callback.answer("🗑 Удалено")
-    callback.data = f"ch_messages:{chat_id_str}"
+    fake_cb = callback.model_copy(update={"data": f"ch_messages:{chat_id_str}"})
     from handlers.messages import _show_ch_messages
-    await _show_ch_messages(callback, int(chat_id_str), platform_user["user_id"])
+    await _show_ch_messages(fake_cb, int(chat_id_str), platform_user["user_id"])
 
 
 @router.callback_query(F.data.startswith("ch_msg_back:"))
@@ -1271,8 +1271,8 @@ async def on_welcome_del(callback: CallbackQuery, platform_user: dict | None):
     if not platform_user:
         return
     chat_id_str = callback.data.split(":")[1]
-    callback.data = f"ch_msg_del:{chat_id_str}:welcome"
-    await on_ch_msg_del(callback, platform_user)
+    fake_cb = callback.model_copy(update={"data": f"ch_msg_del:{chat_id_str}:welcome"})
+    await on_ch_msg_del(fake_cb, platform_user)
 
 
 @router.callback_query(F.data.startswith("farewell_del:"))
@@ -1280,8 +1280,8 @@ async def on_farewell_del(callback: CallbackQuery, platform_user: dict | None):
     if not platform_user:
         return
     chat_id_str = callback.data.split(":")[1]
-    callback.data = f"ch_msg_del:{chat_id_str}:farewell"
-    await on_ch_msg_del(callback, platform_user)
+    fake_cb = callback.model_copy(update={"data": f"ch_msg_del:{chat_id_str}:farewell"})
+    await on_ch_msg_del(fake_cb, platform_user)
 
 
 # ══════════════════════════════════════════════════════════════
@@ -1355,8 +1355,8 @@ async def on_reaction_toggle(callback: CallbackQuery, platform_user: dict | None
         current, platform_user["user_id"], chat_id,
     )
     await callback.answer()
-    callback.data = f"reactions_set:{chat_id}"
-    await on_reactions_set(callback, platform_user)
+    fake_cb = callback.model_copy(update={"data": f"reactions_set:{chat_id}"})
+    await on_reactions_set(fake_cb, platform_user)
 
 
 # ══════════════════════════════════════════════════════════════
@@ -1681,8 +1681,8 @@ async def on_lang_toggle(callback: CallbackQuery, platform_user: dict | None):
         )
         await callback.answer(f"🚫 {LANGUAGE_OPTIONS.get(code,'?')} заблокирован")
     # Обновляем экран
-    callback.data = f"lang_filters:{chat_id}"
-    await on_lang_filters(callback, platform_user)
+    fake_cb = callback.model_copy(update={"data": f"lang_filters:{chat_id}"})
+    await on_lang_filters(fake_cb, platform_user)
 
 
 # ══════════════════════════════════════════════════════════════
@@ -2175,8 +2175,8 @@ async def on_bs_welcome_del(callback: CallbackQuery, platform_user: dict | None)
         "UPDATE bot_chats SET welcome_text=NULL WHERE child_bot_id=$1 AND owner_id=$2",
         child_bot_id, owner_id)
     await callback.answer("✅ Приветствие удалено")
-    callback.data = f"bs_messages:{child_bot_id}"
-    await on_bs_messages(callback, platform_user)
+    fake_cb = callback.model_copy(update={"data": f"bs_messages:{child_bot_id}"})
+    await on_bs_messages(fake_cb, platform_user)
 
 
 @router.callback_query(F.data.startswith("bs_farewell:"))
@@ -2214,8 +2214,8 @@ async def on_bs_farewell_del(callback: CallbackQuery, platform_user: dict | None
         "UPDATE bot_chats SET farewell_text=NULL WHERE child_bot_id=$1 AND owner_id=$2",
         child_bot_id, owner_id)
     await callback.answer("✅ Прощание удалено")
-    callback.data = f"bs_messages:{child_bot_id}"
-    await on_bs_messages(callback, platform_user)
+    fake_cb = callback.model_copy(update={"data": f"bs_messages:{child_bot_id}"})
+    await on_bs_messages(fake_cb, platform_user)
 
 
 # ── Защита ────────────────────────────────────────────────────
@@ -4607,5 +4607,5 @@ async def on_bs_team_remove(callback: CallbackQuery, platform_user: dict | None)
     )
     await callback.answer("✅ Участник удалён из команды")
     # Перерендер списка
-    callback.data = f"bs_team_members:{child_bot_id}"
-    await on_bs_team_members(callback, platform_user)
+    fake_cb = callback.model_copy(update={"data": f"bs_team_members:{child_bot_id}"})
+    await on_bs_team_members(fake_cb, platform_user)

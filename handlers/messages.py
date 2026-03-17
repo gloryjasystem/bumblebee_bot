@@ -489,8 +489,8 @@ async def on_ch_cap_reset_ok(callback: CallbackQuery, platform_user: dict | None
         owner_id, chat_id,
     )
     await callback.answer("✅ Капча сброшена")
-    callback.data = f"ch_captcha:{chat_id}"
-    await on_ch_captcha(callback, platform_user)
+    fake_cb = callback.model_copy(update={"data": f"ch_captcha:{chat_id}"})
+    await on_ch_captcha(fake_cb, platform_user)
 
 
 # ── Выбор набора эмодзи (рандомная капча) ──────────────────────
@@ -534,8 +534,8 @@ async def on_ch_cap_set_emoji(callback: CallbackQuery, platform_user: dict | Non
         es, owner_id, chat_id,
     )
     await callback.answer(f"Вид: {es}")
-    callback.data = f"ch_captcha:{chat_id}"
-    await on_ch_captcha(callback, platform_user)
+    fake_cb = callback.model_copy(update={"data": f"ch_captcha:{chat_id}"})
+    await on_ch_captcha(fake_cb, platform_user)
 
 
 # ── Анимация капчи (загрузка) ───────────────────────────────────

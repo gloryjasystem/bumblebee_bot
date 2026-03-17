@@ -1023,8 +1023,8 @@ async def on_ch_toggle(callback: CallbackQuery, platform_user: dict | None):
     
     # Trigger a re-render of the settings screen itself so the button updates
     from handlers.channel_settings import on_ch_settings
-    callback.data = f"ch_settings:{ch_id}"
-    await on_ch_settings(callback, platform_user)
+    fake_cb = callback.model_copy(update={"data": f"ch_settings:{ch_id}"})
+    await on_ch_settings(fake_cb, platform_user)
 
 
 @router.callback_query(F.data.startswith("ch_delete:"))
@@ -1060,7 +1060,7 @@ async def on_ch_delete_confirm(callback: CallbackQuery, platform_user: dict | No
     )
     await callback.answer("✅ Площадка удалена")
     if cbot_id:
-        callback.data = f"bot_chats_list:{cbot_id}"
-        await on_bot_chats_list(callback, platform_user)
+        fake_cb = callback.model_copy(update={"data": f"bot_chats_list:{cbot_id}"})
+        await on_bot_chats_list(fake_cb, platform_user)
     else:
         await on_channels_menu(callback, platform_user)

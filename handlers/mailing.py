@@ -1394,8 +1394,8 @@ async def on_ml_color(callback: CallbackQuery, platform_user: dict | None):
     )
     await callback.answer(f"Цвет: {color}")
     # Перерендер
-    callback.data = f"ml_url_buttons:{mid}"
-    await on_ml_url_buttons(callback, None, platform_user)  # state=None — не нужен здесь
+    fake_cb = callback.model_copy(update={"data": f"ml_url_buttons:{mid}"})
+    await on_ml_url_buttons(fake_cb, None, platform_user)  # state=None — не нужен здесь
 
 
 @router.callback_query(F.data.startswith("ml_input_buttons:"))
@@ -1493,8 +1493,8 @@ async def on_ml_clear_buttons(callback: CallbackQuery, platform_user: dict | Non
         mid, platform_user["user_id"],
     )
     await callback.answer("🗑 Кнопки очищены")
-    callback.data = f"ml_url_buttons:{mid}"
-    await on_ml_url_buttons(callback, None, platform_user)
+    fake_cb = callback.model_copy(update={"data": f"ml_url_buttons:{mid}"})
+    await on_ml_url_buttons(fake_cb, None, platform_user)
 
 
 # ══════════════════════════════════════════════════════════════

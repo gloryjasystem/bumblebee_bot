@@ -776,15 +776,17 @@ async def _handle_message(bot: Bot, child_bot_id: int, owner_id: int, message):
         if text:
             # ── Реакции ──
             reaction_row = await db.fetchrow(
-                "SELECT reaction_emoji FROM bot_chats WHERE child_bot_id=$1 AND is_active=true AND reaction_emoji IS NOT NULL LIMIT 1",
+                "SELECT reaction_emojis FROM bot_chats WHERE child_bot_id=$1 AND is_active=true AND array_length(reaction_emojis, 1) > 0 LIMIT 1",
                 child_bot_id
             )
-            if reaction_row and reaction_row["reaction_emoji"]:
+            if reaction_row and reaction_row["reaction_emojis"]:
                 try:
+                    from aiogram.types import ReactionTypeEmoji
+                    reactions = [ReactionTypeEmoji(emoji=e) for e in reaction_row["reaction_emojis"]]
                     await bot.set_message_reaction(
                         chat_id=message.chat.id,
                         message_id=message.message_id,
-                        reaction=[ReactionTypeEmoji(emoji=reaction_row["reaction_emoji"])],
+                        reaction=reactions,
                     )
                 except Exception as e:
                     logger.debug(f"[REACTION PM] failed for bot {child_bot_id}: {e}")

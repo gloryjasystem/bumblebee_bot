@@ -1094,16 +1094,28 @@ async def _handle_my_chat_member(
         logger.info(f"Child bot @{bot_username} added to {chat.title} ({chat.id}) as {new_status}")
 
     elif new_status in ("kicked", "left"):
-        # Бот удалён — удаляем площадку из базы
+        chat_type = event.chat.type
+        if chat_type == "private":
+            # Пользователь заблокировал бота в личке (PM)
+            await db.execute(
+                "UPDATE bot_users SET is_active=false, left_at=now() "
+                "WHERE child_bot_id=$1 AND user_id=$2",
+                child_bot_id, event.chat.id,
+            )
+            logger.info(f"User {event.chat.id} blocked child bot {child_bot_id}")
+            return
+
+        # Бот удалён из группы/канала — удаляем площадку из базы
         await db.execute(
             "DELETE FROM bot_chats WHERE child_bot_id=$1 AND chat_id=$2",
             child_bot_id, event.chat.id,
         )
         if _main_bot:
             try:
+                chat_title = event.chat.title or str(event.chat.id)
                 await _main_bot.send_message(
                     owner_id,
-                    f"⚠️ Бот @{bot_username} удалён из <b>{event.chat.title}</b>.\n"
+                    f"⚠️ Бот @{bot_username} удалён из <b>{chat_title}</b>.\n"
                     f"Площадка деактивирована.",
                     parse_mode="HTML",
                 )

@@ -273,7 +273,11 @@ async def _handle_child_update(
 
         # ── Пользователь вступил/вышел (открытый канал/группа) ─
         elif update.chat_member:
-            await _handle_chat_member(bot, child_bot_id, update.chat_member)
+            if update.chat_member.new_chat_member.user.id == bot.id:
+                # В редких случаях Telegram может прислать chat_member вместо my_chat_member для самого бота
+                await _handle_my_chat_member(bot, child_bot_id, owner_id, bot_username, update.chat_member)
+            else:
+                await _handle_chat_member(bot, child_bot_id, update.chat_member)
 
         # ── Сообщение пользователя ──────────────────────────────────
         elif update.message and update.message.from_user:

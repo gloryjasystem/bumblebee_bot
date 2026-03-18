@@ -3812,16 +3812,35 @@ async def on_bs_bl_dl_bck(callback: CallbackQuery, bot: Bot, platform_user: dict
     parts = callback.data.split(":")
     child_bot_id = int(parts[1])
     top_msg_id = int(parts[2])
+    owner_id = platform_user["user_id"]
 
     # Удаляем верхнее сообщение со статусом генерации файла
     try:
         await bot.delete_message(chat_id=callback.message.chat.id, message_id=top_msg_id)
     except Exception:
         pass
+        
+    # Удаляем текущее сообщение (файл)
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
 
-    # Перенаправляем на главное меню (внутри navigate удалит и текущее сообщение с файлом)
-    fake_cb = callback.model_copy(update={"data": f"bs_blacklist:{child_bot_id}"})
-    await on_bs_blacklist(fake_cb, platform_user)
+    # Генерируем меню ЧС напрямую, чтобы избежать ошибки edit_text на файловом сообщении
+    count = await db.fetchval(
+        "SELECT COUNT(*) FROM blacklist WHERE owner_id=$1", owner_id,
+    ) or 0
+
+    await callback.message.answer(
+        "⛔️ <b>ЧС пользователей</b>\n\n"
+        f"🔢 Записей в базе ЧС: {count:,}",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="⚙️ Управлять базой ЧС",  callback_data=f"bs_bl_manage:{child_bot_id}")],
+            [InlineKeyboardButton(text="📤 Экспортировать базу ЧС", callback_data=f"bs_bl_export:{child_bot_id}")],
+            [InlineKeyboardButton(text="◀️ Назад",               callback_data=f"bs_base:{child_bot_id}")],
+        ]),
+    )
+    await callback.answer()
 
 
 # ── Загрузить базу ЧС ─────────────────────────────────────────

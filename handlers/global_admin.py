@@ -931,7 +931,7 @@ async def _show_bots_network_page(callback: CallbackQuery, owner_id: int, page: 
     )
 
     kb = [
-        [InlineKeyboardButton(text="🔍 Найти бота по @username", callback_data=f"ga_bots_search:{owner_id}")]
+        [InlineKeyboardButton(text="🔍 Найти и активировать бота по названию", callback_data=f"ga_bots_search:{owner_id}")]
     ]
 
     for bot_row in page_bots:

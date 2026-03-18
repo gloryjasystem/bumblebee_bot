@@ -385,10 +385,18 @@ CREATE TABLE IF NOT EXISTS audit_log (
     id          BIGSERIAL PRIMARY KEY,
     owner_id    BIGINT NOT NULL,
     user_id     BIGINT,
-    action      VARCHAR(64) NOT NULL,
+    action      VARCHAR(64) NOT NULL DEFAULT 'unknown',
     entity_type VARCHAR(32),
     entity_id   BIGINT,
     details     TEXT,
     created_at  TIMESTAMPTZ DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_audit_log_owner ON audit_log(owner_id, created_at DESC);
+
+-- Гарантируем наличие всех колонок audit_log (если таблица создана старой миграцией)
+ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS user_id     BIGINT;
+ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS action      VARCHAR(64) NOT NULL DEFAULT 'unknown';
+ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS entity_type VARCHAR(32);
+ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS entity_id   BIGINT;
+ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS details     TEXT;
+ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS created_at  TIMESTAMPTZ DEFAULT now();

@@ -373,11 +373,11 @@ async def on_ga_top_bots(callback: CallbackQuery):
         
     async with get_pool().acquire() as conn:
         rows = await conn.fetch("""
-            SELECT bc.title, bc.chat_type, COUNT(bu.user_id) as users_count
+            SELECT bc.chat_title, bc.chat_type, COUNT(bu.user_id) as users_count
             FROM bot_chats bc
             LEFT JOIN bot_users bu ON bu.chat_id = bc.chat_id AND bu.is_active = true
             WHERE bc.owner_id = $1 AND bc.is_active = true
-            GROUP BY bc.id, bc.title, bc.chat_type
+            GROUP BY bc.id, bc.chat_title, bc.chat_type
             ORDER BY users_count DESC
             LIMIT 15
         """, owner_id)
@@ -388,7 +388,7 @@ async def on_ga_top_bots(callback: CallbackQuery):
     else:
         for idx, r in enumerate(rows, 1):
             icon = "📢" if r['chat_type'] == 'channel' else "👥"
-            text += f"{idx}. {icon} <b>{r['title']}</b> — {r['users_count']} чел.\n"
+            text += f"{idx}. {icon} <b>{r['chat_title']}</b> — {r['users_count']} чел.\n"
             
     kb = [[InlineKeyboardButton(text="◀️ Назад в Статистику", callback_data=f"ga_stats:{owner_id}")]]
     await callback.message.edit_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
@@ -548,7 +548,8 @@ async def on_ga_users(callback: CallbackQuery):
 
 async def _export_users_csv(bot: Bot, chat_id: int, owner_id: int, export_type: str, msg_to_delete: Message = None):
     query = """
-        SELECT DISTINCT ON (bu.user_id) bu.user_id, bu.first_name, bu.last_name, bu.username, bu.is_active, bu.created_at
+        SELECT DISTINCT ON (bu.user_id)
+               bu.user_id, bu.first_name, bu.username, bu.is_active, bu.joined_at
         FROM bot_users bu
         JOIN bot_chats bc ON bu.chat_id = bc.chat_id
         WHERE bc.owner_id = $1 AND bc.is_active=true AND bu.user_id IS NOT NULL
@@ -556,9 +557,9 @@ async def _export_users_csv(bot: Bot, chat_id: int, owner_id: int, export_type: 
     if export_type == "alive":
         query += " AND bu.is_active = true"
     elif export_type == "blocked":
-        query = "SELECT user_id, reason as first_name, '' as last_name, '' as username, false as is_active, created_at FROM blacklist WHERE owner_id = $1"
+        query = "SELECT user_id, reason as first_name, username, false as is_active, added_at as joined_at FROM blacklist WHERE owner_id = $1"
     elif export_type == "admins":
-        query = "SELECT admin_id as user_id, admin_username as first_name, '' as last_name, '' as username, true as is_active, added_at as created_at FROM global_admins WHERE owner_id = $1"
+        query = "SELECT admin_id as user_id, admin_username as first_name, NULL as username, true as is_active, added_at as joined_at FROM global_admins WHERE owner_id = $1"
         
     async with get_pool().acquire() as conn:
         rows = await conn.fetch(query, owner_id)
@@ -576,15 +577,14 @@ async def _export_users_csv(bot: Bot, chat_id: int, owner_id: int, export_type: 
     fd, path = tempfile.mkstemp(suffix=".csv")
     with open(path, "w", encoding="utf-8-sig", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow(["ID", "Имя/Причина", "Фамилия", "Юзернейм", "Активен", "Дата добавления"])
+        writer.writerow(["ID", "Имя", "Юзернейм", "Активен", "Дата входа"])
         for r in rows:
             writer.writerow([
                 r['user_id'],
                 r['first_name'] or "",
-                r['last_name'] or "",
                 r['username'] or "",
                 "Да" if r['is_active'] else "Нет",
-                r['created_at'].strftime("%Y-%m-%d %H:%M:%S") if r['created_at'] else ""
+                r['joined_at'].strftime("%Y-%m-%d %H:%M:%S") if r['joined_at'] else ""
             ])
             
     doc = FSInputFile(path, filename=f"global_audience_{export_type}.csv")

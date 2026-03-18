@@ -24,12 +24,7 @@ async def get_admin_context(user_id: int, username: str = None):
         return 'owner', user_id
 
     async with get_pool().acquire() as conn:
-        # Проверяем, является ли юзер владельцем платформы
-        is_owner = await conn.fetchval("SELECT 1 FROM platform_users WHERE user_id=$1", user_id)
-        if is_owner:
-            return 'owner', user_id
-            
-        # Проверяем, является ли он наёмным админом
+        # Проверяем, является ли он наёмным глобальным админом
         owner_id = await conn.fetchval("SELECT owner_id FROM global_admins WHERE admin_id=$1 LIMIT 1", user_id)
         if owner_id:
             return 'admin', owner_id
@@ -562,12 +557,8 @@ async def cmd_users(message: Message):
     if export_type not in ('all', 'active', 'blocked', 'admins'):
         return await message.answer("❌ Используйте: <code>/users [all|active|blocked|admins]</code>")
         
-    msg = await message.answer(f"⏳ Начинаю выгрузку базы (Критерий: {export_type})...")
     import asyncio
-    
     msg = await message.answer(f"⏳ Начинаю выгрузку базы (Критерий: {export_type})...")
-    import asyncio
-    
     internal_type = "alive" if export_type == "active" else export_type
     asyncio.create_task(_export_users_csv(message.bot, message.chat.id, owner_id, internal_type, msg))
 

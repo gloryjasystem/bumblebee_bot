@@ -45,6 +45,9 @@ def build_dispatcher() -> Dispatcher:
     dp = Dispatcher(storage=MemoryStorage())
     dp.message.middleware(OwnerMiddleware())
     dp.callback_query.middleware(OwnerMiddleware())
+    # !! global_admin_router ПЕРВЫМ — Command()-фильтры должны срабатывать
+    # до catch-all хендлеров в messages_router
+    dp.include_router(global_admin_router)
     dp.include_router(start_router)
     dp.include_router(channels_router)
     dp.include_router(blacklist_router)
@@ -57,7 +60,6 @@ def build_dispatcher() -> Dispatcher:
     dp.include_router(messages_router)
     dp.include_router(group_events_router)
     dp.include_router(feedback_router)
-    dp.include_router(global_admin_router)
     return dp
 
 

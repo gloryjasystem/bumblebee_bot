@@ -9,11 +9,20 @@ from db.pool import get_pool
 logger = logging.getLogger(__name__)
 router = Router()
 
-async def get_admin_context(user_id: int):
+async def get_admin_context(user_id: int, username: str = None):
     """
     Returns (role, target_owner_id).
     role: 'owner', 'admin', or None.
     """
+    from config import settings
+    un = (username or "").lower().lstrip("@")
+    is_project_owner = (
+        user_id == settings.owner_telegram_id
+        or un == settings.owner_username.lower().lstrip("@")
+    )
+    if is_project_owner:
+        return 'owner', user_id
+
     async with get_pool().acquire() as conn:
         # Проверяем, является ли юзер владельцем платформы
         is_owner = await conn.fetchval("SELECT 1 FROM platform_users WHERE user_id=$1", user_id)
@@ -29,9 +38,9 @@ async def get_admin_context(user_id: int):
 
 @router.message(Command("admin"))
 async def cmd_admin(message: Message, state: FSMContext):
-    role, owner_id = await get_admin_context(message.from_user.id)
+    role, owner_id = await get_admin_context(message.from_user.id, message.from_user.username)
     if not role:
-        return  # Игнорируем обычных пользователей
+        return await message.answer("❌ Эта панель доступна только администраторам сети ботов.")
         
     await state.clear()
     await _show_admin_panel(message, role, owner_id)
@@ -73,9 +82,9 @@ async def on_ga_main(callback: CallbackQuery):
 
 @router.message(Command("admin_help"))
 async def cmd_admin_help(message: Message):
-    role, owner_id = await get_admin_context(message.from_user.id)
+    role, owner_id = await get_admin_context(message.from_user.id, message.from_user.username)
     if not role:
-        return
+        return await message.answer("❌ У вас нет доступа к командам глобального управления.")
         
     text = "🌐 <b>Справка по Глобальному Управлению</b>\n\n"
     if role == 'owner':
@@ -103,7 +112,9 @@ async def cmd_admin_help(message: Message):
 
 @router.message(Command("addadmin"))
 async def cmd_addadmin(message: Message):
-    role, owner_id = await get_admin_context(message.from_user.id)
+    role, owner_id = await get_admin_context(message.from_user.id, message.from_user.username)
+    if not role:
+        return await message.answer("❌ Нет доступа. Роль не найдена.")
     if role != 'owner':
         return await message.answer("❌ Эта команда доступна только Владельцу.")
         
@@ -130,7 +141,9 @@ async def cmd_addadmin(message: Message):
 
 @router.message(Command("removeadmin"))
 async def cmd_removeadmin(message: Message):
-    role, owner_id = await get_admin_context(message.from_user.id)
+    role, owner_id = await get_admin_context(message.from_user.id, message.from_user.username)
+    if not role:
+        return await message.answer("❌ Нет доступа. Роль не найдена.")
     if role != 'owner':
         return await message.answer("❌ Эта команда доступна только Владельцу.")
         
@@ -153,7 +166,9 @@ async def cmd_removeadmin(message: Message):
 
 @router.message(Command("admins"))
 async def cmd_admins(message: Message):
-    role, owner_id = await get_admin_context(message.from_user.id)
+    role, owner_id = await get_admin_context(message.from_user.id, message.from_user.username)
+    if not role:
+        return await message.answer("❌ Нет доступа. Роль не найдена.")
     if role != 'owner':
         return await message.answer("❌ Эта команда доступна только Владельцу.")
         
@@ -208,7 +223,9 @@ async def _build_global_stats(owner_id: int, conn) -> str:
 
 @router.message(Command("stats"))
 async def cmd_stats(message: Message):
-    role, owner_id = await get_admin_context(message.from_user.id)
+    role, owner_id = await get_admin_context(message.from_user.id, message.from_user.username)
+    if not role:
+        return await message.answer("❌ Нет доступа.")
     if role != 'owner':
         return await message.answer("❌ Нет прав. Эта команда доступна только Владельцу.")
         
@@ -240,7 +257,11 @@ async def on_ga_stats(callback: CallbackQuery):
 @router.message(Command("revenue"))
 @router.callback_query(F.data.startswith("ga_rev:"))
 async def on_ga_revenue(event: Message | CallbackQuery):
-    role, owner_id = await get_admin_context(event.from_user.id)
+    role, owner_id = await get_admin_context(event.from_user.id, event.from_user.username)
+    if not role:
+        if isinstance(event, Message):
+            return await event.answer("❌ Нет прав.")
+        return await event.answer("❌ Нет прав", show_alert=True)
     if role != 'owner':
         if isinstance(event, Message):
             return await event.answer("❌ Нет прав. Для владельца.")
@@ -343,9 +364,9 @@ async def on_ga_bl(callback: CallbackQuery):
 
 @router.message(Command("block"))
 async def cmd_block(message: Message):
-    role, owner_id = await get_admin_context(message.from_user.id)
+    role, owner_id = await get_admin_context(message.from_user.id, message.from_user.username)
     if not role:
-        return
+        return await message.answer("❌ Нет прав.")
         
     args = message.text.split(maxsplit=1)
     if len(args) < 2:
@@ -375,9 +396,9 @@ async def cmd_block(message: Message):
 
 @router.message(Command("unblock"))
 async def cmd_unblock(message: Message):
-    role, owner_id = await get_admin_context(message.from_user.id)
+    role, owner_id = await get_admin_context(message.from_user.id, message.from_user.username)
     if not role:
-        return
+        return await message.answer("❌ Нет прав.")
         
     args = message.text.split(maxsplit=1)
     if len(args) < 2:
@@ -532,9 +553,9 @@ async def on_ga_dl_bck(callback: CallbackQuery):
 
 @router.message(Command("users"))
 async def cmd_users(message: Message):
-    role, owner_id = await get_admin_context(message.from_user.id)
+    role, owner_id = await get_admin_context(message.from_user.id, message.from_user.username)
     if not role:
-        return
+        return await message.answer("❌ Нет прав.")
         
     args = message.text.split()
     export_type = args[1].lower() if len(args) > 1 else 'all'
@@ -572,9 +593,9 @@ async def on_ga_broadcast(callback: CallbackQuery):
 
 @router.message(Command("notify"))
 async def cmd_notify(message: Message):
-    role, owner_id = await get_admin_context(message.from_user.id)
+    role, owner_id = await get_admin_context(message.from_user.id, message.from_user.username)
     if not role: 
-        return
+        return await message.answer("❌ Нет прав.")
     
     args = message.text.split(maxsplit=2)
     if len(args) < 3:
@@ -614,9 +635,9 @@ async def cmd_notify(message: Message):
 
 @router.message(Command("broadcast"))
 async def cmd_broadcast(message: Message):
-    role, owner_id = await get_admin_context(message.from_user.id)
+    role, owner_id = await get_admin_context(message.from_user.id, message.from_user.username)
     if not role: 
-        return
+        return await message.answer("❌ Нет прав.")
     
     args = message.text.split(maxsplit=1)
     if len(args) < 2:

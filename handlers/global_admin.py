@@ -3,11 +3,20 @@ from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 
 from db.pool import get_pool
 
 logger = logging.getLogger(__name__)
 router = Router()
+
+
+class BotNetworkFSM(StatesGroup):
+    waiting_search = State()
+
+
+BOTS_PER_PAGE = 7
+
 
 async def get_admin_context(user_id: int, username: str = None):
     """
@@ -41,13 +50,15 @@ async def cmd_admin(message: Message, state: FSMContext):
     await _show_admin_panel(message, role, owner_id)
 
 async def _show_admin_panel(message_or_cb, role: str, owner_id: int):
-    # Загружаем живую статистику для заголовка
     async with get_pool().acquire() as conn:
         total_bots = await conn.fetchval("SELECT COUNT(*) FROM child_bots WHERE owner_id=$1", owner_id) or 0
+        net_bots = await conn.fetchval("SELECT COUNT(*) FROM child_bots WHERE owner_id=$1 AND in_global_network=true", owner_id) or 0
         total_users = await conn.fetchval("""
             SELECT COUNT(DISTINCT bu.user_id) FROM bot_users bu
             JOIN bot_chats bc ON bu.chat_id = bc.chat_id
+            JOIN child_bots cb ON cb.id = bc.child_bot_id
             WHERE bc.owner_id=$1 AND bc.is_active=true AND bu.user_id IS NOT NULL
+            AND cb.in_global_network=true
         """, owner_id) or 0
         bl_count = await conn.fetchval("SELECT COUNT(*) FROM blacklist WHERE owner_id=$1", owner_id) or 0
         admin_count = await conn.fetchval("SELECT COUNT(*) FROM global_admins WHERE owner_id=$1", owner_id) or 0
@@ -55,18 +66,17 @@ async def _show_admin_panel(message_or_cb, role: str, owner_id: int):
     if role == 'owner':
         header = (
             "🌐 <b>BotCloud — Глобальная Панель</b> • 👑 Owner\n"
-            f"─────────────────────────────\n"
-            f"🤖 Ботов в сети: <b>{total_bots}</b>   │   "
-            f"👥 Аудитория: <b>{total_users:,}</b>\n"
-            f"🚫 ЧС записей: <b>{bl_count}</b>   │   "
-            f"👷 Сотрудников: <b>{admin_count}</b>"
+            "─────────────────────────────\n"
+            f"⚡️ Активных ботов: <b>{net_bots} из {total_bots}</b>\n"
+            f"👥 Аудитория (активных): <b>{total_users:,}</b>\n"
+            f"🚫 Записей в ЧС: <b>{bl_count}</b>   │   👷 Сотрудников: <b>{admin_count}</b>"
         )
     else:
         header = (
             "🌐 <b>BotCloud — Глобальная Панель</b> • 👷 Admin\n"
-            f"─────────────────────────────\n"
-            f"👥 Юзеров в сети: <b>{total_users:,}</b>   │   "
-            f"🚫 ЧС: <b>{bl_count}</b>"
+            "─────────────────────────────\n"
+            f"👥 Активная аудитория сети: <b>{total_users:,}</b>\n"
+            f"🚫 Записей в ЧС: <b>{bl_count}</b>"
         )
 
     kb = []
@@ -75,6 +85,7 @@ async def _show_admin_panel(message_or_cb, role: str, owner_id: int):
             InlineKeyboardButton(text="⚙️ Сотрудники", callback_data=f"ga_team:{owner_id}"),
             InlineKeyboardButton(text="📊 Аналитика", callback_data=f"ga_stats:{owner_id}")
         ])
+    kb.append([InlineKeyboardButton(text="⚡️ Активация ботов сети", callback_data=f"ga_bots:{owner_id}:0")])
     kb.append([InlineKeyboardButton(text="🚫 Глобальный ЧС — 🛡️ Защита сети", callback_data=f"ga_bl:{owner_id}")])
     kb.append([InlineKeyboardButton(text="👥 База аудитории — Выгрузка CSV", callback_data=f"ga_users:{owner_id}")])
     kb.append([InlineKeyboardButton(text="📢 Рассылки и Личные сообщения", callback_data=f"ga_broadcast:{owner_id}")])
@@ -889,3 +900,170 @@ async def cmd_broadcast(message: Message):
 
     import asyncio
     asyncio.create_task(run_broadcast())
+
+
+# ══════════════════════════════════════════════════════════════
+# ⚡️ АКТИВАЦИЯ БОТОВ СЕТИ
+# ══════════════════════════════════════════════════════════════
+
+async def _show_bots_network_page(callback: CallbackQuery, owner_id: int, page: int):
+    """Отрисовывает страницу со списком ботов и тумблерами активации."""
+    async with get_pool().acquire() as conn:
+        all_bots = await conn.fetch("""
+            SELECT id, bot_username, bot_name, in_global_network, created_at
+            FROM child_bots WHERE owner_id=$1
+            ORDER BY in_global_network DESC, created_at ASC
+        """, owner_id)
+
+    total = len(all_bots)
+    total_pages = max(1, (total + BOTS_PER_PAGE - 1) // BOTS_PER_PAGE)
+    page = max(0, min(page, total_pages - 1))
+    active_count = sum(1 for b in all_bots if b['in_global_network'])
+
+    page_bots = all_bots[page * BOTS_PER_PAGE : (page + 1) * BOTS_PER_PAGE]
+
+    text = (
+        "⚡️ <b>Активация ботов сети</b>\n"
+        "─────────────────────────────\n"
+        f"🤖 Всего ботов: <b>{total}</b>   │   ✅ Активных: <b>{active_count}</b>\n\n"
+        "Включённые боты участвуют в общей аудитории, рассылках и Глобальном ЧС.\n"
+        "<i>Нажмите на бота — переключить ВКЛ / ВЫКЛ</i>"
+    )
+
+    kb = [
+        [InlineKeyboardButton(text="🔍 Найти бота по @username", callback_data=f"ga_bots_search:{owner_id}")]
+    ]
+
+    for bot_row in page_bots:
+        icon = "✅" if bot_row['in_global_network'] else "⛔"
+        kb.append([InlineKeyboardButton(
+            text=f"{icon} @{bot_row['bot_username']}",
+            callback_data=f"ga_bot_net_toggle:{owner_id}:{bot_row['id']}:{page}"
+        )])
+
+    # Пагинация
+    if total_pages > 1:
+        nav = []
+        if page > 0:
+            nav.append(InlineKeyboardButton(text="◀️", callback_data=f"ga_bots:{owner_id}:{page - 1}"))
+        nav.append(InlineKeyboardButton(text=f"{page + 1} / {total_pages}", callback_data="ga_bots_noop"))
+        if page < total_pages - 1:
+            nav.append(InlineKeyboardButton(text="▶️", callback_data=f"ga_bots:{owner_id}:{page + 1}"))
+        kb.append(nav)
+
+    kb.append([InlineKeyboardButton(text="◀️ Назад в Панель", callback_data=f"ga_main:{owner_id}")])
+
+    await callback.message.edit_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+
+
+@router.callback_query(F.data.startswith("ga_bots:"))
+async def on_ga_bots(callback: CallbackQuery):
+    parts = callback.data.split(":")
+    owner_id = int(parts[1])
+    page = int(parts[2]) if len(parts) > 2 else 0
+
+    role, _ = await get_admin_context(callback.from_user.id, callback.from_user.username)
+    if not role:
+        return await callback.answer("❌ Нет прав", show_alert=True)
+
+    await _show_bots_network_page(callback, owner_id, page)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("ga_bot_net_toggle:"))
+async def on_ga_bot_net_toggle(callback: CallbackQuery):
+    parts = callback.data.split(":")
+    owner_id = int(parts[1])
+    bot_id = int(parts[2])
+    page = int(parts[3]) if len(parts) > 3 else 0
+
+    role, _ = await get_admin_context(callback.from_user.id, callback.from_user.username)
+    if not role:
+        return await callback.answer("❌ Нет прав", show_alert=True)
+
+    async with get_pool().acquire() as conn:
+        current = await conn.fetchval(
+            "SELECT in_global_network FROM child_bots WHERE id=$1 AND owner_id=$2",
+            bot_id, owner_id
+        )
+        if current is None:
+            return await callback.answer("⚠️ Бот не найден", show_alert=True)
+
+        new_val = not current
+        await conn.execute(
+            "UPDATE child_bots SET in_global_network=$1 WHERE id=$2",
+            new_val, bot_id
+        )
+
+    status = "✅ Добавлен в сеть" if new_val else "⛔ Удалён из сети"
+    await callback.answer(status)
+    # Всегда возвращаемся на страницу 0, чтобы включённый бот появился первым
+    await _show_bots_network_page(callback, owner_id, 0)
+
+
+@router.callback_query(F.data == "ga_bots_noop")
+async def on_ga_bots_noop(callback: CallbackQuery):
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("ga_bots_search:"))
+async def on_ga_bots_search(callback: CallbackQuery, state: FSMContext):
+    owner_id = int(callback.data.split(":")[1])
+    await state.set_state(BotNetworkFSM.waiting_search)
+    await state.update_data(owner_id=owner_id)
+
+    text = (
+        "🔍 <b>Поиск бота</b>\n"
+        "─────────────────────────────\n"
+        "Введите <b>@username</b> бота, который нужно найти и включить в сеть.\n\n"
+        "<i>Пример: @mybotname или просто mybotname</i>"
+    )
+    kb = [[InlineKeyboardButton(text="❌ Отмена", callback_data=f"ga_bots_search_cancel:{owner_id}")]]
+    await callback.message.edit_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("ga_bots_search_cancel:"))
+async def on_ga_bots_search_cancel(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    owner_id = int(callback.data.split(":")[1])
+    await _show_bots_network_page(callback, owner_id, 0)
+    await callback.answer()
+
+
+@router.message(BotNetworkFSM.waiting_search)
+async def on_bots_search_input(message: Message, state: FSMContext):
+    data = await state.get_data()
+    owner_id = data.get("owner_id")
+    await state.clear()
+
+    query = message.text.strip().lstrip("@").lower()
+
+    async with get_pool().acquire() as conn:
+        bot_row = await conn.fetchrow(
+            "SELECT id, bot_username, in_global_network FROM child_bots WHERE owner_id=$1 AND LOWER(bot_username)=$2",
+            owner_id, query
+        )
+
+    if not bot_row:
+        kb = [[InlineKeyboardButton(text="◀️ Назад к списку", callback_data=f"ga_bots:{owner_id}:0")]]
+        await message.answer(
+            f"⚠️ Бот <code>@{query}</code> не найден в вашем списке.\n"
+            "Убедитесь, что бот добавлен в систему.",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
+        )
+        return
+
+    if not bot_row['in_global_network']:
+        async with get_pool().acquire() as conn:
+            await conn.execute(
+                "UPDATE child_bots SET in_global_network=true WHERE id=$1",
+                bot_row['id']
+            )
+        result_text = f"✅ Бот <b>@{bot_row['bot_username']}</b> включён в сеть и теперь участвует в статистике и ЧС."
+    else:
+        result_text = f"ℹ️ Бот <b>@{bot_row['bot_username']}</b> уже активен в сети."
+
+    kb = [[InlineKeyboardButton(text="✅ К списку ботов", callback_data=f"ga_bots:{owner_id}:0")]]
+    await message.answer(result_text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))

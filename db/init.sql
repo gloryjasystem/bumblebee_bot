@@ -376,3 +376,6 @@ ALTER TABLE child_bots ADD COLUMN IF NOT EXISTS use_global_blacklist BOOLEAN DEF
 
 -- Настройка умного Авто-Бана на уровне владельца
 ALTER TABLE platform_users ADD COLUMN IF NOT EXISTS global_auto_ban BOOLEAN DEFAULT false;
+
+-- Активация бота в глобальной сети (влияет на статистику, рассылки и ЧС)
+ALTER TABLE child_bots ADD COLUMN IF NOT EXISTS in_global_network BOOLEAN DEFAULT false;

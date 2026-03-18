@@ -24,6 +24,7 @@ from handlers.links import router as links_router
 from handlers.payment_handler import router as payment_router
 from handlers.channel_settings import router as channel_settings_router
 from handlers.messages import router as messages_router
+from handlers.global_admin import router as global_admin_router
 from handlers.group_events import router as group_events_router
 from handlers.feedback import router as feedback_router
 
@@ -56,6 +57,7 @@ def build_dispatcher() -> Dispatcher:
     dp.include_router(messages_router)
     dp.include_router(group_events_router)
     dp.include_router(feedback_router)
+    dp.include_router(global_admin_router)
     return dp
 
 

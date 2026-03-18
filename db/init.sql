@@ -352,6 +352,27 @@ ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS captcha_anim_type VARCHAR(16);
 -- captcha_greet
 ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS captcha_greet BOOLEAN DEFAULT false;
 
--- Позиция медиа в приветствии/прощании: false=сверху ⬆️ (default), true=снизу ⬇️
-ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS welcome_media_below BOOLEAN DEFAULT false;
 ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS farewell_media_below BOOLEAN DEFAULT false;
+
+-- ════════════════════════════════════════════════════════════
+-- Глобальная Экосистема (Global Admin Ecosystem)
+-- ════════════════════════════════════════════════════════════
+
+-- Глобальные администраторы
+CREATE TABLE IF NOT EXISTS global_admins (
+    id              SERIAL PRIMARY KEY,
+    owner_id        BIGINT REFERENCES platform_users(user_id) ON DELETE CASCADE,
+    admin_id        BIGINT NOT NULL,
+    admin_username  VARCHAR(64),
+    added_at        TIMESTAMPTZ DEFAULT now(),
+    UNIQUE(owner_id, admin_id)
+);
+
+-- Фиксация того, кто выдал бан
+ALTER TABLE blacklist ADD COLUMN IF NOT EXISTS added_by BIGINT;
+
+-- Использование глобального ЧС для конкретного бота
+ALTER TABLE child_bots ADD COLUMN IF NOT EXISTS use_global_blacklist BOOLEAN DEFAULT false;
+
+-- Настройка умного Авто-Бана на уровне владельца
+ALTER TABLE platform_users ADD COLUMN IF NOT EXISTS global_auto_ban BOOLEAN DEFAULT false;

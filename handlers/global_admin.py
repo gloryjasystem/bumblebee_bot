@@ -1,3 +1,4 @@
+import json
 import logging
 from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
@@ -265,7 +266,7 @@ async def cmd_addadmin(message: Message):
             await conn.execute("""
                 INSERT INTO audit_log (owner_id, user_id, action, details)
                 VALUES ($1, $2, 'add_admin', $3)
-            """, owner_id, message.from_user.id, f"Granted admin to {target_id}")
+            """, owner_id, message.from_user.id, json.dumps({"info": f"Granted admin to {target_id}"}))
             await message.answer(f"✅ Пользователь <code>{target_id}</code> назначен администратором.\nСписок: /admins", parse_mode="HTML")
         except asyncpg.UniqueViolationError:
             await message.answer("⚠️ Этот пользователь уже является администратором.")
@@ -296,7 +297,7 @@ async def cmd_removeadmin(message: Message):
             await conn.execute("""
                 INSERT INTO audit_log (owner_id, user_id, action, details)
                 VALUES ($1, $2, 'remove_admin', $3)
-            """, owner_id, message.from_user.id, f"Revoked admin from {target_id}")
+            """, owner_id, message.from_user.id, json.dumps({"info": f"Revoked admin from {target_id}"}))
             await message.answer(f"✅ Права пользователя <code>{target_id}</code> успешно отозваны.", parse_mode="HTML")
 
 
@@ -550,7 +551,7 @@ async def on_ga_bl_master_toggle(callback: CallbackQuery):
             INSERT INTO audit_log (owner_id, user_id, action, details)
             VALUES ($1, $2, 'bl_toggle', $3)
         """, owner_id, callback.from_user.id,
-            "Blacklist ENABLED" if new_val else "Blacklist DISABLED")
+            json.dumps({"info": "Blacklist ENABLED" if new_val else "Blacklist DISABLED"}))
 
     alert = ("✅ ЧС включён — защита активна, записи блокируют вход" if new_val
             else "⛔ ЧС выключен — пользователи из ЧС могут войти")
@@ -626,7 +627,7 @@ async def cmd_block(message: Message):
                 INSERT INTO audit_log (owner_id, user_id, action, details)
                 VALUES ($1, $2, 'block', $3)
             """, owner_id, message.from_user.id,
-                f"Blocked user {target_id} via /block")
+                json.dumps({"info": f"Blocked user {target_id} via /block"}))
             await message.answer(f"✅ Пользователь <code>{target_id}</code> занесён в Глобальный ЧС.\nНачинаю блокировку во всех активных ботах...")
             import asyncio
             asyncio.create_task(_kick_from_all_chats(owner_id, target_id))
@@ -657,7 +658,7 @@ async def cmd_unblock(message: Message):
             await conn.execute("""
                 INSERT INTO audit_log (owner_id, user_id, action, details)
                 VALUES ($1, $2, 'unblock', $3)
-            """, owner_id, message.from_user.id, f"Unblocked user {target_id} via /unblock")
+            """, owner_id, message.from_user.id, json.dumps({"info": f"Unblocked user {target_id} via /unblock"}))
             await message.answer(f"✅ Пользователь <code>{target_id}</code> удалён из Глобального ЧС.", parse_mode="HTML")
 
 

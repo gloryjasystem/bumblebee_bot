@@ -2661,7 +2661,7 @@ async def on_bs_base_del(callback: CallbackQuery, state: FSMContext,
     if not platform_user:
         return
     child_bot_id = int(callback.data.split(":")[1])
-    await state.update_data(child_bot_id=child_bot_id)
+    await state.update_data(child_bot_id=child_bot_id, prompt_msg_id=callback.message.message_id)
     await state.set_state(SettingsFSM.bs_base_waiting_del)
     await callback.message.edit_text(
         "🔎 <b>Поиск подписчика</b>\n\n"
@@ -2826,6 +2826,20 @@ async def on_bs_base_user_search(message: Message, state: FSMContext,
     data = await state.get_data()
     child_bot_id = data.get("child_bot_id")
     owner_id = platform_user["user_id"]
+    prompt_msg_id = data.get("prompt_msg_id")
+
+    # Удаляем сообщение с вводом пользователя
+    try:
+        await message.delete()
+    except Exception:
+        pass
+
+    # Удаляем сообщение с изначальным промптом
+    if prompt_msg_id:
+        try:
+            await message.bot.delete_message(chat_id=message.chat.id, message_id=prompt_msg_id)
+        except Exception:
+            pass
 
     # 1. Массовое удаление через файл (оставляем старую логику для файлов)
     if message.document:
@@ -2872,7 +2886,12 @@ async def on_bs_base_user_search(message: Message, state: FSMContext,
     target_username = _extract_username_from_message(message)
 
     if not target_id and not target_username:
-        await message.answer("❌ Не удалось распознать пользователя. Пришлите ID, @username или перешлите его сообщение.")
+        await message.answer(
+            "❌ Не удалось распознать пользователя. Пришлите ID, @username или перешлите его сообщение.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="◀️ Назад к управлению", callback_data=f"bs_base_edit:{child_bot_id}")],
+            ])
+        )
         return
 
     # Ищем пользователя в базе (объединяем площадки)

@@ -3676,20 +3676,23 @@ async def on_bs_bl_export(callback: CallbackQuery, platform_user: dict | None):
 
 
 @router.callback_query(F.data.startswith("bs_bl_export_csv:"))
-async def on_bs_bl_export_csv(callback: CallbackQuery, platform_user: dict | None):
+async def on_bs_bl_export_csv(callback: CallbackQuery, bot: Bot, platform_user: dict | None):
     if not platform_user:
         return
     import io, csv
     from datetime import datetime
     from aiogram.types import BufferedInputFile
+    import logging
+
+    logger = logging.getLogger(__name__)
 
     owner_id = platform_user["user_id"]
     child_bot_id = int(callback.data.split(":")[1])
     await callback.answer("⏳ Формирую файл...", show_alert=False)
 
     rows = await db.fetch(
-        "SELECT user_id, username, reason, created_at "
-        "FROM blacklist WHERE owner_id=$1 ORDER BY created_at DESC",
+        "SELECT user_id, username, reason, added_at "
+        "FROM blacklist WHERE owner_id=$1 ORDER BY added_at DESC",
         owner_id,
     )
 
@@ -3701,35 +3704,60 @@ async def on_bs_bl_export_csv(callback: CallbackQuery, platform_user: dict | Non
             r["user_id"] or "",
             f"@{r['username']}" if r["username"] else "",
             r["reason"] or "",
-            r["created_at"].strftime("%d.%m.%Y %H:%M") if r["created_at"] else "",
+            r["added_at"].strftime("%d.%m.%Y %H:%M") if r["added_at"] else "",
         ])
 
     date_str = datetime.now().strftime("%Y%m%d")
     data = buf.getvalue().encode("utf-8-sig")
-    await callback.message.answer_document(
-        BufferedInputFile(data, filename=f"blacklist_{date_str}.csv"),
-        caption=(
-            f"📥 <b>Экспорт базы ЧС (CSV)</b>\n\n"
-            f"📊 Записей: <b>{len(rows):,}</b>\n"
-            "Формат: CSV, разделитель ; | Кодировка UTF-8 с BOM (совместимо с Excel)"
-        ),
-        parse_mode="HTML",
+    filename = f"blacklist_{date_str}.csv"
+    
+    caption = (
+        f"📥 <b>Экспорт базы ЧС (CSV)</b>\n\n"
+        f"📊 Записей: <b>{len(rows):,}</b>\n"
+        "Формат: CSV, разделитель ; | Кодировка UTF-8 с BOM (совместимо с Excel)"
     )
+
+    try:
+        await bot.send_document(
+            chat_id=owner_id,
+            document=BufferedInputFile(data, filename=filename),
+            caption=caption,
+            parse_mode="HTML",
+        )
+        await callback.message.edit_text(
+            "🛡 <b>Экспорт базы ЧС</b>\n\n"
+            f"✅ Файл <code>{filename}</code> отправлен.\n"
+            f"Записей: <b>{len(rows):,}</b>",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="◀️ Назад", callback_data=f"bs_blacklist:{child_bot_id}")],
+            ]),
+        )
+    except Exception as e:
+        logger.error(f"Blacklist CSV export error: {e}")
+        await callback.message.edit_text(
+            "❌ Ошибка при отправке файла. Попробуйте позже.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="◀️ Назад", callback_data=f"bs_blacklist:{child_bot_id}")],
+            ]),
+        )
 
 
 @router.callback_query(F.data.startswith("bs_bl_export_txt:"))
-async def on_bs_bl_export_txt(callback: CallbackQuery, platform_user: dict | None):
+async def on_bs_bl_export_txt(callback: CallbackQuery, bot: Bot, platform_user: dict | None):
     if not platform_user:
         return
     from datetime import datetime
     from aiogram.types import BufferedInputFile
+    import logging
+
+    logger = logging.getLogger(__name__)
 
     owner_id = platform_user["user_id"]
     child_bot_id = int(callback.data.split(":")[1])
     await callback.answer("⏳ Формирую файл...", show_alert=False)
 
     rows = await db.fetch(
-        "SELECT user_id, username FROM blacklist WHERE owner_id=$1 ORDER BY created_at DESC",
+        "SELECT user_id, username FROM blacklist WHERE owner_id=$1 ORDER BY added_at DESC",
         owner_id,
     )
 
@@ -3742,15 +3770,37 @@ async def on_bs_bl_export_txt(callback: CallbackQuery, platform_user: dict | Non
 
     date_str = datetime.now().strftime("%Y%m%d")
     data = "\n".join(lines).encode("utf-8")
-    await callback.message.answer_document(
-        BufferedInputFile(data, filename=f"blacklist_ids_{date_str}.txt"),
-        caption=(
-            f"📋 <b>Экспорт базы ЧС (TXT)</b>\n\n"
-            f"📊 Записей: <b>{len(lines):,}</b>\n"
-            "Формат: один ID или @username на строку — готово для импорта в другой бот"
-        ),
-        parse_mode="HTML",
+    filename = f"blacklist_ids_{date_str}.txt"
+    
+    caption = (
+        f"📋 <b>Экспорт базы ЧС (TXT)</b>\n\n"
+        f"📊 Записей: <b>{len(lines):,}</b>\n"
+        "Формат: один ID или @username на строку — готово для импорта в другой бот"
     )
+
+    try:
+        await bot.send_document(
+            chat_id=owner_id,
+            document=BufferedInputFile(data, filename=filename),
+            caption=caption,
+            parse_mode="HTML",
+        )
+        await callback.message.edit_text(
+            "🛡 <b>Экспорт базы ЧС</b>\n\n"
+            f"✅ Файл <code>{filename}</code> отправлен.\n"
+            f"Записей: <b>{len(lines):,}</b>",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="◀️ Назад", callback_data=f"bs_blacklist:{child_bot_id}")],
+            ]),
+        )
+    except Exception as e:
+        logger.error(f"Blacklist TXT export error: {e}")
+        await callback.message.edit_text(
+            "❌ Ошибка при отправке файла. Попробуйте позже.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="◀️ Назад", callback_data=f"bs_blacklist:{child_bot_id}")],
+            ]),
+        )
 
 
 # ── Загрузить базу ЧС ─────────────────────────────────────────

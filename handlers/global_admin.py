@@ -67,7 +67,7 @@ async def _show_admin_panel(message_or_cb, role: str, owner_id: int):
         header = (
             "🌐 <b>BotCloud — Глобальная Панель</b> • 👑 Owner\n"
             "─────────────────────────────\n"
-            f"⚡️ Активных ботов: <b>{net_bots} из {total_bots}</b>\n"
+            f"🗄️ Активных ботов: <b>{net_bots} из {total_bots}</b>\n"
             f"👥 Аудитория (активных): <b>{total_users:,}</b>\n"
             f"🚫 Записей в ЧС: <b>{bl_count}</b>   │   👷 Сотрудников: <b>{admin_count}</b>"
         )
@@ -85,7 +85,7 @@ async def _show_admin_panel(message_or_cb, role: str, owner_id: int):
             InlineKeyboardButton(text="⚙️ Сотрудники", callback_data=f"ga_team:{owner_id}"),
             InlineKeyboardButton(text="📊 Аналитика", callback_data=f"ga_stats:{owner_id}")
         ])
-    kb.append([InlineKeyboardButton(text="⚡️ Активация ботов сети", callback_data=f"ga_bots:{owner_id}:0")])
+    kb.append([InlineKeyboardButton(text="🗄️ Управление общей базой", callback_data=f"ga_bots:{owner_id}:0")])
     kb.append([InlineKeyboardButton(text="🚫 Глобальный ЧС — 🛡️ Защита сети", callback_data=f"ga_bl:{owner_id}")])
     kb.append([InlineKeyboardButton(text="👥 База аудитории — Выгрузка CSV", callback_data=f"ga_users:{owner_id}")])
     kb.append([InlineKeyboardButton(text="📢 Рассылки и Личные сообщения", callback_data=f"ga_broadcast:{owner_id}")])
@@ -469,7 +469,7 @@ async def on_ga_bl(callback: CallbackQuery):
     if active_bots:
         bots_list = "\n".join(f"• @{r['bot_username']}" for r in active_bots)
     else:
-        bots_list = "❎ Нет активированных ботов. Идите в ‘⚡️ Активация ботов сети’"
+        bots_list = "❎ Нет активированных ботов. Идите в ‘🗂️ Управление общей базой’"
 
     text = (
         "🚫 <b>Глобальный Чёрный Список</b> — 🛡️ Защита сети\n"
@@ -477,7 +477,7 @@ async def on_ga_bl(callback: CallbackQuery):
         "Люди из этого списка автоматически блокируются во всех активированных ботах сети.\n\n"
         f"📂 Записей в базе: <b>{bl_count}</b>\n\n"
         f"🤖 <b>Распространяется на ботов:</b>\n{bots_list}\n\n"
-        "<i>Управлять списком ботов — ‘⚡️ Активация ботов сети’</i>"
+        "<i>Управлять списком ботов — ‘🗂️ Управление общей базой’</i>"
     )
 
     kb = [
@@ -619,7 +619,7 @@ async def _show_ga_users(message_or_cb, owner_id: int):
     text = (
         "👥 <b>Сводная База Аудитории</b>\n"
         "─────────────────────────────\n"
-        f"⚡️ Активных ботов в сети: <b>{net_bots}</b>\n"
+        f"🗂️ Активных ботов в сети: <b>{net_bots}</b>\n"
         "Показываются только пользователи активированных ботов сети.\n\n"
         f"👥 Уникальных пользователей: <b>{total_users:,}</b>\n"
         f" ├ 🟢 Живые: {alive_users:,}\n"
@@ -880,7 +880,7 @@ async def cmd_broadcast(message: Message):
 
 
 # ══════════════════════════════════════════════════════════════
-# ⚡️ АКТИВАЦИЯ БОТОВ СЕТИ
+# 🗂️ Управление общей базой
 # ══════════════════════════════════════════════════════════════
 
 async def _show_bots_network_page(callback: CallbackQuery, owner_id: int, page: int):
@@ -900,7 +900,7 @@ async def _show_bots_network_page(callback: CallbackQuery, owner_id: int, page: 
     page_bots = all_bots[page * BOTS_PER_PAGE : (page + 1) * BOTS_PER_PAGE]
 
     text = (
-        "⚡️ <b>Активация ботов сети</b>\n"
+        "🗄️ <b>Управление общей базой</b>\n"
         "─────────────────────────────\n"
         f"🤖 Всего ботов: <b>{total}</b>   │   ✅ Активных: <b>{active_count}</b>\n\n"
         "Включённые боты участвуют в общей аудитории, рассылках и Глобальном ЧС.\n"

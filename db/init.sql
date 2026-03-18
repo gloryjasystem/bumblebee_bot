@@ -400,3 +400,6 @@ ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS entity_type VARCHAR(32);
 ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS entity_id   BIGINT;
 ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS details     TEXT;
 ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS created_at  TIMESTAMPTZ DEFAULT now();
+
+-- Мастер-тумблер глобального ЧС (включить/выключить блокировку для всей сети)
+ALTER TABLE platform_users ADD COLUMN IF NOT EXISTS blacklist_active BOOLEAN DEFAULT true;

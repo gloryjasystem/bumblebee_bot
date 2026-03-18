@@ -475,6 +475,7 @@ async def _kick_from_all_chats(owner_id: int, target_user_id: int):
             await temp_bot.session.close()
 
 
+
 @router.callback_query(F.data.startswith("ga_bl:"))
 async def on_ga_bl(callback: CallbackQuery):
     role, owner_id = await get_admin_context(callback.from_user.id, callback.from_user.username)
@@ -483,29 +484,39 @@ async def on_ga_bl(callback: CallbackQuery):
 
     async with get_pool().acquire() as conn:
         bl_count = await conn.fetchval("SELECT COUNT(*) FROM blacklist WHERE owner_id=$1", owner_id) or 0
-        # Только активированные боты из сети
+        bl_active = await conn.fetchval(
+            "SELECT blacklist_active FROM platform_users WHERE user_id=$1", owner_id
+        )
+        if bl_active is None:
+            bl_active = True
         active_bots = await conn.fetch("""
             SELECT bot_username FROM child_bots
             WHERE owner_id=$1 AND in_global_network=true
             ORDER BY created_at ASC
         """, owner_id)
 
-    # Формируем список активных ботов (ред-онль, без тумблеров)
-    if active_bots:
-        bots_list = "\n".join(f"• @{r['bot_username']}" for r in active_bots)
+    bots_list = ("\n".join(f"• @{r['bot_username']}" for r in active_bots)
+                 if active_bots else
+                 "❎ Нет активных ботов. Перейдите в '🗄️ Управление общей базой'")
+
+    if bl_active:
+        shield = "🛡️ <b>Защита АКТИВНА</b> — записи ЧС блокируют вход"
+        toggle_text = "✅ ЧС: Включён 🟢  —  нажать чтобы выключить"
     else:
-        bots_list = "❎ Нет активированных ботов. Идите в ‘🗂️ Управление общей базой’"
+        shield = "⚠️ <b>Защита ВЫКЛЮЧЕНА</b> — пользователи из ЧС могут входить"
+        toggle_text = "⛔ ЧС: Выключен 🔴  —  нажать чтобы включить"
 
     text = (
-        "🚫 <b>Глобальный Чёрный Список</b> — 🛡️ Защита сети\n"
+        "🚫 <b>Глобальный Чёрный Список</b>\n"
         "─────────────────────────────\n"
-        "Люди из этого списка автоматически блокируются во всех активированных ботах сети.\n\n"
+        f"{shield}\n\n"
         f"📂 Записей в базе: <b>{bl_count}</b>\n\n"
         f"🤖 <b>Распространяется на ботов:</b>\n{bots_list}\n\n"
-        "<i>Управлять списком ботов — ‘🗂️ Управление общей базой’</i>"
+        "<i>Управлять ботами — '🗄️ Управление общей базой'</i>"
     )
 
     kb = [
+        [InlineKeyboardButton(text=toggle_text, callback_data=f"ga_bl_master:{owner_id}")],
         [
             InlineKeyboardButton(text="➕ Добавить в ЧС", callback_data=f"ga_bl_add:{owner_id}"),
             InlineKeyboardButton(text="➖ Удалить из ЧС", callback_data=f"ga_bl_del:{owner_id}")
@@ -516,6 +527,36 @@ async def on_ga_bl(callback: CallbackQuery):
 
     await callback.message.edit_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
     await callback.answer()
+
+
+@router.callback_query(F.data.startswith("ga_bl_master:"))
+async def on_ga_bl_master_toggle(callback: CallbackQuery):
+    """Master toggle: enable/disable global blacklist enforcement."""
+    owner_id = int(callback.data.split(":")[1])
+    role, _ = await get_admin_context(callback.from_user.id, callback.from_user.username)
+    if not role:
+        return await callback.answer("❌ Нет прав", show_alert=True)
+
+    async with get_pool().acquire() as conn:
+        current = await conn.fetchval(
+            "SELECT blacklist_active FROM platform_users WHERE user_id=$1", owner_id
+        )
+        new_val = not (current if current is not None else True)
+        await conn.execute(
+            "UPDATE platform_users SET blacklist_active=$1 WHERE user_id=$2",
+            new_val, owner_id
+        )
+        await conn.execute("""
+            INSERT INTO audit_log (owner_id, user_id, action, details)
+            VALUES ($1, $2, 'bl_toggle', $3)
+        """, owner_id, callback.from_user.id,
+            "Blacklist ENABLED" if new_val else "Blacklist DISABLED")
+
+    alert = ("✅ ЧС включён — защита активна, записи блокируют вход" if new_val
+            else "⛔ ЧС выключен — пользователи из ЧС могут войти")
+    await callback.answer(alert, show_alert=True)
+    callback.data = f"ga_bl:{owner_id}"
+    await on_ga_bl(callback)
 
 
 @router.callback_query(F.data.startswith("ga_bl_export_csv:"))

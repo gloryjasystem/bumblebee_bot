@@ -16,12 +16,14 @@ router = Router()
 
 
 async def _get_owner(chat_id: int) -> dict | None:
-    """Возвращает настройки площадки, owner_id и состояние blacklist_enabled по chat_id."""
+    """Возвращает настройки площадки, owner_id, blacklist_enabled и blacklist_active по chat_id."""
     return await db.fetchrow(
         """
-        SELECT bc.*, cb.blacklist_enabled
+        SELECT bc.*, cb.blacklist_enabled,
+               COALESCE(pu.blacklist_active, true) AS blacklist_active
         FROM bot_chats bc
         JOIN child_bots cb ON bc.child_bot_id = cb.id
+        LEFT JOIN platform_users pu ON pu.user_id = bc.owner_id
         WHERE bc.chat_id=$1 AND bc.is_active=true
         """,
         chat_id,
@@ -53,8 +55,8 @@ async def on_join_request(event: ChatJoinRequest, bot: Bot):
     owner_id = settings_row["owner_id"]
     user = event.from_user
 
-    # 1. Проверка ЧС
-    if settings_row.get("blacklist_enabled", True):
+    # 1. Проверка ЧС (только если глобальный тумблер включён)
+    if settings_row.get("blacklist_active", True) and settings_row.get("blacklist_enabled", True):
         in_bl = await check_blacklist(owner_id, user.id, user.username)
         if in_bl:
             await event.decline()
@@ -190,7 +192,7 @@ async def on_member_update(event: ChatMemberUpdated, bot: Bot):
             owner_id, event.chat.id, user.id,
         )
 
-        if settings_row.get("blacklist_enabled", True):
+        if settings_row.get("blacklist_active", True) and settings_row.get("blacklist_enabled", True):
             in_bl = await check_blacklist(owner_id, user.id, user.username)
             if in_bl:
                 try:

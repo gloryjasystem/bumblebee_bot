@@ -41,29 +41,50 @@ async def cmd_admin(message: Message, state: FSMContext):
     await _show_admin_panel(message, role, owner_id)
 
 async def _show_admin_panel(message_or_cb, role: str, owner_id: int):
-    text = "🌐 <b>Глобальная Панель Управления Экосистемой</b>\n\n"
+    # Загружаем живую статистику для заголовка
+    async with get_pool().acquire() as conn:
+        total_bots = await conn.fetchval("SELECT COUNT(*) FROM child_bots WHERE owner_id=$1", owner_id) or 0
+        total_users = await conn.fetchval("""
+            SELECT COUNT(DISTINCT bu.user_id) FROM bot_users bu
+            JOIN bot_chats bc ON bu.chat_id = bc.chat_id
+            WHERE bc.owner_id=$1 AND bc.is_active=true AND bu.user_id IS NOT NULL
+        """, owner_id) or 0
+        bl_count = await conn.fetchval("SELECT COUNT(*) FROM blacklist WHERE owner_id=$1", owner_id) or 0
+        admin_count = await conn.fetchval("SELECT COUNT(*) FROM global_admins WHERE owner_id=$1", owner_id) or 0
+
     if role == 'owner':
-        text += "Добро пожаловать, Владелец! Управляйте всей сетью ваших ботов отсюда.\n"
+        header = (
+            "🌐 <b>BotCloud — Глобальная Панель</b> • 👑 Owner\n"
+            f"─────────────────────────────\n"
+            f"🤖 Ботов в сети: <b>{total_bots}</b>   │   "
+            f"👥 Аудитория: <b>{total_users:,}</b>\n"
+            f"🚫 ЧС записей: <b>{bl_count}</b>   │   "
+            f"👷 Сотрудников: <b>{admin_count}</b>"
+        )
     else:
-        text += "Добро пожаловать! Вы вошли с правами в качестве Администратора.\n"
-        
+        header = (
+            "🌐 <b>BotCloud — Глобальная Панель</b> • 👷 Admin\n"
+            f"─────────────────────────────\n"
+            f"👥 Юзеров в сети: <b>{total_users:,}</b>   │   "
+            f"🚫 ЧС: <b>{bl_count}</b>"
+        )
+
     kb = []
-    
     if role == 'owner':
-        kb.append([InlineKeyboardButton(text="⚙️ Управление Администраторами", callback_data=f"ga_team:{owner_id}")])
-        kb.append([InlineKeyboardButton(text="📊 Аналитика и Топ Ботов", callback_data=f"ga_stats:{owner_id}")])
-        
-    kb.append([InlineKeyboardButton(text="🚫 Глобальный Черный Список", callback_data=f"ga_bl:{owner_id}")])
-    kb.append([InlineKeyboardButton(text="👥 Сводная База Аудитории", callback_data=f"ga_users:{owner_id}")])
-    kb.append([InlineKeyboardButton(text="📢 Глобальные Рассылки", callback_data=f"ga_broadcast:{owner_id}")])
-    kb.append([InlineKeyboardButton(text="📜 Журнал Модерации (Logs)", callback_data=f"ga_audit:{owner_id}")])
-    
+        kb.append([
+            InlineKeyboardButton(text="⚙️ Сотрудники", callback_data=f"ga_team:{owner_id}"),
+            InlineKeyboardButton(text="📊 Аналитика", callback_data=f"ga_stats:{owner_id}")
+        ])
+    kb.append([InlineKeyboardButton(text="🚫 Глобальный ЧС — 🛡️ Защита сети", callback_data=f"ga_bl:{owner_id}")])
+    kb.append([InlineKeyboardButton(text="👥 База аудитории — Выгрузка CSV", callback_data=f"ga_users:{owner_id}")])
+    kb.append([InlineKeyboardButton(text="📢 Рассылки и Личные сообщения", callback_data=f"ga_broadcast:{owner_id}")])
+    kb.append([InlineKeyboardButton(text="📜 Журнал действий (Audit Log)", callback_data=f"ga_audit:{owner_id}")])
+
     markup = InlineKeyboardMarkup(inline_keyboard=kb)
-    
     if isinstance(message_or_cb, Message):
-        await message_or_cb.answer(text, reply_markup=markup, parse_mode="HTML")
+        await message_or_cb.answer(header, reply_markup=markup, parse_mode="HTML")
     else:
-        await message_or_cb.message.edit_text(text, reply_markup=markup, parse_mode="HTML")
+        await message_or_cb.message.edit_text(header, reply_markup=markup, parse_mode="HTML")
 
 @router.callback_query(F.data.startswith("ga_main:"))
 async def on_ga_main(callback: CallbackQuery):
@@ -88,22 +109,23 @@ async def on_ga_team(callback: CallbackQuery):
             owner_id
         )
 
-    if rows:
-        lines = ["Сотрудники (<b>{}</b>):".format(len(rows))]
-        for idx, r in enumerate(rows, 1):
-            name = f"@{r['admin_username']}" if r['admin_username'] else f"ID {r['admin_id']}"
-            lines.append(f"{idx}. {name} — добавлен {r['added_at'].strftime('%d.%m.%Y')}")
-        admins_text = "\n".join(lines)
-    else:
-        admins_text = "Список администраторов пуст."
+    lines = []
+    for idx, r in enumerate(rows, 1):
+        name = f"@{r['admin_username']}" if r['admin_username'] else f"<code>{r['admin_id']}</code>"
+        dt = r['added_at'].strftime('%d.%m.%Y')
+        lines.append(f"{idx}. {name}  —  ️ {dt}")
+
+    staff_block = "\n".join(lines) if lines else "❎ Список пуст. Добавьте первого сотрудника."
 
     text = (
-        "⚙️ <b>Управление Администраторами</b>\n\n"
-        "Здесь вы можете делегировать доступ к управлению сетью ботов.\n\n"
-        + admins_text
+        "⚙️ <b>Управление Сотрудниками</b>\n"
+        "─────────────────────────────\n"
+        f"👷 Всего сотрудников: <b>{len(rows)}</b>\n\n"
+        f"{staff_block}\n\n"
+        "ℹ️ Сотрудник видит ЧС, базу аудитории и запускает рассылки, но не имеет доступа к финансам."
     )
     kb = [
-        [InlineKeyboardButton(text="➕ Добавить (команда)", callback_data=f"ga_team_howto:{owner_id}")],
+        [InlineKeyboardButton(text="➕ Добавить админа", callback_data=f"ga_team_howto:{owner_id}")],
         [InlineKeyboardButton(text="◀️ Назад", callback_data=f"ga_main:{owner_id}")]
     ]
     await callback.message.edit_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
@@ -324,8 +346,10 @@ async def on_ga_stats(callback: CallbackQuery):
         text = await _build_global_stats(owner_id, conn)
         
     kb = [
-        [InlineKeyboardButton(text="💸 История платежей за бота", callback_data=f"ga_rev:{owner_id}:all")],
-        [InlineKeyboardButton(text="🏆 Топ площадок", callback_data=f"ga_top_bots:{owner_id}")],
+        [
+            InlineKeyboardButton(text="💸 Платежи", callback_data=f"ga_rev:{owner_id}:all"),
+            InlineKeyboardButton(text="🏆 Топ ботов", callback_data=f"ga_top_bots:{owner_id}")
+        ],
         [InlineKeyboardButton(text="◀️ Назад", callback_data=f"ga_main:{owner_id}")],
     ]
     
@@ -420,23 +444,116 @@ async def on_ga_bl(callback: CallbackQuery):
     role, owner_id = await get_admin_context(callback.from_user.id, callback.from_user.username)
     if not role:
         return await callback.answer("❌ Нет прав", show_alert=True)
-        
+
     async with get_pool().acquire() as conn:
-        blacklist_count = await conn.fetchval("SELECT COUNT(*) FROM blacklist WHERE owner_id=$1", owner_id) or 0
-        
+        bl_count = await conn.fetchval("SELECT COUNT(*) FROM blacklist WHERE owner_id=$1", owner_id) or 0
+        bots = await conn.fetch("""
+            SELECT id, bot_username, bot_name, use_global_blacklist
+            FROM child_bots WHERE owner_id=$1 ORDER BY created_at ASC
+        """, owner_id)
+
+    # Строим текст
     text = (
-        "🚫 <b>Глобальный Черный Список</b>\n\n"
-        "Лица из этого списка мгновенно блокируются <b>ВО ВСЕХ</b> ваших активных площадках (где включен этот тумблер).\n\n"
-        f"Всего нарушителей в базе: <b>{blacklist_count}</b>"
+        "🚫 <b>Глобальный Чёрный Список</b> — 🛡️ Защита сети\n"
+        "─────────────────────────────\n"
+        "Люди из этого списка автоматически блокируются во всех ботах, где включён этот режим.\n\n"
+        f"📂 Записей в базе: <b>{bl_count}</b>\n\n"
+        "🤖 <b>Подключенные боты:</b> (нажмите на бота — переключить)"
     )
-    
+
     kb = [
-        [InlineKeyboardButton(text="➕ Занести в список", callback_data=f"ga_bl_add:{owner_id}")],
-        [InlineKeyboardButton(text="➖ Удалить из списка", callback_data=f"ga_bl_del:{owner_id}")],
-        [InlineKeyboardButton(text="🔍 Поиск по списку (Скоро)", callback_data=f"ga_bl_search:{owner_id}")],
-        [InlineKeyboardButton(text="📥 Скачать базу глобального ЧС (Скоро)", callback_data=f"ga_bl_export:{owner_id}")],
-        [InlineKeyboardButton(text="◀️ Назад", callback_data=f"ga_main:{owner_id}")]
+        [
+            InlineKeyboardButton(text="➕ Добавить в ЧС", callback_data=f"ga_bl_add:{owner_id}"),
+            InlineKeyboardButton(text="➖ Удалить из ЧС", callback_data=f"ga_bl_del:{owner_id}")
+        ]
     ]
+
+    # Тумблеры для каждого бота
+    for bot_row in bots:
+        status = "✅ ВКЛ" if bot_row['use_global_blacklist'] else "⛔ ВЫКЛ"
+        btn_text = f"{status} @{bot_row['bot_username']}"
+        kb.append([InlineKeyboardButton(
+            text=btn_text,
+            callback_data=f"ga_bl_bot:{owner_id}:{bot_row['id']}"
+        )])
+
+    kb.append([InlineKeyboardButton(text="📥 Скачать ЧС (CSV)", callback_data=f"ga_bl_export_csv:{owner_id}")])
+    kb.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"ga_main:{owner_id}")])
+
+    await callback.message.edit_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("ga_bl_bot:"))
+async def on_ga_bl_bot_toggle(callback: CallbackQuery):
+    """Toggle use_global_blacklist for a specific bot."""
+    parts = callback.data.split(":")
+    owner_id = int(parts[1])
+    bot_id = int(parts[2])
+
+    role, _ = await get_admin_context(callback.from_user.id, callback.from_user.username)
+    if role not in ('owner', 'admin'):
+        return await callback.answer("❌ Нет прав", show_alert=True)
+
+    async with get_pool().acquire() as conn:
+        current = await conn.fetchval(
+            "SELECT use_global_blacklist FROM child_bots WHERE id=$1 AND owner_id=$2",
+            bot_id, owner_id
+        )
+        if current is None:
+            return await callback.answer("⚠️ Бот не найден", show_alert=True)
+
+        new_val = not current
+        await conn.execute(
+            "UPDATE child_bots SET use_global_blacklist=$1 WHERE id=$2",
+            new_val, bot_id
+        )
+
+    status_txt = "✅ включён" if new_val else "⛔ выключен"
+    await callback.answer(f"Глобальный ЧС {status_txt} для этого бота", show_alert=False)
+
+    # Обновляем экран
+    fake_cb = callback
+    fake_cb.data = f"ga_bl:{owner_id}"
+    await on_ga_bl(fake_cb)
+
+
+@router.callback_query(F.data.startswith("ga_bl_export_csv:"))
+async def on_ga_bl_export_csv(callback: CallbackQuery):
+    owner_id = int(callback.data.split(":")[1])
+    role, _ = await get_admin_context(callback.from_user.id, callback.from_user.username)
+    if not role:
+        return await callback.answer("❌ Нет прав", show_alert=True)
+
+    msg = await callback.message.edit_text("⏳ Генерирую CSV черного списка...")
+    import asyncio
+    asyncio.create_task(_export_users_csv(callback.bot, callback.message.chat.id, owner_id, "blocked", msg))
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("ga_bl_add:"))
+async def on_ga_bl_add(callback: CallbackQuery):
+    owner_id = int(callback.data.split(":")[1])
+    text = (
+        "➕ <b>Добавить в ЧС</b>\n\n"
+        "Для блокировки пользователя используйте команду:\n"
+        "<code>/block 123456789</code>\n\n"
+        "При блокировке пользователь будет автоматически кикнут изо всех ботов, где включён режим ЧС."
+    )
+    kb = [[InlineKeyboardButton(text="◀️ Назад", callback_data=f"ga_bl:{owner_id}")]]
+    await callback.message.edit_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("ga_bl_del:"))
+async def on_ga_bl_del(callback: CallbackQuery):
+    owner_id = int(callback.data.split(":")[1])
+    text = (
+        "➖ <b>Удалить из ЧС</b>\n\n"
+        "Для разблокировки пользователя используйте команду:\n"
+        "<code>/unblock 123456789</code>"
+    )
+    kb = [[InlineKeyboardButton(text="◀️ Назад", callback_data=f"ga_bl:{owner_id}")]]
     await callback.message.edit_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
     await callback.answer()
 
@@ -652,14 +769,24 @@ async def on_ga_broadcast(callback: CallbackQuery):
     role, owner_id = await get_admin_context(callback.from_user.id, callback.from_user.username)
     if not role:
         return await callback.answer("❌ Нет прав", show_alert=True)
-        
+
+    async with get_pool().acquire() as conn:
+        active_users = await conn.fetchval("""
+            SELECT COUNT(DISTINCT bu.user_id) FROM bot_users bu
+            JOIN bot_chats bc ON bu.chat_id = bc.chat_id
+            WHERE bc.owner_id=$1 AND bc.is_active=true AND bu.user_id IS NOT NULL AND bu.is_active=true
+        """, owner_id) or 0
+
     text = (
-        "📢 <b>Глобальные Рассылки</b>\n\n"
-        "Отсюда вы можете разослать текстовое сообщение по абсолютно всей вашей аудитории либо написать лично конкретному пользователю.\n\n"
-        "<i>Инструкция (Команды):</i>\n"
-        "<code>/broadcast Ваш текст</code> — Мгновенная массовая рассылка по всей активной базе.\n"
-        "<code>/notify 123456 Ваш текст</code> — Отправить сообщение юзеру с ID 123456.\n\n"
-        "<i>Сложные рассылки с кнопками и картинками пока настраиваются через меню самих ботов.</i>"
+        "📢 <b>Глобальные Рассылки</b>\n"
+        "─────────────────────────────\n"
+        f"🟢 Активных получателей: <b>{active_users:,}</b>\n\n"
+        "<b>📨 Массовая рассылка:</b>\n"
+        "<code>/broadcast Текст сообщения</code>\n"
+        "Разошлет <b>всем</b> активным юзерам сети. Сообщение отправляется от имени нужного бота.\n\n"
+        "<b>✉️ Личное сообщение:</b>\n"
+        "<code>/notify 123456789 Текст</code>\n"
+        "Отправить лично конкретному юзеру сети."
     )
     kb = [[InlineKeyboardButton(text="◀️ Назад", callback_data=f"ga_main:{owner_id}")]]
     await callback.message.edit_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))

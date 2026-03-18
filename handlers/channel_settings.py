@@ -3718,18 +3718,19 @@ async def on_bs_bl_export_csv(callback: CallbackQuery, bot: Bot, platform_user: 
     )
 
     try:
+        await callback.message.edit_text(
+            "🛡 <b>Экспорт базы ЧС</b>\n\n"
+            f"✅ Файл <code>{filename}</code> отправлен.\n"
+            f"Записей: <b>{len(rows):,}</b>",
+            reply_markup=None,
+        )
         await bot.send_document(
             chat_id=owner_id,
             document=BufferedInputFile(data, filename=filename),
             caption=caption,
             parse_mode="HTML",
-        )
-        await callback.message.edit_text(
-            "🛡 <b>Экспорт базы ЧС</b>\n\n"
-            f"✅ Файл <code>{filename}</code> отправлен.\n"
-            f"Записей: <b>{len(rows):,}</b>",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="◀️ Назад", callback_data=f"bs_blacklist:{child_bot_id}")],
+                [InlineKeyboardButton(text="◀️ Назад", callback_data=f"bs_bl_dl_bck:{child_bot_id}:{callback.message.message_id}")],
             ]),
         )
     except Exception as e:
@@ -3779,18 +3780,19 @@ async def on_bs_bl_export_txt(callback: CallbackQuery, bot: Bot, platform_user: 
     )
 
     try:
+        await callback.message.edit_text(
+            "🛡 <b>Экспорт базы ЧС</b>\n\n"
+            f"✅ Файл <code>{filename}</code> отправлен.\n"
+            f"Записей: <b>{len(lines):,}</b>",
+            reply_markup=None,
+        )
         await bot.send_document(
             chat_id=owner_id,
             document=BufferedInputFile(data, filename=filename),
             caption=caption,
             parse_mode="HTML",
-        )
-        await callback.message.edit_text(
-            "🛡 <b>Экспорт базы ЧС</b>\n\n"
-            f"✅ Файл <code>{filename}</code> отправлен.\n"
-            f"Записей: <b>{len(lines):,}</b>",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="◀️ Назад", callback_data=f"bs_blacklist:{child_bot_id}")],
+                [InlineKeyboardButton(text="◀️ Назад", callback_data=f"bs_bl_dl_bck:{child_bot_id}:{callback.message.message_id}")],
             ]),
         )
     except Exception as e:
@@ -3801,6 +3803,25 @@ async def on_bs_bl_export_txt(callback: CallbackQuery, bot: Bot, platform_user: 
                 [InlineKeyboardButton(text="◀️ Назад", callback_data=f"bs_blacklist:{child_bot_id}")],
             ]),
         )
+
+
+@router.callback_query(F.data.startswith("bs_bl_dl_bck:"))
+async def on_bs_bl_dl_bck(callback: CallbackQuery, bot: Bot, platform_user: dict | None):
+    if not platform_user:
+        return
+    parts = callback.data.split(":")
+    child_bot_id = int(parts[1])
+    top_msg_id = int(parts[2])
+
+    # Удаляем верхнее сообщение со статусом генерации файла
+    try:
+        await bot.delete_message(chat_id=callback.message.chat.id, message_id=top_msg_id)
+    except Exception:
+        pass
+
+    # Перенаправляем на главное меню (внутри navigate удалит и текущее сообщение с файлом)
+    fake_cb = callback.model_copy(update={"data": f"bs_blacklist:{child_bot_id}"})
+    await on_bs_blacklist(fake_cb, platform_user)
 
 
 # ── Загрузить базу ЧС ─────────────────────────────────────────

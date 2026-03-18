@@ -68,10 +68,94 @@ async def _show_admin_panel(message_or_cb, role: str, owner_id: int):
 @router.callback_query(F.data.startswith("ga_main:"))
 async def on_ga_main(callback: CallbackQuery):
     owner_id = int(callback.data.split(":")[1])
-    role, _ = await get_admin_context(callback.from_user.id)
+    role, _ = await get_admin_context(callback.from_user.id, callback.from_user.username)
     if not role:
         return await callback.answer("❌ Нет прав", show_alert=True)
     await _show_admin_panel(callback, role, owner_id)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("ga_team:"))
+async def on_ga_team(callback: CallbackQuery):
+    owner_id = int(callback.data.split(":")[1])
+    role, _ = await get_admin_context(callback.from_user.id, callback.from_user.username)
+    if role != 'owner':
+        return await callback.answer("❌ Только для Владельца", show_alert=True)
+
+    async with get_pool().acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT admin_id, admin_username, added_at FROM global_admins WHERE owner_id=$1 ORDER BY added_at DESC",
+            owner_id
+        )
+
+    if rows:
+        lines = ["Сотрудники (<b>{}</b>):".format(len(rows))]
+        for idx, r in enumerate(rows, 1):
+            name = f"@{r['admin_username']}" if r['admin_username'] else f"ID {r['admin_id']}"
+            lines.append(f"{idx}. {name} — добавлен {r['added_at'].strftime('%d.%m.%Y')}")
+        admins_text = "\n".join(lines)
+    else:
+        admins_text = "Список администраторов пуст."
+
+    text = (
+        "⚙️ <b>Управление Администраторами</b>\n\n"
+        "Здесь вы можете делегировать доступ к управлению сетью ботов.\n\n"
+        + admins_text
+    )
+    kb = [
+        [InlineKeyboardButton(text="➕ Добавить (команда)", callback_data=f"ga_team_howto:{owner_id}")],
+        [InlineKeyboardButton(text="◀️ Назад", callback_data=f"ga_main:{owner_id}")]
+    ]
+    await callback.message.edit_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("ga_team_howto:"))
+async def on_ga_team_howto(callback: CallbackQuery):
+    owner_id = int(callback.data.split(":")[1])
+    text = (
+        "ℹ️ <b>Как добавить администратора:</b>\n\n"
+        "Отправьте команду: <code>/addadmin 123456789</code>\n"
+        "где <code>123456789</code> — Telegram ID страницы / сотрудника.\n\n"
+        "Узнать свой ID можно через <a href='https://t.me/userinfobot'>@userinfobot</a>\n\n"
+        "Удалить админа: <code>/removeadmin 123456789</code>"
+    )
+    kb = [[InlineKeyboardButton(text="◀️ Назад", callback_data=f"ga_team:{owner_id}")]]
+    await callback.message.edit_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb),
+                                     disable_web_page_preview=True)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("ga_audit:"))
+async def on_ga_audit(callback: CallbackQuery):
+    owner_id = int(callback.data.split(":")[1])
+    role, _ = await get_admin_context(callback.from_user.id, callback.from_user.username)
+    if not role:
+        return await callback.answer("❌ Нет прав", show_alert=True)
+
+    async with get_pool().acquire() as conn:
+        rows = await conn.fetch("""
+            SELECT action, entity_type, entity_id, details, created_at, user_id
+            FROM audit_log
+            WHERE owner_id = $1
+            ORDER BY created_at DESC
+            LIMIT 20
+        """, owner_id)
+
+    if not rows:
+        text = "📜 <b>Журнал Модерации</b>\n\nДействий пока не зафиксировано."
+    else:
+        lines = ["📜 <b>Журнал Модерации</b> (последние 20):\n"]
+        for r in rows:
+            dt = r['created_at'].strftime("%d.%m %H:%M")
+            uid = r.get('user_id', '?')
+            action = r.get('action', '')
+            details = r.get('details', '') or ''
+            lines.append(f"• [{dt}] <code>{uid}</code> → {action} {details[:40]}")
+        text = "\n".join(lines)
+
+    kb = [[InlineKeyboardButton(text="◀️ Назад", callback_data=f"ga_main:{owner_id}")]]
+    await callback.message.edit_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
     await callback.answer()
 
 
@@ -232,7 +316,7 @@ async def cmd_stats(message: Message):
 
 @router.callback_query(F.data.startswith("ga_stats:"))
 async def on_ga_stats(callback: CallbackQuery):
-    role, owner_id = await get_admin_context(callback.from_user.id)
+    role, owner_id = await get_admin_context(callback.from_user.id, callback.from_user.username)
     if role != 'owner':
         return await callback.answer("❌ Нет прав", show_alert=True)
         
@@ -283,7 +367,7 @@ async def on_ga_revenue(event: Message | CallbackQuery):
 
 @router.callback_query(F.data.startswith("ga_top_bots:"))
 async def on_ga_top_bots(callback: CallbackQuery):
-    role, owner_id = await get_admin_context(callback.from_user.id)
+    role, owner_id = await get_admin_context(callback.from_user.id, callback.from_user.username)
     if role != 'owner':
         return await callback.answer("❌ Нет прав", show_alert=True)
         
@@ -333,7 +417,7 @@ async def _kick_from_all_chats(owner_id: int, target_user_id: int):
 
 @router.callback_query(F.data.startswith("ga_bl:"))
 async def on_ga_bl(callback: CallbackQuery):
-    role, owner_id = await get_admin_context(callback.from_user.id)
+    role, owner_id = await get_admin_context(callback.from_user.id, callback.from_user.username)
     if not role:
         return await callback.answer("❌ Нет прав", show_alert=True)
         
@@ -455,7 +539,7 @@ async def _show_ga_users(message_or_cb, owner_id: int):
 
 @router.callback_query(F.data.startswith("ga_users:"))
 async def on_ga_users(callback: CallbackQuery):
-    role, owner_id = await get_admin_context(callback.from_user.id)
+    role, owner_id = await get_admin_context(callback.from_user.id, callback.from_user.username)
     if not role:
         return await callback.answer("❌ Нет прав", show_alert=True)
     await _show_ga_users(callback, owner_id)
@@ -521,7 +605,7 @@ async def on_ga_export_users(callback: CallbackQuery):
     export_type = parts[1]
     owner_id = int(parts[2])
     
-    role, context_owner_id = await get_admin_context(callback.from_user.id)
+    role, context_owner_id = await get_admin_context(callback.from_user.id, callback.from_user.username)
     if not role or context_owner_id != owner_id:
         return await callback.answer("❌ Нет прав", show_alert=True)
         
@@ -539,7 +623,7 @@ async def on_ga_dl_bck(callback: CallbackQuery):
     except Exception:
         pass
         
-    role, _ = await get_admin_context(callback.from_user.id)
+    role, _ = await get_admin_context(callback.from_user.id, callback.from_user.username)
     if role:
         msg = await callback.message.answer("♻️ Открываю меню...")
         await _show_ga_users(msg, owner_id)
@@ -565,7 +649,7 @@ async def cmd_users(message: Message):
 
 @router.callback_query(F.data.startswith("ga_broadcast:"))
 async def on_ga_broadcast(callback: CallbackQuery):
-    role, owner_id = await get_admin_context(callback.from_user.id)
+    role, owner_id = await get_admin_context(callback.from_user.id, callback.from_user.username)
     if not role:
         return await callback.answer("❌ Нет прав", show_alert=True)
         

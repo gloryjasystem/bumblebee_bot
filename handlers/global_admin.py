@@ -80,16 +80,16 @@ async def _show_admin_panel(message_or_cb, role: str, owner_id: int):
         )
 
     kb = []
-    if role == 'owner':
-        kb.append([
-            InlineKeyboardButton(text="⚙️ Сотрудники", callback_data=f"ga_team:{owner_id}"),
-            InlineKeyboardButton(text="📊 Аналитика", callback_data=f"ga_stats:{owner_id}")
-        ])
     kb.append([InlineKeyboardButton(text="🗄️ Управление общей базой", callback_data=f"ga_bots:{owner_id}:0")])
     kb.append([InlineKeyboardButton(text="🚫 Глобальный ЧС — 🛡️ Защита сети", callback_data=f"ga_bl:{owner_id}")])
     kb.append([InlineKeyboardButton(text="👥 База аудитории — Выгрузка CSV", callback_data=f"ga_users:{owner_id}")])
     kb.append([InlineKeyboardButton(text="📢 Рассылки и Личные сообщения", callback_data=f"ga_broadcast:{owner_id}")])
     kb.append([InlineKeyboardButton(text="📜 Журнал действий (Audit Log)", callback_data=f"ga_audit:{owner_id}")])
+    if role == 'owner':
+        kb.append([
+            InlineKeyboardButton(text="🎖️ Команда", callback_data=f"ga_team:{owner_id}"),
+            InlineKeyboardButton(text="📊 Аналитика", callback_data=f"ga_stats:{owner_id}")
+        ])
 
     markup = InlineKeyboardMarkup(inline_keyboard=kb)
     if isinstance(message_or_cb, Message):
@@ -168,23 +168,39 @@ async def on_ga_audit(callback: CallbackQuery):
 
     async with get_pool().acquire() as conn:
         rows = await conn.fetch("""
-            SELECT action, entity_type, entity_id, details, created_at, user_id
+            SELECT action, details, created_at, user_id
             FROM audit_log
             WHERE owner_id = $1
             ORDER BY created_at DESC
-            LIMIT 20
+            LIMIT 25
         """, owner_id)
 
     if not rows:
-        text = "📜 <b>Журнал Модерации</b>\n\nДействий пока не зафиксировано."
+        text = (
+            "📜 <b>Журнал действий</b>\n"
+            "─────────────────────────────\n"
+            "❎ Действий пока не зафиксировано.\n"
+            "\n<i>Журнал заполняется при блокировках, добавлении админов и других действиях.</i>"
+        )
     else:
-        lines = ["📜 <b>Журнал Модерации</b> (последние 20):\n"]
+        ACTION_ICONS = {
+            "block": "🚫",
+            "unblock": "✅",
+            "add_admin": "👷⬆️",
+            "remove_admin": "👷⬇️",
+            "broadcast": "📢",
+            "bot_toggle": "⚡️",
+        }
+        lines = [
+            "📜 <b>Журнал действий</b> (25 последних)\n"
+            "─────────────────────────────"
+        ]
         for r in rows:
             dt = r['created_at'].strftime("%d.%m %H:%M")
-            uid = r.get('user_id', '?')
-            action = r.get('action', '')
-            details = r.get('details', '') or ''
-            lines.append(f"• [{dt}] <code>{uid}</code> → {action} {details[:40]}")
+            icon = ACTION_ICONS.get(r['action'], "🔵")
+            uid = f"<code>{r['user_id']}</code>" if r['user_id'] else "system"
+            detail = (r['details'] or "")[:60]
+            lines.append(f"{icon} [{dt}] {uid}\n    ↳ {detail}")
         text = "\n".join(lines)
 
     kb = [[InlineKeyboardButton(text="◀️ Назад", callback_data=f"ga_main:{owner_id}")]]
@@ -246,9 +262,13 @@ async def cmd_addadmin(message: Message):
                 "INSERT INTO global_admins (owner_id, admin_id) VALUES ($1, $2)",
                 owner_id, target_id
             )
-            await message.answer(f"✅ Пользователь <code>{target_id}</code> успешно назначен глобальным администратором.\nУправление: /admins")
+            await conn.execute("""
+                INSERT INTO audit_log (owner_id, user_id, action, details)
+                VALUES ($1, $2, 'add_admin', $3)
+            """, owner_id, message.from_user.id, f"Granted admin to {target_id}")
+            await message.answer(f"✅ Пользователь <code>{target_id}</code> назначен администратором.\nСписок: /admins", parse_mode="HTML")
         except asyncpg.UniqueViolationError:
-            await message.answer(f"⚠️ Этот пользователь уже является администратором.")
+            await message.answer("⚠️ Этот пользователь уже является администратором.")
 
 
 @router.message(Command("removeadmin"))
@@ -271,9 +291,14 @@ async def cmd_removeadmin(message: Message):
     async with get_pool().acquire() as conn:
         res = await conn.execute("DELETE FROM global_admins WHERE owner_id=$1 AND admin_id=$2", owner_id, target_id)
         if res == "DELETE 0":
-            await message.answer(f"⚠️ Пользователь <code>{target_id}</code> не был найден в списке глобальных администраторов.")
+            await message.answer(f"⚠️ Пользователь <code>{target_id}</code> не найден в списке администраторов.", parse_mode="HTML")
         else:
-            await message.answer(f"✅ Права пользователя <code>{target_id}</code> успешно отозваны.")
+            await conn.execute("""
+                INSERT INTO audit_log (owner_id, user_id, action, details)
+                VALUES ($1, $2, 'remove_admin', $3)
+            """, owner_id, message.from_user.id, f"Revoked admin from {target_id}")
+            await message.answer(f"✅ Права пользователя <code>{target_id}</code> успешно отозваны.", parse_mode="HTML")
+
 
 
 @router.message(Command("admins"))
@@ -552,15 +577,18 @@ async def cmd_block(message: Message):
     async with get_pool().acquire() as conn:
         try:
             await conn.execute("""
-                INSERT INTO blacklist (owner_id, user_id, added_by, reason) 
+                INSERT INTO blacklist (owner_id, user_id, added_by, reason)
                 VALUES ($1, $2, $3, 'Global Admin Block')
             """, owner_id, target_id, message.from_user.id)
-            await message.answer(f"✅ Пользователь <code>{target_id}</code> успешно занесен в Глобальный ЧС.\nНачинаю синхронную блокировку во всех ваших каналах...")
-            
-            # Кикаем отовсюду асинхронно
+            # Запись в журнал
+            await conn.execute("""
+                INSERT INTO audit_log (owner_id, user_id, action, details)
+                VALUES ($1, $2, 'block', $3)
+            """, owner_id, message.from_user.id,
+                f"Blocked user {target_id} via /block")
+            await message.answer(f"✅ Пользователь <code>{target_id}</code> занесён в Глобальный ЧС.\nНачинаю блокировку во всех активных ботах...")
             import asyncio
             asyncio.create_task(_kick_from_all_chats(owner_id, target_id))
-            
         except asyncpg.UniqueViolationError:
             await message.answer("⚠️ Пользователь уже находится в Глобальном ЧС.")
 
@@ -585,7 +613,12 @@ async def cmd_unblock(message: Message):
         if res == "DELETE 0":
             await message.answer(f"⚠️ Пользователя <code>{target_id}</code> нет в Глобальном ЧС.")
         else:
-            await message.answer(f"✅ Пользователь <code>{target_id}</code> удален из Глобального ЧС.")
+            await conn.execute("""
+                INSERT INTO audit_log (owner_id, user_id, action, details)
+                VALUES ($1, $2, 'unblock', $3)
+            """, owner_id, message.from_user.id, f"Unblocked user {target_id} via /unblock")
+            await message.answer(f"✅ Пользователь <code>{target_id}</code> удалён из Глобального ЧС.", parse_mode="HTML")
+
 
 import tempfile
 import csv

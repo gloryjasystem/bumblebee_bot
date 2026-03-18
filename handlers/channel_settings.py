@@ -4312,19 +4312,19 @@ async def on_bs_base_export(callback: CallbackQuery, bot: Bot, platform_user: di
     )
 
     try:
+        await callback.message.edit_text(
+            "🗄 <b>База пользователей</b>\n\n"
+            f"✅ Файл <code>{filename}</code> отправлен.\n"
+            f"Записей: <b>{len(rows):,}</b>",
+            reply_markup=None,
+        )
         await bot.send_document(
             chat_id=owner_id,
             document=file,
             caption=caption,
             parse_mode="HTML",
-        )
-        # Обновляем сообщение-меню
-        await callback.message.edit_text(
-            "🗄 <b>База пользователей</b>\n\n"
-            f"✅ Файл <code>{filename}</code> отправлен.\n"
-            f"Записей: <b>{len(rows):,}</b>",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="◀️ Назад", callback_data=f"bs_base:{child_bot_id}")],
+                [InlineKeyboardButton(text="◀️ Назад", callback_data=f"bs_base_dl_bck:{child_bot_id}:{callback.message.message_id}")],
             ]),
         )
     except Exception as e:
@@ -4335,6 +4335,74 @@ async def on_bs_base_export(callback: CallbackQuery, bot: Bot, platform_user: di
                 [InlineKeyboardButton(text="◀️ Назад", callback_data=f"bs_base:{child_bot_id}")],
             ]),
         )
+
+
+@router.callback_query(F.data.startswith("bs_base_dl_bck:"))
+async def on_bs_base_dl_bck(callback: CallbackQuery, bot: Bot, platform_user: dict | None):
+    if not platform_user:
+        return
+    parts = callback.data.split(":")
+    child_bot_id = int(parts[1])
+    top_msg_id = int(parts[2])
+    owner_id = platform_user["user_id"]
+
+    try:
+        await bot.delete_message(chat_id=callback.message.chat.id, message_id=top_msg_id)
+    except Exception:
+        pass
+
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
+
+    total = await db.fetchval(
+        """SELECT COUNT(DISTINCT bu.user_id) FROM bot_users bu
+           JOIN bot_chats bc ON bu.chat_id=bc.chat_id AND bu.owner_id=bc.owner_id
+           WHERE bc.child_bot_id=$1 AND bc.owner_id=$2
+             AND bu.user_id IS NOT NULL""",
+        child_bot_id, owner_id,
+    ) or 0
+    alive = await db.fetchval(
+        """SELECT COUNT(DISTINCT bu.user_id) FROM bot_users bu
+           JOIN bot_chats bc ON bu.chat_id=bc.chat_id AND bu.owner_id=bc.owner_id
+           WHERE bc.child_bot_id=$1 AND bc.owner_id=$2
+             AND bu.is_active=true AND bu.user_id IS NOT NULL""",
+        child_bot_id, owner_id,
+    ) or 0
+    dead = await db.fetchval(
+        """SELECT COUNT(DISTINCT bu.user_id) FROM bot_users bu
+           JOIN bot_chats bc ON bu.chat_id=bc.chat_id AND bu.owner_id=bc.owner_id
+           WHERE bc.child_bot_id=$1 AND bc.owner_id=$2
+             AND bu.is_active=false AND bu.user_id IS NOT NULL""",
+        child_bot_id, owner_id,
+    ) or 0
+    premium = await db.fetchval(
+        """SELECT COUNT(DISTINCT bu.user_id) FROM bot_users bu
+           JOIN bot_chats bc ON bu.chat_id=bc.chat_id AND bu.owner_id=bc.owner_id
+           WHERE bc.child_bot_id=$1 AND bc.owner_id=$2
+             AND bu.is_premium=true AND bu.user_id IS NOT NULL""",
+        child_bot_id, owner_id,
+    ) or 0
+
+    await callback.message.answer(
+        "🗄 <b>Экспорт базы</b>\n\n"
+        "<blockquote>Здесь хранятся все пользователи, которые "
+        "взаимодействовали с каналами и группами вашего бота.\n\n"
+        "Вы можете выгрузить базу в формате CSV — это удобно для "
+        "аналитики, рассылок через сторонние сервисы или резервной копии.</blockquote>\n\n"
+        f"👥 Всего в базе: {total:,}\n"
+        f"🟢 Живые ≈ {alive:,}\n"
+        f"🔴 Мёртвые ≈ {dead:,}\n"
+        f"⭐ Premium: {premium:,}",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📥 Выгрузить всю базу (CSV)",  callback_data=f"bs_base_export:{child_bot_id}:all")],
+            [InlineKeyboardButton(text="🟢 Выгрузить живых",         callback_data=f"bs_base_export:{child_bot_id}:active")],
+            [InlineKeyboardButton(text="⭐ Выгрузить Premium",           callback_data=f"bs_base_export:{child_bot_id}:premium")],
+            [InlineKeyboardButton(text="◀️ Назад",                       callback_data=f"bs_base:{child_bot_id}")],
+        ]),
+    )
+    await callback.answer()
 
 
 # ── Часовой пояс —————————————————————————————————————————————

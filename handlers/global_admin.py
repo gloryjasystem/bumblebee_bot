@@ -431,15 +431,15 @@ async def on_ga_top_bots(callback: CallbackQuery):
 
 
 async def _kick_from_all_chats(owner_id: int, target_user_id: int):
-    """Кикает пользователя мгновенно изо всех активных площадок владельца, если включен глобальный ЧС."""
+    """Кикает пользователя изо всех площадок ботов, активированных в глобальной сети."""
     async with get_pool().acquire() as conn:
         bots_chats = await conn.fetch("""
             SELECT cb.bot_token, bc.chat_id
             FROM bot_chats bc
             JOIN child_bots cb ON cb.id = bc.child_bot_id
-            WHERE bc.owner_id = $1 AND bc.is_active = true AND cb.use_global_blacklist = true
+            WHERE bc.owner_id = $1 AND bc.is_active = true AND cb.in_global_network = true
         """, owner_id)
-        
+
     for row in bots_chats:
         temp_bot = Bot(token=row['bot_token'])
         try:
@@ -458,75 +458,39 @@ async def on_ga_bl(callback: CallbackQuery):
 
     async with get_pool().acquire() as conn:
         bl_count = await conn.fetchval("SELECT COUNT(*) FROM blacklist WHERE owner_id=$1", owner_id) or 0
-        bots = await conn.fetch("""
-            SELECT id, bot_username, bot_name, use_global_blacklist
-            FROM child_bots WHERE owner_id=$1 ORDER BY created_at ASC
+        # Только активированные боты из сети
+        active_bots = await conn.fetch("""
+            SELECT bot_username FROM child_bots
+            WHERE owner_id=$1 AND in_global_network=true
+            ORDER BY created_at ASC
         """, owner_id)
 
-    # Строим текст
+    # Формируем список активных ботов (ред-онль, без тумблеров)
+    if active_bots:
+        bots_list = "\n".join(f"• @{r['bot_username']}" for r in active_bots)
+    else:
+        bots_list = "❎ Нет активированных ботов. Идите в ‘⚡️ Активация ботов сети’"
+
     text = (
         "🚫 <b>Глобальный Чёрный Список</b> — 🛡️ Защита сети\n"
         "─────────────────────────────\n"
-        "Люди из этого списка автоматически блокируются во всех ботах, где включён этот режим.\n\n"
+        "Люди из этого списка автоматически блокируются во всех активированных ботах сети.\n\n"
         f"📂 Записей в базе: <b>{bl_count}</b>\n\n"
-        "🤖 <b>Подключенные боты:</b> (нажмите на бота — переключить)"
+        f"🤖 <b>Распространяется на ботов:</b>\n{bots_list}\n\n"
+        "<i>Управлять списком ботов — ‘⚡️ Активация ботов сети’</i>"
     )
 
     kb = [
         [
             InlineKeyboardButton(text="➕ Добавить в ЧС", callback_data=f"ga_bl_add:{owner_id}"),
             InlineKeyboardButton(text="➖ Удалить из ЧС", callback_data=f"ga_bl_del:{owner_id}")
-        ]
+        ],
+        [InlineKeyboardButton(text="📥 Скачать ЧС (CSV)", callback_data=f"ga_bl_export_csv:{owner_id}")],
+        [InlineKeyboardButton(text="◀️ Назад", callback_data=f"ga_main:{owner_id}")]
     ]
-
-    # Тумблеры для каждого бота
-    for bot_row in bots:
-        status = "✅ ВКЛ" if bot_row['use_global_blacklist'] else "⛔ ВЫКЛ"
-        btn_text = f"{status} @{bot_row['bot_username']}"
-        kb.append([InlineKeyboardButton(
-            text=btn_text,
-            callback_data=f"ga_bl_bot:{owner_id}:{bot_row['id']}"
-        )])
-
-    kb.append([InlineKeyboardButton(text="📥 Скачать ЧС (CSV)", callback_data=f"ga_bl_export_csv:{owner_id}")])
-    kb.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"ga_main:{owner_id}")])
 
     await callback.message.edit_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
     await callback.answer()
-
-
-@router.callback_query(F.data.startswith("ga_bl_bot:"))
-async def on_ga_bl_bot_toggle(callback: CallbackQuery):
-    """Toggle use_global_blacklist for a specific bot."""
-    parts = callback.data.split(":")
-    owner_id = int(parts[1])
-    bot_id = int(parts[2])
-
-    role, _ = await get_admin_context(callback.from_user.id, callback.from_user.username)
-    if role not in ('owner', 'admin'):
-        return await callback.answer("❌ Нет прав", show_alert=True)
-
-    async with get_pool().acquire() as conn:
-        current = await conn.fetchval(
-            "SELECT use_global_blacklist FROM child_bots WHERE id=$1 AND owner_id=$2",
-            bot_id, owner_id
-        )
-        if current is None:
-            return await callback.answer("⚠️ Бот не найден", show_alert=True)
-
-        new_val = not current
-        await conn.execute(
-            "UPDATE child_bots SET use_global_blacklist=$1 WHERE id=$2",
-            new_val, bot_id
-        )
-
-    status_txt = "✅ включён" if new_val else "⛔ выключен"
-    await callback.answer(f"Глобальный ЧС {status_txt} для этого бота", show_alert=False)
-
-    # Обновляем экран
-    fake_cb = callback
-    fake_cb.data = f"ga_bl:{owner_id}"
-    await on_ga_bl(fake_cb)
 
 
 @router.callback_query(F.data.startswith("ga_bl_export_csv:"))
@@ -633,21 +597,31 @@ async def _show_ga_users(message_or_cb, owner_id: int):
         total_users = await conn.fetchval("""
             SELECT COUNT(DISTINCT bu.user_id) FROM bot_users bu
             JOIN bot_chats bc ON bu.chat_id = bc.chat_id
+            JOIN child_bots cb ON cb.id = bc.child_bot_id
             WHERE bc.owner_id = $1 AND bc.is_active=true AND bu.user_id IS NOT NULL
+            AND cb.in_global_network=true
         """, owner_id) or 0
-        
+
         alive_users = await conn.fetchval("""
             SELECT COUNT(DISTINCT bu.user_id) FROM bot_users bu
             JOIN bot_chats bc ON bu.chat_id = bc.chat_id
+            JOIN child_bots cb ON cb.id = bc.child_bot_id
             WHERE bc.owner_id = $1 AND bc.is_active=true AND bu.is_active=true AND bu.user_id IS NOT NULL
+            AND cb.in_global_network=true
         """, owner_id) or 0
-        
+
+        net_bots = await conn.fetchval(
+            "SELECT COUNT(*) FROM child_bots WHERE owner_id=$1 AND in_global_network=true", owner_id
+        ) or 0
+
         dead_users = total_users - alive_users
 
     text = (
-        "👥 <b>Сводная База Аудитории</b>\n\n"
-        "Здесь собраны уникальные пользователи со всех ваших активных площадок.\n\n"
-        f"Всего уникальных: <b>{total_users:,}</b>\n"
+        "👥 <b>Сводная База Аудитории</b>\n"
+        "─────────────────────────────\n"
+        f"⚡️ Активных ботов в сети: <b>{net_bots}</b>\n"
+        "Показываются только пользователи активированных ботов сети.\n\n"
+        f"👥 Уникальных пользователей: <b>{total_users:,}</b>\n"
         f" ├ 🟢 Живые: {alive_users:,}\n"
         f" └ 🔴 Мёртвые: {dead_users:,}"
     )
@@ -675,12 +649,15 @@ async def on_ga_users(callback: CallbackQuery):
 
 
 async def _export_users_csv(bot: Bot, chat_id: int, owner_id: int, export_type: str, msg_to_delete: Message = None):
+    # Базовый запрос берёт только пользователей из активированных ботов сети
     query = """
         SELECT DISTINCT ON (bu.user_id)
                bu.user_id, bu.first_name, bu.username, bu.is_active, bu.joined_at
         FROM bot_users bu
         JOIN bot_chats bc ON bu.chat_id = bc.chat_id
+        JOIN child_bots cb ON cb.id = bc.child_bot_id
         WHERE bc.owner_id = $1 AND bc.is_active=true AND bu.user_id IS NOT NULL
+        AND cb.in_global_network=true
     """
     if export_type == "alive":
         query += " AND bu.is_active = true"

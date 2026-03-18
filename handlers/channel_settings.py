@@ -4127,12 +4127,18 @@ async def on_bs_base_export_menu(callback: CallbackQuery, platform_user: dict | 
              AND bu.user_id IS NOT NULL""",
         child_bot_id, owner_id,
     ) or 0
-    active = await db.fetchval(
+    alive = await db.fetchval(
         """SELECT COUNT(DISTINCT bu.user_id) FROM bot_users bu
            JOIN bot_chats bc ON bu.chat_id=bc.chat_id AND bu.owner_id=bc.owner_id
            WHERE bc.child_bot_id=$1 AND bc.owner_id=$2
-             AND bu.is_active=true AND bu.bot_activated=true
-             AND bu.user_id IS NOT NULL""",
+             AND bu.is_active=true AND bu.user_id IS NOT NULL""",
+        child_bot_id, owner_id,
+    ) or 0
+    dead = await db.fetchval(
+        """SELECT COUNT(DISTINCT bu.user_id) FROM bot_users bu
+           JOIN bot_chats bc ON bu.chat_id=bc.chat_id AND bu.owner_id=bc.owner_id
+           WHERE bc.child_bot_id=$1 AND bc.owner_id=$2
+             AND bu.is_active=false AND bu.user_id IS NOT NULL""",
         child_bot_id, owner_id,
     ) or 0
     premium = await db.fetchval(
@@ -4142,7 +4148,6 @@ async def on_bs_base_export_menu(callback: CallbackQuery, platform_user: dict | 
              AND bu.is_premium=true AND bu.user_id IS NOT NULL""",
         child_bot_id, owner_id,
     ) or 0
-    inactive = total - active
 
     await callback.message.edit_text(
         "🗄 <b>Экспорт базы</b>\n\n"
@@ -4151,12 +4156,12 @@ async def on_bs_base_export_menu(callback: CallbackQuery, platform_user: dict | 
         "Вы можете выгрузить базу в формате CSV — это удобно для "
         "аналитики, рассылок через сторонние сервисы или резервной копии.</blockquote>\n\n"
         f"👥 Всего в базе: {total:,}\n"
-        f"🟢 Активных (в боте): {active:,}\n"
-        f"🔴 Неактивных: {inactive:,}\n"
+        f"🟢 Живые ≈ {alive:,}\n"
+        f"🔴 Мёртвые ≈ {dead:,}\n"
         f"⭐ Premium: {premium:,}",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="📥 Выгрузить всю базу (CSV)",  callback_data=f"bs_base_export:{child_bot_id}:all")],
-            [InlineKeyboardButton(text="🟢 Выгрузить активных",         callback_data=f"bs_base_export:{child_bot_id}:active")],
+            [InlineKeyboardButton(text="🟢 Выгрузить живых",         callback_data=f"bs_base_export:{child_bot_id}:active")],
             [InlineKeyboardButton(text="⭐ Выгрузить Premium",           callback_data=f"bs_base_export:{child_bot_id}:premium")],
             [InlineKeyboardButton(text="◀️ Назад",                       callback_data=f"bs_base:{child_bot_id}")],
         ]),
@@ -4179,8 +4184,8 @@ async def on_bs_base_export(callback: CallbackQuery, bot: Bot, platform_user: di
     extra_filter = ""
     label = "все"
     if mode == "active":
-        extra_filter = "AND bu.is_active=true AND bu.bot_activated=true"
-        label = "активные"
+        extra_filter = "AND bu.is_active=true"
+        label = "живые"
     elif mode == "premium":
         extra_filter = "AND bu.is_premium=true"
         label = "premium"

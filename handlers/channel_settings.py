@@ -2602,13 +2602,19 @@ async def on_bs_base(callback: CallbackQuery, platform_user: dict | None):
         owner_id,
     ) or 0
 
+    blocked_count = await db.fetchval(
+        "SELECT blocked_count FROM platform_users WHERE user_id=$1",
+        owner_id,
+    ) or 0
+
     bl_status = "Включён 🟢" if bl_enabled else "Выключен 🔴"
 
     await callback.message.edit_text(
         "≡ <b>База</b>\n\n"
         f"🤖 Бот: @{bot_username}\n"
         f"👥 Пользователей в базе: {total:,}\n"
-        f"⛔️ Заблокированных: {blocked:,}\n"
+        f"📁 Записей в ЧС: {blocked:,}\n"
+        f"🚫 Заблокировано всего: {blocked_count:,}\n"
         f"🛡 ЧС: {bl_status}",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="⚙️ Управление подписчиками", callback_data=f"bs_base_edit:{child_bot_id}")],

@@ -234,63 +234,99 @@ async def import_file(owner_id: int, content: bytes, filename: str, child_bot_id
             continue
         rows.append((owner_id, parsed["user_id"], parsed["username"], child_bot_id))
 
-    # Пакетная вставка с дедупликацией
+    newly_added = []
+
     if rows:
+        # Из-за возможных больших списков делаем это батчами
         for i in range(0, len(rows), 1000):
             batch = rows[i:i+1000]
-            await db.executemany(
-                """
-                INSERT INTO blacklist (owner_id, user_id, username, child_bot_id)
-                VALUES ($1, $2, $3, $4)
-                ON CONFLICT DO NOTHING
-                """,
-                batch,
-            )
-        added = len(rows) - invalid  # приблизительно
+            existing_uids = set()
+            existing_unames = set()
+            
+            # Собираем всех user_id и username из батча
+            batch_uids = [r[1] for r in batch if r[1] is not None]
+            batch_unames = [r[2].lower() for r in batch if r[2] is not None]
+            
+            if batch_uids:
+                if child_bot_id:
+                    res = await db.fetch("SELECT user_id FROM blacklist WHERE owner_id=$1 AND child_bot_id=$2 AND user_id = ANY($3)", owner_id, child_bot_id, batch_uids)
+                else:
+                    res = await db.fetch("SELECT user_id FROM blacklist WHERE owner_id=$1 AND child_bot_id IS NULL AND user_id = ANY($2)", owner_id, batch_uids)
+                existing_uids.update(r["user_id"] for r in res)
+                
+            if batch_unames:
+                if child_bot_id:
+                    res = await db.fetch("SELECT lower(username) as uname FROM blacklist WHERE owner_id=$1 AND child_bot_id=$2 AND lower(username) = ANY($3)", owner_id, child_bot_id, batch_unames)
+                else:
+                    res = await db.fetch("SELECT lower(username) as uname FROM blacklist WHERE owner_id=$1 AND child_bot_id IS NULL AND lower(username) = ANY($2)", owner_id, batch_unames)
+                existing_unames.update(r["uname"] for r in res)
+                
+            # Фильтруем батч: оставляем только тех, кого нет в базе
+            to_insert = []
+            for r in batch:
+                uid, uname = r[1], r[2]
+                if uid and uid in existing_uids:
+                    duplicates += 1
+                    continue
+                if uname and uname.lower() in existing_unames:
+                    duplicates += 1
+                    continue
+                to_insert.append(r)
+                newly_added.append({"user_id": uid, "username": uname})
+                
+                # Добавляем в локальный existing_*, чтобы не дублировать внутри одного файла
+                if uid: existing_uids.add(uid)
+                if uname: existing_unames.add(uname.lower())
+
+            if to_insert:
+                await db.executemany(
+                    """
+                    INSERT INTO blacklist (owner_id, user_id, username, child_bot_id)
+                    VALUES ($1, $2, $3, $4)
+                    ON CONFLICT DO NOTHING
+                    """,
+                    to_insert,
+                )
+                added += len(to_insert)
 
     if child_bot_id:
-        total = await db.fetchval(
-            "SELECT COUNT(*) FROM blacklist WHERE owner_id=$1 AND child_bot_id=$2",
-            owner_id, child_bot_id,
-        )
+        total = await db.fetchval("SELECT COUNT(*) FROM blacklist WHERE owner_id=$1 AND child_bot_id=$2", owner_id, child_bot_id)
     else:
         total = await db.fetchval("SELECT COUNT(*) FROM blacklist WHERE owner_id=$1 AND child_bot_id IS NULL", owner_id)
+        
     return {
         "added": added,
         "duplicates": duplicates,
         "invalid": invalid,
         "total": total or 0,
+        "newly_added": newly_added,
     }
 
 
-async def sweep_after_import(owner_id: int, child_bot_id: int | None = None) -> int:
+async def sweep_after_import(owner_id: int, child_bot_id: int | None = None, newly_added: list[dict] | None = None) -> int:
     """
-    После загрузки файла — банит всех нарушителей во всех активных площадках.
-
-    Алгоритм:
-    1. Для записей с явным user_id:
-       - Пробуем ban_chat_member напрямую в каждом чате.
-       - Telegram API ответит ошибкой если пользователя нет — это нормально.
-    2. Для записей только с username:
-       - Резолвим user_id через bot_users (если пользователь когда-либо взаимодействовал с ботом).
-       - Баним найденных.
-    3. Инкрементируем blocked_count для каждого успешного бана.
+    После загрузки файла — банит ТОЛЬКО (новых) нарушителей во всех активных площадках.
+    Оптимизировано, чтобы не отправлять Telegram API "ban" для тех, кто уже в ЧС.
     """
     chats = await _get_chats_with_tokens(owner_id, child_bot_id)
     if not chats:
         return 0
 
-    # Берём записи из ЧС (только для данного child_bot_id)
-    if child_bot_id:
-        bl_records = await db.fetch(
-            "SELECT user_id, username FROM blacklist WHERE owner_id = $1 AND child_bot_id = $2",
-            owner_id, child_bot_id,
-        )
+    bl_records = []
+    if newly_added is not None:
+        bl_records = newly_added
     else:
-        bl_records = await db.fetch(
-            "SELECT user_id, username FROM blacklist WHERE owner_id = $1 AND child_bot_id IS NULL",
-            owner_id,
-        )
+        # Резервный механизм, если newly_added не передан
+        if child_bot_id:
+            bl_records = await db.fetch(
+                "SELECT user_id, username FROM blacklist WHERE owner_id = $1 AND child_bot_id = $2",
+                owner_id, child_bot_id,
+            )
+        else:
+            bl_records = await db.fetch(
+                "SELECT user_id, username FROM blacklist WHERE owner_id = $1 AND child_bot_id IS NULL",
+                owner_id,
+            )
 
     # Разделяем: с явным user_id и только username
     explicit_ids = [r["user_id"] for r in bl_records if r["user_id"] is not None]

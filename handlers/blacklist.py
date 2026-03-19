@@ -384,8 +384,9 @@ async def on_bs_bl_file(message: Message, bot: Bot, state: FSMContext,
                 )],
             ]),
         )
-        # Фоновая зачистка — передаём child_bot_id для per-bot счётчика
-        asyncio.create_task(sweep_after_import(owner_id, child_bot_id=child_bot_id))
+        # Фоновая зачистка — передаём список ТОЛЬКО новых записей, чтобы не задваивать счётчик
+        if stats.get("newly_added"):
+            asyncio.create_task(sweep_after_import(owner_id, child_bot_id=child_bot_id, newly_added=stats["newly_added"]))
     else:
         # Режим удаления из ЧС
         from services.security import parse_blacklist_line

@@ -276,7 +276,7 @@ async def sweep_after_import(owner_id: int, child_bot_id: int | None = None) -> 
        - Баним найденных.
     3. Инкрементируем blocked_count для каждого успешного бана.
     """
-    chats = await _get_chats_with_tokens(owner_id)
+    chats = await _get_chats_with_tokens(owner_id, child_bot_id)
     if not chats:
         return 0
 

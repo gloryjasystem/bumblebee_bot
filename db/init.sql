@@ -409,3 +409,6 @@ ALTER TABLE platform_users ADD COLUMN IF NOT EXISTS blocked_count BIGINT DEFAULT
 
 -- Per-bot счётчик заблокированных ботом (для меню ≡ База)
 ALTER TABLE child_bots ADD COLUMN IF NOT EXISTS blocked_count BIGINT DEFAULT 0;
+
+-- Per-bot изоляция чёрного списка (NULL = глобальная запись от admin)
+ALTER TABLE blacklist ADD COLUMN IF NOT EXISTS child_bot_id INTEGER REFERENCES child_bots(id) ON DELETE CASCADE;

@@ -30,16 +30,19 @@ async def resolve_username_to_id(username: str) -> int | None:
     return None
 
 
-async def check_blacklist(owner_id: int, user_id: int, username: str | None) -> bool:
-
+async def check_blacklist(owner_id: int, user_id: int, username: str | None, child_bot_id: int | None = None) -> bool:
     """
-    Мгновенная проверка пользователя по ЧС.
-    Использует индексированные поля — < 1 мс при 1M записей.
+    Проверка пользователя по ЧС.
+    Если задан child_bot_id — ищет записи этого бота ИЛИ глобальные (child_bot_id IS NULL).
     """
     row = await db.fetchrow(
         """
         SELECT 1 FROM blacklist
         WHERE owner_id = $1
+          AND (
+            child_bot_id = $4
+            OR child_bot_id IS NULL
+          )
           AND (
             (user_id IS NOT NULL AND user_id = $2)
             OR
@@ -47,41 +50,53 @@ async def check_blacklist(owner_id: int, user_id: int, username: str | None) -> 
           )
         LIMIT 1
         """,
-        owner_id, user_id, username or "",
+        owner_id, user_id, username or "", child_bot_id,
     )
     return row is not None
 
 
-async def add_to_blacklist(owner_id: int, user_id: int | None, username: str | None) -> bool:
+async def add_to_blacklist(owner_id: int, user_id: int | None, username: str | None, child_bot_id: int | None = None) -> bool:
     """
     Добавляет одну запись в ЧС.
+    child_bot_id=None — глобальная запись (global admin), иначе per-bot.
     Возвращает True если добавлена, False если уже была.
     """
     result = await db.execute(
         """
-        INSERT INTO blacklist (owner_id, user_id, username)
-        VALUES ($1, $2, $3)
+        INSERT INTO blacklist (owner_id, user_id, username, child_bot_id)
+        VALUES ($1, $2, $3, $4)
         ON CONFLICT DO NOTHING
         """,
-        owner_id, user_id, username.lower() if username else None,
+        owner_id, user_id, username.lower() if username else None, child_bot_id,
     )
     return result == "INSERT 0 1"
 
 
-async def _get_chats_with_tokens(owner_id: int) -> list:
+async def _get_chats_with_tokens(owner_id: int, child_bot_id: int | None = None) -> list:
     """
     Возвращает список активных чатов со статусом ЧС и расшифрованными токенами.
     """
     from services.security import decrypt_token
-    rows = await db.fetch(
-        """
-        SELECT bc.chat_id, cb.token_encrypted, cb.blacklist_enabled
-        FROM bot_chats bc
-        JOIN child_bots cb ON cb.id = bc.child_bot_id
-        WHERE bc.owner_id = $1 AND bc.is_active = true
-        """,
-        owner_id,
-    )
+    if child_bot_id:
+        rows = await db.fetch(
+            """
+            SELECT bc.chat_id, cb.token_encrypted, cb.blacklist_enabled
+            FROM bot_chats bc
+            JOIN child_bots cb ON cb.id = bc.child_bot_id
+            WHERE bc.owner_id = $1 AND bc.child_bot_id = $2 AND bc.is_active = true
+            """,
+            owner_id, child_bot_id,
+        )
+    else:
+        rows = await db.fetch(
+            """
+            SELECT bc.chat_id, cb.token_encrypted, cb.blacklist_enabled
+            FROM bot_chats bc
+            JOIN child_bots cb ON cb.id = bc.child_bot_id
+            WHERE bc.owner_id = $1 AND bc.is_active = true
+            """,
+            owner_id,
+        )
     result = []
     for r in rows:
         token = decrypt_token(r["token_encrypted"])
@@ -114,7 +129,7 @@ async def _ban_user_in_chat(token: str, chat_id: int, user_id: int) -> bool:
         return False
 
 
-async def kick_single_user(owner_id: int, user_id: int | None, username: str | None, child_bot_id: int | None = None) -> int:
+async def kick_single_user(owner_id: int, user_id: int | None, username: str | None, child_bot_id: int | None = None) -> int:  # noqa
     """
     Кикает конкретного пользователя из всех активных площадок владельца.
     Работает для ВСЕХ участников чата — независимо от того, когда они вступили.
@@ -124,7 +139,7 @@ async def kick_single_user(owner_id: int, user_id: int | None, username: str | N
 
     Возвращает количество чатов, откуда был выкинут пользователь.
     """
-    chats = await _get_chats_with_tokens(owner_id)
+    chats = await _get_chats_with_tokens(owner_id, child_bot_id)
     kicked = 0
 
     # Резолвим user_id через username если не задан явно
@@ -170,7 +185,7 @@ async def kick_single_user(owner_id: int, user_id: int | None, username: str | N
     return kicked
 
 
-async def import_file(owner_id: int, content: bytes, filename: str) -> dict:
+async def import_file(owner_id: int, content: bytes, filename: str, child_bot_id: int | None = None) -> dict:
     """
     Импортирует файл ЧС (TXT/CSV).
     Возвращает {'added': int, 'duplicates': int, 'invalid': int, 'total': int}.
@@ -189,7 +204,7 @@ async def import_file(owner_id: int, content: bytes, filename: str) -> dict:
             if line.strip() and not line.startswith("#"):
                 invalid += 1
             continue
-        rows.append((owner_id, parsed["user_id"], parsed["username"]))
+        rows.append((owner_id, parsed["user_id"], parsed["username"], child_bot_id))
 
     # Пакетная вставка с дедупликацией
     if rows:
@@ -197,19 +212,26 @@ async def import_file(owner_id: int, content: bytes, filename: str) -> dict:
             batch = rows[i:i+1000]
             await db.executemany(
                 """
-                INSERT INTO blacklist (owner_id, user_id, username)
-                VALUES ($1, $2, $3)
+                INSERT INTO blacklist (owner_id, user_id, username, child_bot_id)
+                VALUES ($1, $2, $3, $4)
                 ON CONFLICT DO NOTHING
                 """,
                 batch,
             )
         added = len(rows) - invalid  # приблизительно
 
+    if child_bot_id:
+        total = await db.fetchval(
+            "SELECT COUNT(*) FROM blacklist WHERE owner_id=$1 AND child_bot_id=$2",
+            owner_id, child_bot_id,
+        )
+    else:
+        total = await db.fetchval("SELECT COUNT(*) FROM blacklist WHERE owner_id=$1 AND child_bot_id IS NULL", owner_id)
     return {
         "added": added,
         "duplicates": duplicates,
         "invalid": invalid,
-        "total": await db.fetchval("SELECT COUNT(*) FROM blacklist WHERE owner_id=$1", owner_id),
+        "total": total or 0,
     }
 
 
@@ -230,11 +252,17 @@ async def sweep_after_import(owner_id: int, child_bot_id: int | None = None) -> 
     if not chats:
         return 0
 
-    # Берём все записи из ЧС
-    bl_records = await db.fetch(
-        "SELECT user_id, username FROM blacklist WHERE owner_id = $1",
-        owner_id,
-    )
+    # Берём записи из ЧС (только для данного child_bot_id)
+    if child_bot_id:
+        bl_records = await db.fetch(
+            "SELECT user_id, username FROM blacklist WHERE owner_id = $1 AND child_bot_id = $2",
+            owner_id, child_bot_id,
+        )
+    else:
+        bl_records = await db.fetch(
+            "SELECT user_id, username FROM blacklist WHERE owner_id = $1 AND child_bot_id IS NULL",
+            owner_id,
+        )
 
     # Разделяем: с явным user_id и только username
     explicit_ids = [r["user_id"] for r in bl_records if r["user_id"] is not None]
@@ -380,10 +408,15 @@ async def sweep_unban_records(owner_id: int, records: list) -> None:
             logger.debug(f"Failed to use child_bot unban for chat {chat_id}: {e}")
 
 
-async def get_blacklist_count(owner_id: int) -> int:
+async def get_blacklist_count(owner_id: int, child_bot_id: int | None = None) -> int:
+    if child_bot_id:
+        return await db.fetchval(
+            "SELECT COUNT(*) FROM blacklist WHERE owner_id=$1 AND child_bot_id=$2",
+            owner_id, child_bot_id,
+        ) or 0
     return await db.fetchval(
-        "SELECT COUNT(*) FROM blacklist WHERE owner_id=$1", owner_id
-    )
+        "SELECT COUNT(*) FROM blacklist WHERE owner_id=$1 AND child_bot_id IS NULL", owner_id
+    ) or 0
 
 
 async def get_blocked_count(owner_id: int) -> int:

@@ -101,7 +101,7 @@ async def on_bl_manual_input(message: Message, state: FSMContext, platform_user:
                 resolved = await resolve_username_to_id(uname)
                 if resolved:
                     uid = resolved
-            ok = await add_to_blacklist(owner_id, uid, uname)
+            ok = await add_to_blacklist(owner_id, uid, uname, child_bot_id=child_bot_id)
             if ok:
                 added += 1
                 suffix = f" (ID: <code>{uid}</code>)" if uid and not parsed["user_id"] else ""
@@ -249,7 +249,7 @@ async def on_bs_bl_text(message: Message, state: FSMContext, platform_user: dict
                 resolved = await resolve_username_to_id(uname)
                 if resolved:
                     uid = resolved
-            ok = await add_to_blacklist(owner_id, uid, uname)
+            ok = await add_to_blacklist(owner_id, uid, uname, child_bot_id=child_bot_id)
             if ok:
                 added += 1
                 suffix = f" (ID: <code>{uid}</code>)" if uid and not parsed["user_id"] else ""
@@ -263,13 +263,13 @@ async def on_bs_bl_text(message: Message, state: FSMContext, platform_user: dict
             uname = parsed.get("username")
             if uid:
                 res = await db.execute(
-                    "DELETE FROM blacklist WHERE owner_id=$1 AND user_id=$2",
-                    owner_id, uid,
+                    "DELETE FROM blacklist WHERE owner_id=$1 AND user_id=$2 AND child_bot_id=$3",
+                    owner_id, uid, child_bot_id,
                 )
             else:
                 res = await db.execute(
-                    "DELETE FROM blacklist WHERE owner_id=$1 AND lower(username)=lower($2)",
-                    owner_id, uname,
+                    "DELETE FROM blacklist WHERE owner_id=$1 AND lower(username)=lower($2) AND child_bot_id=$3",
+                    owner_id, uname, child_bot_id,
                 )
             if res and res.endswith("1"):
                 removed += 1
@@ -278,7 +278,10 @@ async def on_bs_bl_text(message: Message, state: FSMContext, platform_user: dict
                 invalid += 1
                 results.append(f"• {token} (нет в базе)")
 
-    total = await db.fetchval("SELECT COUNT(*) FROM blacklist WHERE owner_id=$1", owner_id) or 0
+    total = await db.fetchval(
+        "SELECT COUNT(*) FROM blacklist WHERE owner_id=$1 AND child_bot_id=$2",
+        owner_id, child_bot_id,
+    ) or 0
     await state.clear()
 
     result_text = "\n".join(results[:10])
@@ -365,7 +368,7 @@ async def on_bs_bl_file(message: Message, bot: Bot, state: FSMContext,
     wait_msg = await message.answer("⏳ Обрабатываю файл...")
 
     if mode == "add":
-        stats = await import_file(owner_id, content_bytes, doc.file_name)
+        stats = await import_file(owner_id, content_bytes, doc.file_name, child_bot_id=child_bot_id)
         await wait_msg.delete()
         await state.clear()
         await message.answer(
@@ -398,20 +401,20 @@ async def on_bs_bl_file(message: Message, bot: Bot, state: FSMContext,
             uname = parsed.get("username")
             if uid:
                 res = await db.execute(
-                    "DELETE FROM blacklist WHERE owner_id=$1 AND user_id=$2",
-                    owner_id, uid,
+                    "DELETE FROM blacklist WHERE owner_id=$1 AND user_id=$2 AND child_bot_id=$3",
+                    owner_id, uid, child_bot_id,
                 )
             else:
                 res = await db.execute(
-                    "DELETE FROM blacklist WHERE owner_id=$1 AND lower(username)=lower($2)",
-                    owner_id, uname,
+                    "DELETE FROM blacklist WHERE owner_id=$1 AND lower(username)=lower($2) AND child_bot_id=$3",
+                    owner_id, uname, child_bot_id,
                 )
             # asyncpg returns "DELETE N"
             if res and res.endswith("1"):
                 removed += 1
 
         total = await db.fetchval(
-            "SELECT COUNT(*) FROM blacklist WHERE owner_id=$1", owner_id,
+            "SELECT COUNT(*) FROM blacklist WHERE owner_id=$1 AND child_bot_id=$2", owner_id, child_bot_id,
         ) or 0
 
         await wait_msg.delete()

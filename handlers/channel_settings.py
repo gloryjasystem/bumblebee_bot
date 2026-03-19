@@ -1733,7 +1733,7 @@ async def on_ch_stats(callback: CallbackQuery, platform_user: dict | None):
         owner_id, chat_id,
     )
     bl_count = await db.fetchval(
-        "SELECT COUNT(*) FROM blacklist WHERE owner_id=$1", owner_id,
+        "SELECT COUNT(*) FROM blacklist WHERE owner_id=$1 AND child_bot_id IS NULL", owner_id,
     )
 
     await callback.message.edit_text(
@@ -2598,8 +2598,8 @@ async def on_bs_base(callback: CallbackQuery, platform_user: dict | None):
     ) or 0
 
     blocked = await db.fetchval(
-        "SELECT COUNT(*) FROM blacklist WHERE owner_id=$1",
-        owner_id,
+        "SELECT COUNT(*) FROM blacklist WHERE owner_id=$1 AND child_bot_id=$2",
+        owner_id, child_bot_id,
     ) or 0
 
     blocked_count = await db.fetchval(
@@ -3386,7 +3386,7 @@ async def on_bs_um_ban(callback: CallbackQuery, platform_user: dict | None):
     child_bot = Bot(token=decrypt_token(bot_row["token_encrypted"]))
     
     try:
-        is_banned = await db.fetchval("SELECT 1 FROM blacklist WHERE owner_id=$1 AND user_id=$2", owner_id, uid)
+        is_banned = await db.fetchval("SELECT 1 FROM blacklist WHERE owner_id=$1 AND user_id=$2 AND child_bot_id=$3", owner_id, uid, child_bot_id)
         
         if is_banned:
             if chat_rows:
@@ -3396,7 +3396,7 @@ async def on_bs_um_ban(callback: CallbackQuery, platform_user: dict | None):
                     except Exception:
                         pass
             
-            await db.execute("DELETE FROM blacklist WHERE owner_id=$1 AND user_id=$2", owner_id, uid)
+            await db.execute("DELETE FROM blacklist WHERE owner_id=$1 AND user_id=$2 AND child_bot_id=$3", owner_id, uid, child_bot_id)
             action_text = "⛔️ Пользователь удален из черного списка"
         else:
             if chat_rows:
@@ -3409,10 +3409,10 @@ async def on_bs_um_ban(callback: CallbackQuery, platform_user: dict | None):
             # В любом случае заносим в ЧС бота
             username = await db.fetchval("SELECT username FROM bot_users WHERE user_id=$1 LIMIT 1", uid)
             await db.execute(
-                """INSERT INTO blacklist (owner_id, username, user_id, added_at, reason)
-                   VALUES ($1, $2, $3, NOW(), 'Забанен через карточку пользователя')
-                   ON CONFLICT (owner_id, user_id) WHERE user_id IS NOT NULL DO NOTHING""",
-                owner_id, username or '', uid
+                """INSERT INTO blacklist (owner_id, username, user_id, child_bot_id, added_at, reason)
+                   VALUES ($1, $2, $3, $4, NOW(), 'Забанен через карточку пользователя')
+                   ON CONFLICT DO NOTHING""",
+                owner_id, username or '', uid, child_bot_id
             )
             
             if chat_rows:
@@ -3467,7 +3467,7 @@ async def on_bs_blacklist(callback: CallbackQuery, platform_user: dict | None):
     owner_id = platform_user["user_id"]
 
     count = await db.fetchval(
-        "SELECT COUNT(*) FROM blacklist WHERE owner_id=$1", owner_id,
+        "SELECT COUNT(*) FROM blacklist WHERE owner_id=$1 AND child_bot_id=$2", owner_id, child_bot_id,
     ) or 0
 
     await callback.message.edit_text(
@@ -3717,8 +3717,8 @@ async def on_bs_bl_export_csv(callback: CallbackQuery, bot: Bot, platform_user: 
 
     rows = await db.fetch(
         "SELECT user_id, username, reason, added_at "
-        "FROM blacklist WHERE owner_id=$1 ORDER BY added_at DESC",
-        owner_id,
+        "FROM blacklist WHERE owner_id=$1 AND child_bot_id=$2 ORDER BY added_at DESC",
+        owner_id, child_bot_id,
     )
 
     buf = io.StringIO()
@@ -3783,8 +3783,8 @@ async def on_bs_bl_export_txt(callback: CallbackQuery, bot: Bot, platform_user: 
     await callback.answer("⏳ Формирую файл...", show_alert=False)
 
     rows = await db.fetch(
-        "SELECT user_id, username FROM blacklist WHERE owner_id=$1 ORDER BY added_at DESC",
-        owner_id,
+        "SELECT user_id, username FROM blacklist WHERE owner_id=$1 AND child_bot_id=$2 ORDER BY added_at DESC",
+        owner_id, child_bot_id,
     )
 
     lines = []
@@ -3853,7 +3853,7 @@ async def on_bs_bl_dl_bck(callback: CallbackQuery, bot: Bot, platform_user: dict
 
     # Генерируем меню ЧС напрямую, чтобы избежать ошибки edit_text на файловом сообщении
     count = await db.fetchval(
-        "SELECT COUNT(*) FROM blacklist WHERE owner_id=$1", owner_id,
+        "SELECT COUNT(*) FROM blacklist WHERE owner_id=$1 AND child_bot_id=$2", owner_id, child_bot_id,
     ) or 0
 
     await callback.message.answer(
@@ -4007,7 +4007,7 @@ async def _show_bs_bl_manage(callback: CallbackQuery, platform_user: dict,
         enabled = True
 
     count = await db.fetchval(
-        "SELECT COUNT(*) FROM blacklist WHERE owner_id=$1", owner_id,
+        "SELECT COUNT(*) FROM blacklist WHERE owner_id=$1 AND child_bot_id=$2", owner_id, child_bot_id,
     ) or 0
 
     toggle_text = "✅ ЧС: Включён 🟢" if enabled else "☑️ ЧС: Выключен 🔴"
@@ -4063,7 +4063,7 @@ async def on_bs_bl_toggle(callback: CallbackQuery, platform_user: dict | None):
         from services.blacklist import sweep_after_import, sweep_unban_after_disable
         import asyncio
         if new_val:
-            asyncio.create_task(sweep_after_import(owner_id))
+            asyncio.create_task(sweep_after_import(owner_id, child_bot_id=child_bot_id))
         else:
             asyncio.create_task(sweep_unban_after_disable(owner_id))
             
@@ -4122,8 +4122,8 @@ async def on_bs_bl_clear(callback: CallbackQuery, platform_user: dict | None):
         return
     child_bot_id = callback.data.split(":")[1]
     count = await db.fetchval(
-        "SELECT COUNT(*) FROM blacklist WHERE owner_id=$1",
-        platform_user["user_id"],
+        "SELECT COUNT(*) FROM blacklist WHERE owner_id=$1 AND child_bot_id=$2",
+        platform_user["user_id"], int(child_bot_id),
     ) or 0
     await callback.message.edit_text(
         f"⚠️ <b>Действительно очистить базу ЧС?</b>\n\n"
@@ -4150,13 +4150,13 @@ async def on_bs_bl_clear_do(callback: CallbackQuery, platform_user: dict | None)
     owner_id = platform_user["user_id"]
     
     # 1. Запоминаем кого разбанивать перед удалением из базы
-    records = await db.fetch("SELECT user_id, username FROM blacklist WHERE owner_id=$1", owner_id)
+    records = await db.fetch("SELECT user_id, username FROM blacklist WHERE owner_id=$1 AND child_bot_id=$2", owner_id, int(child_bot_id))
     
     # 2. Очищаем базу
     deleted = await db.fetchval(
-        "WITH d AS (DELETE FROM blacklist WHERE owner_id=$1 RETURNING 1) "
+        "WITH d AS (DELETE FROM blacklist WHERE owner_id=$1 AND child_bot_id=$2 RETURNING 1) "
         "SELECT COUNT(*) FROM d",
-        owner_id,
+        owner_id, int(child_bot_id),
     ) or 0
     
     # 3. Запускаем фоновую задачу разбана

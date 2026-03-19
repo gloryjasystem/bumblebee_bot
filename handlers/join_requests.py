@@ -57,7 +57,8 @@ async def on_join_request(event: ChatJoinRequest, bot: Bot):
 
     # 1. Проверка ЧС (только если глобальный тумблер включён)
     if settings_row.get("blacklist_active", True) and settings_row.get("blacklist_enabled", True):
-        in_bl = await check_blacklist(owner_id, user.id, user.username)
+        _cbi = settings_row.get("child_bot_id")
+        in_bl = await check_blacklist(owner_id, user.id, user.username, child_bot_id=_cbi)
         if in_bl:
             await event.decline()
             try:
@@ -205,7 +206,8 @@ async def on_member_update(event: ChatMemberUpdated, bot: Bot):
         )
 
         if settings_row.get("blacklist_active", True) and settings_row.get("blacklist_enabled", True):
-            in_bl = await check_blacklist(owner_id, user.id, user.username)
+            _cbi = settings_row.get("child_bot_id")
+            in_bl = await check_blacklist(owner_id, user.id, user.username, child_bot_id=_cbi)
             if in_bl:
                 try:
                     await bot.ban_chat_member(event.chat.id, user.id)

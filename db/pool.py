@@ -23,6 +23,9 @@ async def create_pool() -> asyncpg.Pool:
         await conn.execute(
             "ALTER TABLE child_bots ADD COLUMN IF NOT EXISTS blocked_count BIGINT DEFAULT 0"
         )
+        await conn.execute(
+            "ALTER TABLE blacklist ADD COLUMN IF NOT EXISTS child_bot_id INTEGER REFERENCES child_bots(id) ON DELETE CASCADE"
+        )
     return _pool
 
 

@@ -89,10 +89,13 @@ async def on_bl_manual_input(message: Message, state: FSMContext, platform_user:
     data = await state.get_data()
     chat_id = data.get("chat_id")
     prompt_msg_id = data.get("prompt_msg_id")
+    if prompt_msg_id:
+        try:
+            await message.bot.delete_message(chat_id=message.chat.id, message_id=prompt_msg_id)
+        except Exception:
+            pass
     try:
         await message.delete()
-        if prompt_msg_id:
-            await message.bot.delete_message(chat_id=message.chat.id, message_id=prompt_msg_id)
     except Exception:
         pass
     owner_id = platform_user["user_id"]
@@ -249,10 +252,13 @@ async def on_bs_bl_text(message: Message, state: FSMContext, platform_user: dict
     if owner_id is None:
         return
 
+    if prompt_msg_id:
+        try:
+            await message.bot.delete_message(chat_id=message.chat.id, message_id=prompt_msg_id)
+        except Exception:
+            pass
     try:
         await message.delete()
-        if prompt_msg_id:
-            await message.bot.delete_message(chat_id=message.chat.id, message_id=prompt_msg_id)
     except Exception:
         pass
 

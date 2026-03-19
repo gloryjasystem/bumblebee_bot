@@ -464,12 +464,14 @@ async def sweep_unban_records(owner_id: int, records: list, child_bot_id: int | 
             async with Bot(token=token).context() as child_bot:
                 for uid in all_user_ids:
                     try:
+                        logger.info(f"[BL UNBAN] Attempting to unban user={uid} from chat={chat_id}")
                         await child_bot.unban_chat_member(chat_id, uid, only_if_banned=True)
+                        logger.info(f"[BL UNBAN] Successfully unbanned user={uid} in chat={chat_id}")
                     except Exception as e:
-                        logger.debug(f"Unban failed for {uid} in {chat_id}: {e}")
+                        logger.error(f"[BL UNBAN ERROR] Unban failed for {uid} in {chat_id}: {e}")
                     await asyncio.sleep(0.05)
         except Exception as e:
-            logger.debug(f"Failed to use child_bot unban for chat {chat_id}: {e}")
+            logger.error(f"[BL UNBAN FATAL] Failed to use child_bot unban for chat {chat_id}: {e}")
 
 
 async def get_blacklist_count(owner_id: int, child_bot_id: int | None = None) -> int:

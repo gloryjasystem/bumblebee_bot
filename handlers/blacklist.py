@@ -263,19 +263,20 @@ async def on_bs_bl_text(message: Message, state: FSMContext, platform_user: dict
             uid = parsed.get("user_id")
             uname = parsed.get("username")
             if uid:
-                res = await db.execute(
-                    "DELETE FROM blacklist WHERE owner_id=$1 AND user_id=$2 AND child_bot_id=$3",
+                row = await db.fetchrow(
+                    "DELETE FROM blacklist WHERE owner_id=$1 AND user_id=$2 AND child_bot_id=$3 RETURNING user_id, username",
                     owner_id, uid, child_bot_id,
                 )
             else:
-                res = await db.execute(
-                    "DELETE FROM blacklist WHERE owner_id=$1 AND lower(username)=lower($2) AND child_bot_id=$3",
+                row = await db.fetchrow(
+                    "DELETE FROM blacklist WHERE owner_id=$1 AND lower(username)=lower($2) AND child_bot_id=$3 RETURNING user_id, username",
                     owner_id, uname, child_bot_id,
                 )
-            if res and res.endswith("1"):
+            
+            if row:
                 removed += 1
                 results.append(f"• {token} 🗑")
-                newly_removed.append({"user_id": uid, "username": uname})
+                newly_removed.append({"user_id": row["user_id"], "username": row["username"]})
             else:
                 invalid += 1
                 results.append(f"• {token} (нет в базе)")
@@ -407,19 +408,19 @@ async def on_bs_bl_file(message: Message, bot: Bot, state: FSMContext,
             uid = parsed.get("user_id")
             uname = parsed.get("username")
             if uid:
-                res = await db.execute(
-                    "DELETE FROM blacklist WHERE owner_id=$1 AND user_id=$2 AND child_bot_id=$3",
+                row = await db.fetchrow(
+                    "DELETE FROM blacklist WHERE owner_id=$1 AND user_id=$2 AND child_bot_id=$3 RETURNING user_id, username",
                     owner_id, uid, child_bot_id,
                 )
             else:
-                res = await db.execute(
-                    "DELETE FROM blacklist WHERE owner_id=$1 AND lower(username)=lower($2) AND child_bot_id=$3",
+                row = await db.fetchrow(
+                    "DELETE FROM blacklist WHERE owner_id=$1 AND lower(username)=lower($2) AND child_bot_id=$3 RETURNING user_id, username",
                     owner_id, uname, child_bot_id,
                 )
-            # asyncpg returns "DELETE N"
-            if res and res.endswith("1"):
+            
+            if row:
                 removed += 1
-                newly_removed.append({"user_id": uid, "username": uname})
+                newly_removed.append({"user_id": row["user_id"], "username": row["username"]})
 
         total = await db.fetchval(
             "SELECT COUNT(*) FROM blacklist WHERE owner_id=$1 AND child_bot_id=$2", owner_id, child_bot_id,

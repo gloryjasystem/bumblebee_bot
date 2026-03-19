@@ -9,6 +9,9 @@ from services.security import parse_blacklist_line
 
 logger = logging.getLogger(__name__)
 
+# Максимальное время ожидания FloodWait в секундах (дальше просто пропускаем запись)
+MAX_FLOOD_WAIT = 30
+
 
 async def resolve_username_to_id(username: str, owner_id: int | None = None, child_bot_id: int | None = None) -> int | None:
     """
@@ -183,14 +186,31 @@ async def _ban_user_in_chat(token: str, chat_id: int, user_id: int) -> bool:
     Возвращает True если бан успешно применён (пользователь был в чате).
     """
     from aiogram import Bot
+    from aiogram.exceptions import TelegramRetryAfter
     try:
         async with Bot(token=token).context() as child_bot:
             await child_bot.ban_chat_member(chat_id, user_id)
             logger.info(f"[BL KICK] Banned user={user_id} from chat={chat_id}")
             return True
+    except TelegramRetryAfter as e:
+        # Защита от FloodWait: если Telegram просит подождать и это разумно — ждём;
+        # если ждать слишком долго — пропускаем запись без бана и продолжаем
+        wait = e.retry_after
+        if wait <= MAX_FLOOD_WAIT:
+            logger.info(f"[BL KICK] FloodWait {wait}s for chat={chat_id}, waiting...")
+            await asyncio.sleep(wait)
+            try:
+                async with Bot(token=token).context() as child_bot:
+                    await child_bot.ban_chat_member(chat_id, user_id)
+                    return True
+            except Exception:
+                pass
+        else:
+            logger.warning(f"[BL KICK] FloodWait too long ({wait}s) for chat={chat_id}, skipping ban for user={user_id}")
+        return False
     except Exception as e:
         err = str(e).lower()
-        # Если пользователя нет в чате — это не ошибка, просто не нашли
+        # Защита 3: если пользователя нет в чате — бот его не видит, молча пропускаем
         if "user not found" in err or "user_not_participant" in err or "member_not_found" in err:
             return False
         # Любая другая ошибка (например, нет прав)
@@ -217,7 +237,10 @@ async def kick_single_user(owner_id: int, user_id: int | None, username: str | N
         resolved_user_id = await resolve_username_to_id(username, owner_id=owner_id, child_bot_id=child_bot_id)
 
     if not resolved_user_id:
-        logger.warning(f"[BL KICK] Cannot resolve user_id for username={username}, skip kick (user not seen by bot)")
+        # Защита 3: если бот не видит юзера — нельзя его кикнуть.
+        # Запись остается в БД — бот забанит его, как только тот появится в чате.
+        # Без warnings в логе (это нормальная ситуация для непубличных пользователей).
+        logger.debug(f"[BL KICK] username={username} not seen by bot yet, record saved for deferred ban, skip kick")
         return 0
 
     for chat in chats:
@@ -266,13 +289,19 @@ async def import_file(owner_id: int, content: bytes, filename: str, child_bot_id
     rows = []
     added = duplicates = invalid = 0
 
-    for line in text.splitlines():
-        parsed = parse_blacklist_line(line)
-        if parsed is None:
-            if line.strip() and not line.startswith("#"):
-                invalid += 1
+    for line_no, line in enumerate(text.splitlines(), start=1):
+        # Защита 4: каждая строка обернута в try/except — креш файла не сломает весь импорт
+        try:
+            parsed = parse_blacklist_line(line)
+            if parsed is None:
+                if line.strip() and not line.startswith("#"):
+                    invalid += 1
+                continue
+            rows.append((owner_id, parsed["user_id"], parsed["username"], child_bot_id))
+        except Exception as e:
+            logger.error(f"[BL IMPORT] Parse error at line {line_no}: {e!r} | raw: {line[:80]!r}")
+            invalid += 1
             continue
-        rows.append((owner_id, parsed["user_id"], parsed["username"], child_bot_id))
 
     newly_added = []
 

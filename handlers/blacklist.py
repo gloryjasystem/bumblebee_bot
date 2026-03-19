@@ -470,28 +470,31 @@ async def on_bs_bl_file(message: Message, bot: Bot, state: FSMContext,
         await message.answer(f"❌ {error}")
         return
 
-    wait_msg = await message.answer("⏳ Обрабатываю файл...")
+    wait_msg = await message.answer("⏳ База принята! Начинаю обработку в фоне, это может занять пару минут...")
+    await state.clear()
 
-    if mode == "add":
-        stats = await import_file(owner_id, content_bytes, doc.file_name, child_bot_id=child_bot_id)
-        await wait_msg.delete()
-        await state.clear()
-        await message.answer(
-            "✅ <b>Файл обработан</b>\n\n"
-            f"➕ Добавлено: {stats['added']:,}\n"
-            f"⚠️ Неверный формат: {stats['invalid']:,}\n"
-            f"📊 Итого в базе: {stats['total']:,}",
-            parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(
-                    text="◀️ Назад к ЧС",
-                    callback_data=f"bs_blacklist:{child_bot_id}",
-                )],
-            ]),
-        )
-        # Фоновая зачистка — передаём список ТОЛЬКО новых записей, чтобы не задваивать счётчик
-        if stats.get("newly_added"):
-            async def _sweep_bs_and_notify():
+    # Защита #1: сразу освобождаем Telegram-соединение, всё тяжёлое — в фон
+    async def _import_and_sweep():
+        try:
+            stats = await import_file(owner_id, content_bytes, doc.file_name, child_bot_id=child_bot_id)
+            try:
+                await wait_msg.edit_text(
+                    "✅ <b>Файл обработан</b>\n\n"
+                    f"➕ Добавлено: {stats['added']:,}\n"
+                    f"⚠️ Неверный формат: {stats['invalid']:,}\n"
+                    f"📊 Итого в базе: {stats['total']:,}",
+                    parse_mode="HTML",
+                    reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                        [InlineKeyboardButton(
+                            text="◀️ Назад к ЧС",
+                            callback_data=f"bs_blacklist:{child_bot_id}",
+                        )],
+                    ]),
+                )
+            except Exception:
+                pass
+
+            if stats.get("newly_added"):
                 kicked = await sweep_after_import(owner_id, child_bot_id=child_bot_id, newly_added=stats["newly_added"])
                 if kicked > 0:
                     try:
@@ -503,7 +506,14 @@ async def on_bs_bl_file(message: Message, bot: Bot, state: FSMContext,
                         await kmsg.delete()
                     except Exception:
                         pass
-            asyncio.create_task(_sweep_bs_and_notify())
+        except Exception as e:
+            logger.error(f"[BL FILE IMPORT] Fatal error for owner={owner_id}: {e}", exc_info=True)
+            try:
+                await wait_msg.edit_text("❌ Произошла ошибка при обработке файла. Попробуйте позже.")
+            except Exception:
+                pass
+
+    asyncio.create_task(_import_and_sweep())
     else:
         # Режим удаления из ЧС
         from services.security import parse_blacklist_line

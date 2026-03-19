@@ -26,6 +26,7 @@ router = Router()
 class BlacklistFSM(StatesGroup):
     waiting_for_manual_input = State()
     waiting_for_search_input = State()
+    waiting_for_file_upload = State()
 
 
 def kb_blacklist_main(chat_id: int) -> InlineKeyboardMarkup:
@@ -165,7 +166,7 @@ async def on_bl_manual_input(message: Message, state: FSMContext, platform_user:
 
 # ── Загрузка файла ────────────────────────────────────────────
 @router.callback_query(F.data.startswith("bl_upload:"))
-async def on_bl_upload(callback: CallbackQuery, platform_user: dict | None):
+async def on_bl_upload(callback: CallbackQuery, state: FSMContext, platform_user: dict | None):
     if not platform_user:
         return
     tariff = platform_user["tariff"]
@@ -173,6 +174,11 @@ async def on_bl_upload(callback: CallbackQuery, platform_user: dict | None):
         await callback.answer("Загрузка файлов доступна с тарифа Старт.", show_alert=True)
         return
     chat_id = callback.data.split(":")[1]
+    await state.update_data(
+        chat_id=chat_id,
+        prompt_msg_id=callback.message.message_id
+    )
+    await state.set_state(BlacklistFSM.waiting_for_file_upload)
     await navigate(
         callback,
         "📂 <b>Загрузка файла ЧС</b>\n\n"
@@ -185,14 +191,28 @@ async def on_bl_upload(callback: CallbackQuery, platform_user: dict | None):
     )
 
 
-@router.message(F.document, StateFilter(None))
-async def on_bl_file_upload(message: Message, bot: Bot, platform_user: dict | None):
+@router.message(F.document, BlacklistFSM.waiting_for_file_upload)
+async def on_bl_file_upload(message: Message, bot: Bot, state: FSMContext, platform_user: dict | None):
     if not platform_user:
         return
 
     doc = message.document
     if not doc.file_name.lower().endswith((".txt", ".csv")):
+        await message.answer("❌ Поддерживаются только файлы TXT и CSV.")
         return  # Не файл ЧС
+
+    data = await state.get_data()
+    prompt_msg_id = data.get("prompt_msg_id")
+
+    if prompt_msg_id:
+        try:
+            await bot.delete_message(chat_id=message.chat.id, message_id=prompt_msg_id)
+        except Exception:
+            pass
+    try:
+        await message.delete()
+    except Exception:
+        pass
 
     owner_id = platform_user["user_id"]
     file = await bot.get_file(doc.file_id)
@@ -412,7 +432,22 @@ async def on_bs_bl_file(message: Message, bot: Bot, state: FSMContext,
     data = await state.get_data()
     child_bot_id = int(data.get("child_bot_id")) if data.get("child_bot_id") else None
     mode = data.get("bs_bl_mode", "add")  # "add" | "del"
-    owner_id = platform_user["user_id"]
+    prompt_msg_id = data.get("prompt_msg_id")
+
+    from handlers.channel_settings import resolve_owner_id
+    owner_id = await resolve_owner_id(platform_user["user_id"], child_bot_id) if child_bot_id else platform_user["user_id"]
+    if owner_id is None:
+        return
+
+    if prompt_msg_id:
+        try:
+            await bot.delete_message(chat_id=message.chat.id, message_id=prompt_msg_id)
+        except Exception:
+            pass
+    try:
+        await message.delete()
+    except Exception:
+        pass
 
     file_obj = await bot.get_file(doc.file_id)
     content_io = await bot.download_file(file_obj.file_path)

@@ -200,6 +200,26 @@ async def kick_single_user(owner_id: int, user_id: int | None, username: str | N
                 logger.info(f"[BL KICK] Resolved @{uname_clean} → {resolved_user_id} via Telegram API")
 
     if not resolved_user_id:
+        # Уровень 4: пробуем getChatMember(@username) прямо через дочернего бота.
+        # Telegram принимает @username в getChatMember и возвращает user_id даже для приватных аккаунтов.
+        if username and chats:
+            uname_at = f"@{username.lstrip('@')}"
+            from aiogram import Bot as _Bot
+            for chat in chats:
+                try:
+                    async with _Bot(token=chat["token"]).context() as _cb:
+                        member = await _cb.get_chat_member(chat["chat_id"], uname_at)
+                        if member and member.user and member.user.id:
+                            resolved_user_id = member.user.id
+                            logger.info(
+                                f"[BL KICK] Resolved {uname_at} → {resolved_user_id} via getChatMember "
+                                f"in chat={chat['chat_id']}"
+                            )
+                            break
+                except Exception as e:
+                    logger.debug(f"[BL KICK] getChatMember({uname_at}) failed in chat={chat['chat_id']}: {e}")
+
+    if not resolved_user_id:
         logger.info(f"[BL KICK] Cannot resolve user_id for username={username}, skip kick")
         return 0
 

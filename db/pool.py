@@ -28,23 +28,26 @@ async def create_pool() -> asyncpg.Pool:
         )
         # Пересоздаём уникальные индексы с учётом child_bot_id
         # Старые индексы (owner_id, user_id/username) блокируют per-bot добавление ON CONFLICT
+        import logging
+        logger = logging.getLogger(__name__)
+        # Старые индексы (owner_id, user_id/username) блокируют per-bot добавление ON CONFLICT
         try:
             await conn.execute("ALTER TABLE blacklist DROP CONSTRAINT IF EXISTS idx_bl_user_id CASCADE")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error(f"Failed DROP CONSTRAINT idx_bl_user_id: {e}")
         try:
             await conn.execute("DROP INDEX IF EXISTS idx_bl_user_id CASCADE")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error(f"Failed DROP INDEX idx_bl_user_id: {e}")
             
         try:
             await conn.execute("ALTER TABLE blacklist DROP CONSTRAINT IF EXISTS idx_bl_username CASCADE")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error(f"Failed DROP CONSTRAINT idx_bl_username: {e}")
         try:
             await conn.execute("DROP INDEX IF EXISTS idx_bl_username CASCADE")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error(f"Failed DROP INDEX idx_bl_username: {e}")
         # Глобальные записи (global admin, child_bot_id IS NULL)
         await conn.execute(
             """CREATE UNIQUE INDEX IF NOT EXISTS idx_bl_uid_global

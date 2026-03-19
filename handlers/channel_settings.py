@@ -2580,7 +2580,10 @@ async def on_bs_base(callback: CallbackQuery, platform_user: dict | None):
     if not platform_user:
         return
     child_bot_id = int(callback.data.split(":")[1])
-    owner_id = platform_user["user_id"]
+    owner_id = await resolve_owner_id(platform_user["user_id"], child_bot_id)
+    if owner_id is None:
+        await callback.answer("Нет доступа", show_alert=True)
+        return
 
     bot_row = await db.fetchrow(
         "SELECT bot_username, blacklist_enabled FROM child_bots WHERE id=$1 AND owner_id=$2",
@@ -2634,7 +2637,10 @@ async def on_bs_base_edit(callback: CallbackQuery, state: FSMContext,
         return
     await state.clear()
     child_bot_id = int(callback.data.split(":")[1])
-    owner_id = platform_user["user_id"]
+    owner_id = await resolve_owner_id(platform_user["user_id"], child_bot_id)
+    if owner_id is None:
+        await callback.answer("Нет доступа", show_alert=True)
+        return
 
     total = await db.fetchval(
         """SELECT COUNT(DISTINCT bu.user_id) FROM bot_users bu
@@ -3655,7 +3661,10 @@ async def on_bs_bl_export(callback: CallbackQuery, platform_user: dict | None):
         await callback.answer()
         return
     child_bot_id = int(callback.data.split(":")[1])
-    owner_id = platform_user["user_id"]
+    owner_id = await resolve_owner_id(platform_user["user_id"], child_bot_id)
+    if owner_id is None:
+        await callback.answer("Нет доступа", show_alert=True)
+        return
 
     try:
         total = await db.fetchval(
@@ -3711,8 +3720,11 @@ async def on_bs_bl_export_csv(callback: CallbackQuery, bot: Bot, platform_user: 
 
     logger = logging.getLogger(__name__)
 
-    owner_id = platform_user["user_id"]
     child_bot_id = int(callback.data.split(":")[1])
+    owner_id = await resolve_owner_id(platform_user["user_id"], child_bot_id)
+    if owner_id is None:
+        await callback.answer("Нет доступа", show_alert=True)
+        return
     await callback.answer("⏳ Формирую файл...", show_alert=False)
 
     rows = await db.fetch(
@@ -3778,8 +3790,11 @@ async def on_bs_bl_export_txt(callback: CallbackQuery, bot: Bot, platform_user: 
 
     logger = logging.getLogger(__name__)
 
-    owner_id = platform_user["user_id"]
     child_bot_id = int(callback.data.split(":")[1])
+    owner_id = await resolve_owner_id(platform_user["user_id"], child_bot_id)
+    if owner_id is None:
+        await callback.answer("Нет доступа", show_alert=True)
+        return
     await callback.answer("⏳ Формирую файл...", show_alert=False)
 
     rows = await db.fetch(
@@ -3837,7 +3852,10 @@ async def on_bs_bl_dl_bck(callback: CallbackQuery, bot: Bot, platform_user: dict
     parts = callback.data.split(":")
     child_bot_id = int(parts[1])
     top_msg_id = int(parts[2])
-    owner_id = platform_user["user_id"]
+    owner_id = await resolve_owner_id(platform_user["user_id"], child_bot_id)
+    if owner_id is None:
+        await callback.answer("Нет доступа", show_alert=True)
+        return
 
     # Удаляем верхнее сообщение со статусом генерации файла
     try:
@@ -4183,7 +4201,10 @@ async def on_bs_base_export_menu(callback: CallbackQuery, platform_user: dict | 
     if not platform_user:
         return
     child_bot_id = int(callback.data.split(":")[1])
-    owner_id = platform_user["user_id"]
+    owner_id = await resolve_owner_id(platform_user["user_id"], child_bot_id)
+    if owner_id is None:
+        await callback.answer("Нет доступа", show_alert=True)
+        return
 
     total = await db.fetchval(
         """SELECT COUNT(DISTINCT bu.user_id) FROM bot_users bu
@@ -4241,7 +4262,10 @@ async def on_bs_base_export(callback: CallbackQuery, bot: Bot, platform_user: di
     parts = callback.data.split(":")
     child_bot_id = int(parts[1])
     mode = parts[2] if len(parts) > 2 else "all"
-    owner_id = platform_user["user_id"]
+    owner_id = await resolve_owner_id(platform_user["user_id"], child_bot_id)
+    if owner_id is None:
+        await callback.answer("Нет доступа", show_alert=True)
+        return
 
     await callback.answer("⏳ Формирую файл...", show_alert=False)
 
@@ -4350,7 +4374,10 @@ async def on_bs_base_dl_bck(callback: CallbackQuery, bot: Bot, platform_user: di
     parts = callback.data.split(":")
     child_bot_id = int(parts[1])
     top_msg_id = int(parts[2])
-    owner_id = platform_user["user_id"]
+    owner_id = await resolve_owner_id(platform_user["user_id"], child_bot_id)
+    if owner_id is None:
+        await callback.answer("Нет доступа", show_alert=True)
+        return
 
     try:
         await bot.delete_message(chat_id=callback.message.chat.id, message_id=top_msg_id)

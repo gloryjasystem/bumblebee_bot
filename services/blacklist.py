@@ -430,14 +430,14 @@ async def sweep_unban_after_disable(owner_id: int) -> int:
     return total_unbanned
 
 
-async def sweep_unban_records(owner_id: int, records: list) -> None:
+async def sweep_unban_records(owner_id: int, records: list, child_bot_id: int | None = None) -> None:
     """
-    Фоновая задача разбана после очистки базы ЧС.
-    records: список строк из БД с полями user_id, username.
+    Фоновая задача разбана после очистки базы ЧС или удаления конкретных пользователей.
+    records: список словарей/строк из БД с полями user_id, username.
     """
     from aiogram import Bot
 
-    chats = await _get_chats_with_tokens(owner_id)
+    chats = await _get_chats_with_tokens(owner_id, child_bot_id)
     if not chats:
         return
 

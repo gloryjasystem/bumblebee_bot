@@ -235,6 +235,7 @@ async def on_bs_bl_text(message: Message, state: FSMContext, platform_user: dict
     added = removed = invalid = exists = 0
     results = []
     newly_added = []  # (user_id, username) для кика
+    newly_removed = []
 
     for token in lines[:100]:
         parsed = parse_blacklist_line(token)
@@ -274,6 +275,7 @@ async def on_bs_bl_text(message: Message, state: FSMContext, platform_user: dict
             if res and res.endswith("1"):
                 removed += 1
                 results.append(f"• {token} 🗑")
+                newly_removed.append({"user_id": uid, "username": uname})
             else:
                 invalid += 1
                 results.append(f"• {token} (нет в базе)")
@@ -322,6 +324,9 @@ async def on_bs_bl_text(message: Message, state: FSMContext, platform_user: dict
                 [InlineKeyboardButton(text="◀️ Назад к ЧС", callback_data=f"bs_blacklist:{child_bot_id}")]
             ])
         )
+        if newly_removed:
+            from services.blacklist import sweep_unban_records
+            asyncio.create_task(sweep_unban_records(owner_id, newly_removed, child_bot_id=child_bot_id))
 
 
 # ══════════════════════════════════════════════════════════════
@@ -393,6 +398,7 @@ async def on_bs_bl_file(message: Message, bot: Bot, state: FSMContext,
         text = content_bytes.decode("utf-8", errors="replace")
         lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
         removed = invalid = 0
+        newly_removed = []
         for line in lines:
             parsed = parse_blacklist_line(line)
             if not parsed:
@@ -413,6 +419,7 @@ async def on_bs_bl_file(message: Message, bot: Bot, state: FSMContext,
             # asyncpg returns "DELETE N"
             if res and res.endswith("1"):
                 removed += 1
+                newly_removed.append({"user_id": uid, "username": uname})
 
         total = await db.fetchval(
             "SELECT COUNT(*) FROM blacklist WHERE owner_id=$1 AND child_bot_id=$2", owner_id, child_bot_id,
@@ -433,3 +440,6 @@ async def on_bs_bl_file(message: Message, bot: Bot, state: FSMContext,
                 )],
             ]),
         )
+        if newly_removed:
+            from services.blacklist import sweep_unban_records
+            asyncio.create_task(sweep_unban_records(owner_id, newly_removed, child_bot_id=child_bot_id))

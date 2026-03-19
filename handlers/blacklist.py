@@ -85,6 +85,7 @@ async def on_bl_manual_input(message: Message, state: FSMContext, platform_user:
     owner_id = platform_user["user_id"]
 
     from services.security import parse_blacklist_line
+    from services.blacklist import resolve_username_to_id
     lines = message.text.replace(",", "\n").split()
     added = errors = 0
     results = []
@@ -93,11 +94,19 @@ async def on_bl_manual_input(message: Message, state: FSMContext, platform_user:
     for token in lines[:100]:  # Макс 100 за раз вручную
         parsed = parse_blacklist_line(token)
         if parsed:
-            ok = await add_to_blacklist(owner_id, parsed["user_id"], parsed["username"])
+            uid = parsed["user_id"]
+            uname = parsed["username"]
+            # Если только username — пробуем резолвить в user_id через API
+            if not uid and uname:
+                resolved = await resolve_username_to_id(uname)
+                if resolved:
+                    uid = resolved
+            ok = await add_to_blacklist(owner_id, uid, uname)
             if ok:
                 added += 1
-                results.append(f"• {token} ✅")
-                newly_added.append((parsed["user_id"], parsed["username"]))
+                suffix = f" (ID: <code>{uid}</code>)" if uid and not parsed["user_id"] else ""
+                results.append(f"• {token} ✅{suffix}")
+                newly_added.append((uid, uname))
             else:
                 results.append(f"• {token} (уже был)")
         else:
@@ -133,6 +142,7 @@ async def on_bl_manual_input(message: Message, state: FSMContext, platform_user:
             except Exception:
                 pass
     asyncio.create_task(_kick_all())
+
 
 
 # ── Загрузка файла ────────────────────────────────────────────
@@ -219,6 +229,7 @@ async def on_bs_bl_text(message: Message, state: FSMContext, platform_user: dict
     owner_id = platform_user["user_id"]
 
     from services.security import parse_blacklist_line
+    from services.blacklist import resolve_username_to_id
     lines = message.text.replace(",", "\n").split()
     added = removed = invalid = exists = 0
     results = []
@@ -231,11 +242,18 @@ async def on_bs_bl_text(message: Message, state: FSMContext, platform_user: dict
             continue
 
         if mode == "add":
-            ok = await add_to_blacklist(owner_id, parsed["user_id"], parsed["username"])
+            uid = parsed["user_id"]
+            uname = parsed["username"]
+            if not uid and uname:
+                resolved = await resolve_username_to_id(uname)
+                if resolved:
+                    uid = resolved
+            ok = await add_to_blacklist(owner_id, uid, uname)
             if ok:
                 added += 1
-                results.append(f"• {token} ✅")
-                newly_added.append((parsed["user_id"], parsed["username"]))
+                suffix = f" (ID: <code>{uid}</code>)" if uid and not parsed["user_id"] else ""
+                results.append(f"• {token} ✅{suffix}")
+                newly_added.append((uid, uname))
             else:
                 exists += 1
                 results.append(f"• {token} (уже в базе)")

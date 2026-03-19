@@ -10,7 +10,28 @@ from services.security import parse_blacklist_line
 logger = logging.getLogger(__name__)
 
 
+async def resolve_username_to_id(username: str) -> int | None:
+    """
+    Пробует резолвить @username → Telegram user_id через Bot API (get_chat).
+    Работает для ПУБЛИЧНЫХ аккаунтов.
+    Возвращает user_id (int) или None если не удалось.
+    """
+    from aiogram import Bot
+    from config import settings
+    try:
+        master_bot = Bot(token=settings.bot_token)
+        chat = await master_bot.get_chat(f"@{username.lstrip('@')}")
+        await master_bot.session.close()
+        if chat and chat.id:
+            logger.info(f"[BL] Resolved @{username} → user_id={chat.id}")
+            return chat.id
+    except Exception as e:
+        logger.debug(f"[BL] Cannot resolve @{username}: {e}")
+    return None
+
+
 async def check_blacklist(owner_id: int, user_id: int, username: str | None) -> bool:
+
     """
     Мгновенная проверка пользователя по ЧС.
     Использует индексированные поля — < 1 мс при 1M записей.

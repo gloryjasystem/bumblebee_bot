@@ -432,46 +432,101 @@ async def sweep_unban_after_disable(owner_id: int) -> int:
 
 async def sweep_unban_records(owner_id: int, records: list, child_bot_id: int | None = None) -> None:
     """
-    Фоновая задача разбана после очистки базы ЧС или удаления конкретных пользователей.
-    records: список словарей/строк из БД с полями user_id, username.
+    Фоновая задача разбана после удаления пользователей из ЧС.
+    records: список словарей с полями user_id, username (одно из них может быть None).
+
+    Логика резолва user_id (3 уровня):
+    1. Берём user_id прямо из записи ЧС (если есть).
+    2. Ищем в bot_users по username (если user_id нет).
+    3. Запрашиваем Telegram API через resolve_username_to_id (публичные аккаунты).
     """
     from aiogram import Bot
 
     chats = await _get_chats_with_tokens(owner_id, child_bot_id)
     if not chats:
+        logger.info(f"[BL UNBAN] No active chats found for owner={owner_id} child_bot_id={child_bot_id}, skip unban")
         return
 
-    explicit_user_ids = {r["user_id"] for r in records if r["user_id"] is not None}
-    usernames = [r["username"].lower() for r in records if r["username"] is not None]
+    # ── Шаг 1: собираем user_id напрямую из записей ──────────────
+    resolved_ids: set[int] = set()
+    unresolved_usernames: list[str] = []
+
+    for r in records:
+        uid = r.get("user_id") if isinstance(r, dict) else r["user_id"]
+        uname = r.get("username") if isinstance(r, dict) else r["username"]
+        if uid:
+            resolved_ids.add(uid)
+        elif uname:
+            unresolved_usernames.append(uname.lower().lstrip("@"))
+
+    # ── Шаг 2: пытаемся резолвить username через bot_users ───────
+    if unresolved_usernames:
+        rows = await db.fetch(
+            """
+            SELECT DISTINCT user_id FROM bot_users
+            WHERE owner_id=$1 AND lower(username)=ANY($2::text[]) AND user_id IS NOT NULL
+            """,
+            owner_id, unresolved_usernames,
+        )
+        for row in rows:
+            resolved_ids.add(row["user_id"])
+        # Отфильтровываем те, которые уже нашли
+        found_via_bu = {r["user_id"] for r in rows}
+        # Находим usernames, которые ещё не резолвились — попробуем через API
+        still_unresolved: list[str] = []
+        if found_via_bu:
+            # Если нашли хоть кого-то — нужно понять, какие username остались не резолвлены
+            # Делаем это через повторный запрос
+            found_usernames = await db.fetch(
+                """
+                SELECT DISTINCT lower(username) as uname FROM bot_users
+                WHERE owner_id=$1 AND lower(username)=ANY($2::text[]) AND user_id IS NOT NULL
+                """,
+                owner_id, unresolved_usernames,
+            )
+            found_uname_set = {r["uname"] for r in found_usernames}
+            still_unresolved = [u for u in unresolved_usernames if u not in found_uname_set]
+        else:
+            still_unresolved = unresolved_usernames
+
+        # ── Шаг 3: резолвим оставшихся через Telegram API ────────
+        for uname in still_unresolved:
+            api_uid = await resolve_username_to_id(uname)
+            if api_uid:
+                resolved_ids.add(api_uid)
+                logger.info(f"[BL UNBAN] Resolved @{uname} → {api_uid} via Telegram API")
+            else:
+                logger.warning(f"[BL UNBAN] Could not resolve @{uname} — skipping")
+
+    if not resolved_ids:
+        logger.info(f"[BL UNBAN] No user_ids to unban for owner={owner_id}")
+        return
+
+    logger.info(f"[BL UNBAN] Will unban {len(resolved_ids)} users across {len(chats)} chats for owner={owner_id}")
 
     for chat in chats:
         chat_id = chat["chat_id"]
         token = chat["token"]
-
-        username_user_ids = set()
-        if usernames:
-            resolved = await db.fetch(
-                "SELECT user_id FROM bot_users WHERE owner_id=$1 AND chat_id=$2 AND lower(username)=ANY($3::text[])",
-                owner_id, chat_id, usernames,
-            )
-            username_user_ids = {r["user_id"] for r in resolved}
-
-        all_user_ids = explicit_user_ids | username_user_ids
-        if not all_user_ids:
-            continue
-
         try:
             async with Bot(token=token).context() as child_bot:
-                for uid in all_user_ids:
+                for uid in resolved_ids:
                     try:
-                        logger.info(f"[BL UNBAN] Attempting to unban user={uid} from chat={chat_id}")
-                        await child_bot.unban_chat_member(chat_id, uid)
-                        logger.info(f"[BL UNBAN] Successfully unbanned user={uid} in chat={chat_id}")
+                        # only_if_banned=True — не выбрасывает ошибку если пользователь не забанен
+                        await child_bot.unban_chat_member(chat_id, uid, only_if_banned=True)
+                        # Восстанавливаем запись в bot_users, чтобы пользователь мог снова вступить
+                        await db.execute(
+                            """
+                            UPDATE bot_users SET is_active=true, left_at=NULL
+                            WHERE owner_id=$1 AND chat_id=$2 AND user_id=$3
+                            """,
+                            owner_id, chat_id, uid,
+                        )
+                        logger.info(f"[BL UNBAN] Unbanned user={uid} from chat={chat_id}")
                     except Exception as e:
-                        logger.error(f"[BL UNBAN ERROR] Unban failed for {uid} in {chat_id}: {e}")
+                        logger.error(f"[BL UNBAN ERROR] Unban failed for user={uid} in chat={chat_id}: {e}")
                     await asyncio.sleep(0.05)
         except Exception as e:
-            logger.error(f"[BL UNBAN FATAL] Failed to use child_bot unban for chat {chat_id}: {e}")
+            logger.error(f"[BL UNBAN FATAL] Cannot use child_bot for chat={chat_id}: {e}")
 
 
 async def get_blacklist_count(owner_id: int, child_bot_id: int | None = None) -> int:

@@ -4163,7 +4163,7 @@ async def on_bs_bl_clear_do(callback: CallbackQuery, platform_user: dict | None)
     import asyncio
     from services.blacklist import sweep_unban_records
     if records:
-        asyncio.create_task(sweep_unban_records(owner_id, records, child_bot_id=child_bot_id))
+        asyncio.create_task(sweep_unban_records(owner_id, [dict(r) for r in records], child_bot_id=int(child_bot_id)))
 
     await callback.message.edit_text(
         f"⏳ <b>Процесс запущен!</b>\n\n"

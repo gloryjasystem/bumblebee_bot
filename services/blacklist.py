@@ -465,7 +465,7 @@ async def sweep_unban_records(owner_id: int, records: list, child_bot_id: int | 
                 for uid in all_user_ids:
                     try:
                         logger.info(f"[BL UNBAN] Attempting to unban user={uid} from chat={chat_id}")
-                        await child_bot.unban_chat_member(chat_id, uid, only_if_banned=True)
+                        await child_bot.unban_chat_member(chat_id, uid)
                         logger.info(f"[BL UNBAN] Successfully unbanned user={uid} in chat={chat_id}")
                     except Exception as e:
                         logger.error(f"[BL UNBAN ERROR] Unban failed for {uid} in {chat_id}: {e}")

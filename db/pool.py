@@ -18,6 +18,11 @@ async def create_pool() -> asyncpg.Pool:
         command_timeout=30,
         ssl="require" if "railway.app" in settings.database_url else None,
     )
+    # Авто-миграции: безопасны при повторном запуске (IF NOT EXISTS)
+    async with _pool.acquire() as conn:
+        await conn.execute(
+            "ALTER TABLE child_bots ADD COLUMN IF NOT EXISTS blocked_count BIGINT DEFAULT 0"
+        )
     return _pool
 
 

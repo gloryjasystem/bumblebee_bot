@@ -839,7 +839,7 @@ async def _export_users_csv(bot: Bot, chat_id: int, admin_id: int, export_type: 
             pass
 
     if not rows:
-        kb = [[InlineKeyboardButton(text="◀️ Назад в Меню", callback_data=f"ga_dl_bck:{owner_id}")]]
+        kb = [[InlineKeyboardButton(text="◀️ Назад в Меню", callback_data=f"ga_dl_bck:{admin_id}")]]
         return await bot.send_message(chat_id, "⚠️ База пуста по заданным критериям.", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
         
     fd, path = tempfile.mkstemp(suffix=".csv")
@@ -857,7 +857,7 @@ async def _export_users_csv(bot: Bot, chat_id: int, admin_id: int, export_type: 
             
     doc = FSInputFile(path, filename=f"global_audience_{export_type}.csv")
     
-    kb = [[InlineKeyboardButton(text="◀️ Назад в Базу Аудитории", callback_data=f"ga_dl_bck:{owner_id}")]]
+    kb = [[InlineKeyboardButton(text="◀️ Назад в Базу Аудитории", callback_data=f"ga_dl_bck:{admin_id}")]]
     await bot.send_document(chat_id, document=doc, caption="✅ Ваш отчет скомпилирован и готов.", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
     
     try:

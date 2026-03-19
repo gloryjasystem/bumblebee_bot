@@ -153,7 +153,8 @@ async def _ban_user_in_chat(token: str, chat_id: int, user_id: int) -> bool:
         # Если пользователя нет в чате — это не ошибка, просто не нашли
         if "user not found" in err or "user_not_participant" in err or "member_not_found" in err:
             return False
-        logger.debug(f"[BL KICK] ban failed user={user_id} chat={chat_id}: {e}")
+        # Любая другая ошибка (например, нет прав)
+        logger.warning(f"[BL KICK] ban FAILED user={user_id} chat={chat_id}: {e}")
         return False
 
 
@@ -225,14 +226,19 @@ async def kick_single_user(owner_id: int, user_id: int | None, username: str | N
 
     for chat in chats:
         success = await _ban_user_in_chat(chat["token"], chat["chat_id"], resolved_user_id)
+        
+        # В ЛЮБОМ СЛУЧАЕ помечаем пользователя как неактивного в нашей БД.
+        # Даже если бан через Telegram не удался (например, юзер уже сам вышел, 
+        # или у бота временно нет прав) — по факту он в ЧС и не должен числиться активным.
+        await db.execute(
+            "UPDATE bot_users SET is_active=false, left_at=now() "
+            "WHERE owner_id=$1 AND chat_id=$2 AND user_id=$3",
+            owner_id, chat["chat_id"], resolved_user_id,
+        )
+
         if success:
-            # Помечаем в bot_users как неактивного
-            await db.execute(
-                "UPDATE bot_users SET is_active=false, left_at=now() "
-                "WHERE owner_id=$1 AND chat_id=$2 AND user_id=$3",
-                owner_id, chat["chat_id"], resolved_user_id,
-            )
             kicked += 1
+            
         await asyncio.sleep(0.05)  # 20 банов/сек — безопасный лимит
 
     # Инкрементируем счётчик заблокированных
@@ -395,13 +401,18 @@ async def sweep_after_import(owner_id: int, child_bot_id: int | None = None, new
 
         for uid in all_user_ids:
             success = await _ban_user_in_chat(token, chat_id, uid)
+            
+            # В ЛЮБОМ СЛУЧАЕ помечаем пользователя как неактивного в нашей БД.
+            # Даже если бан через Telegram не удался — этот юзер в ЧС.
+            await db.execute(
+                "UPDATE bot_users SET is_active=false, left_at=now() "
+                "WHERE owner_id=$1 AND chat_id=$2 AND user_id=$3",
+                owner_id, chat_id, uid,
+            )
+
             if success:
-                await db.execute(
-                    "UPDATE bot_users SET is_active=false, left_at=now() "
-                    "WHERE owner_id=$1 AND chat_id=$2 AND user_id=$3",
-                    owner_id, chat_id, uid,
-                )
                 total_banned += 1
+                
             await asyncio.sleep(0.05)
 
     # Инкрементируем счётчик

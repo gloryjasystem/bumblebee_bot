@@ -201,8 +201,9 @@ async def on_bl_file_upload(message: Message, bot: Bot, platform_user: dict | No
         f"📊 Итого в базе: {stats['total']:,}\n\n"
         f"⚙️ Запускаю авто-зачистку в фоне..."
     )
-    # Фоновая зачистка с rate limiting
-    asyncio.create_task(sweep_after_import(owner_id))
+    # Фоновая зачистка — передаём список ТОЛЬКО новых записей, чтобы не задваивать счётчик
+    if stats.get("newly_added"):
+        asyncio.create_task(sweep_after_import(owner_id, newly_added=stats["newly_added"]))
 
 
 

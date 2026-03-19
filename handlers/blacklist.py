@@ -225,7 +225,7 @@ async def on_bs_bl_text(message: Message, state: FSMContext, platform_user: dict
         return
 
     data = await state.get_data()
-    child_bot_id = data.get("child_bot_id")
+    child_bot_id = int(data.get("child_bot_id")) if data.get("child_bot_id") else None
     mode = data.get("bs_bl_mode", "add")
     owner_id = platform_user["user_id"]
 
@@ -352,7 +352,7 @@ async def on_bs_bl_file(message: Message, bot: Bot, state: FSMContext,
         return
 
     data = await state.get_data()
-    child_bot_id = data.get("child_bot_id")
+    child_bot_id = int(data.get("child_bot_id")) if data.get("child_bot_id") else None
     mode = data.get("bs_bl_mode", "add")  # "add" | "del"
     owner_id = platform_user["user_id"]
 

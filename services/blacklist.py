@@ -173,15 +173,33 @@ async def kick_single_user(owner_id: int, user_id: int | None, username: str | N
     # Резолвим user_id через username если не задан явно
     resolved_user_id = user_id
     if not resolved_user_id and username:
+        uname_clean = username.lower().lstrip("@")
+
+        # Уровень 1: ищем в bot_users по owner
         row = await db.fetchrow(
-            "SELECT user_id FROM bot_users WHERE owner_id=$1 AND lower(username)=lower($2) LIMIT 1",
-            owner_id, username,
+            "SELECT user_id FROM bot_users WHERE owner_id=$1 AND lower(username)=lower($2) AND user_id IS NOT NULL LIMIT 1",
+            owner_id, uname_clean,
         )
         if row:
             resolved_user_id = row["user_id"]
 
+        # Уровень 2: ищем в bot_users без фильтра по owner (вдруг owner_id другой)
+        if not resolved_user_id:
+            row = await db.fetchrow(
+                "SELECT user_id FROM bot_users WHERE lower(username)=lower($1) AND user_id IS NOT NULL LIMIT 1",
+                uname_clean,
+            )
+            if row:
+                resolved_user_id = row["user_id"]
+                logger.info(f"[BL KICK] Resolved @{uname_clean} → {resolved_user_id} via bot_users (any owner)")
+
+        # Уровень 3: запрашиваем Telegram API (работает для публичных аккаунтов)
+        if not resolved_user_id:
+            resolved_user_id = await resolve_username_to_id(uname_clean)
+            if resolved_user_id:
+                logger.info(f"[BL KICK] Resolved @{uname_clean} → {resolved_user_id} via Telegram API")
+
     if not resolved_user_id:
-        # Без user_id забанить через Telegram API невозможно
         logger.info(f"[BL KICK] Cannot resolve user_id for username={username}, skip kick")
         return 0
 

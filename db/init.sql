@@ -403,3 +403,6 @@ ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS created_at  TIMESTAMPTZ DEFAULT n
 
 -- Мастер-тумблер глобального ЧС (включить/выключить блокировку для всей сети)
 ALTER TABLE platform_users ADD COLUMN IF NOT EXISTS blacklist_active BOOLEAN DEFAULT true;
+
+-- Счётчик сработавших блокировок ЧС (отклонённые заявки + кики из каналов)
+ALTER TABLE platform_users ADD COLUMN IF NOT EXISTS blocked_count BIGINT DEFAULT 0;

@@ -458,22 +458,39 @@ async def on_ga_top_bots(callback: CallbackQuery):
 
 async def _kick_from_all_chats(owner_id: int, target_user_id: int):
     """Кикает пользователя изо всех площадок ботов, активированных в глобальной сети."""
+    from services.security import decrypt_token
     async with get_pool().acquire() as conn:
         bots_chats = await conn.fetch("""
-            SELECT cb.bot_token, bc.chat_id
+            SELECT cb.token_encrypted, bc.chat_id
             FROM bot_chats bc
             JOIN child_bots cb ON cb.id = bc.child_bot_id
             WHERE bc.owner_id = $1 AND bc.is_active = true AND cb.in_global_network = true
         """, owner_id)
 
+    import asyncio
+    kicked = 0
     for row in bots_chats:
-        temp_bot = Bot(token=row['bot_token'])
+        token = decrypt_token(row['token_encrypted'])
+        if not token:
+            continue
+        temp_bot = Bot(token=token)
         try:
             await temp_bot.ban_chat_member(chat_id=row['chat_id'], user_id=target_user_id)
+            kicked += 1
         except Exception as e:
             logger.debug(f"Global Ban warning for chat {row['chat_id']}: {e}")
         finally:
             await temp_bot.session.close()
+        await asyncio.sleep(0.05)
+
+    # Инкрементируем счётчик заблокированных
+    if kicked > 0:
+        async with get_pool().acquire() as conn:
+            await conn.execute(
+                "UPDATE platform_users SET blocked_count = blocked_count + $1 WHERE user_id = $2",
+                kicked, owner_id,
+            )
+        logger.info(f"[GA KICK] user={target_user_id} kicked from {kicked} chats for owner={owner_id}")
 
 
 
@@ -485,11 +502,14 @@ async def on_ga_bl(callback: CallbackQuery):
 
     async with get_pool().acquire() as conn:
         bl_count = await conn.fetchval("SELECT COUNT(*) FROM blacklist WHERE owner_id=$1", owner_id) or 0
-        bl_active = await conn.fetchval(
-            "SELECT blacklist_active FROM platform_users WHERE user_id=$1", owner_id
+        pu_row = await conn.fetchrow(
+            "SELECT blacklist_active, COALESCE(blocked_count, 0) AS blocked_count FROM platform_users WHERE user_id=$1",
+            owner_id
         )
+        bl_active = pu_row['blacklist_active'] if pu_row else True
         if bl_active is None:
             bl_active = True
+        total_blocked = pu_row['blocked_count'] if pu_row else 0
         active_bots = await conn.fetch("""
             SELECT bot_username FROM child_bots
             WHERE owner_id=$1 AND in_global_network=true
@@ -511,7 +531,8 @@ async def on_ga_bl(callback: CallbackQuery):
         "🚫 <b>Глобальный Чёрный Список</b>\n"
         "─────────────────────────────\n"
         f"{shield}\n\n"
-        f"📂 Записей в базе: <b>{bl_count}</b>\n\n"
+        f"📂 Записей в базе: <b>{bl_count}</b>\n"
+        f"🚫 Заблокировано всего: <b>{total_blocked:,}</b>\n\n"
         f"🤖 <b>Распространяется на ботов:</b>\n{bots_list}\n\n"
         "<i>Управлять ботами — '🗄️ Управление общей базой'</i>"
     )

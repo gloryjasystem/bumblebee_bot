@@ -11,7 +11,7 @@ import asyncio
 import db.pool as db
 from services.blacklist import (
     add_to_blacklist, import_file, sweep_after_import,
-    get_blacklist_count, check_blacklist,
+    get_blacklist_count, check_blacklist, kick_single_user,
 )
 from services.security import validate_bl_file
 from config import settings
@@ -88,6 +88,7 @@ async def on_bl_manual_input(message: Message, state: FSMContext, platform_user:
     lines = message.text.replace(",", "\n").split()
     added = errors = 0
     results = []
+    newly_added = []  # (user_id, username) для кика
 
     for token in lines[:100]:  # Макс 100 за раз вручную
         parsed = parse_blacklist_line(token)
@@ -96,6 +97,7 @@ async def on_bl_manual_input(message: Message, state: FSMContext, platform_user:
             if ok:
                 added += 1
                 results.append(f"• {token} ✅")
+                newly_added.append((parsed["user_id"], parsed["username"]))
             else:
                 results.append(f"• {token} (уже был)")
         else:
@@ -111,8 +113,26 @@ async def on_bl_manual_input(message: Message, state: FSMContext, platform_user:
     await message.answer(
         f"✅ <b>Добавлено: {added}</b> | ❌ Ошибок: {errors}\n\n"
         f"{result_text}\n\n"
-        f"Итого в базе: {total:,}"
+        f"Итого в базе: {total:,}\n"
+        f"⚡ Запускаю зачистку из каналов...",
+        parse_mode="HTML",
     )
+
+    # Фоновый кик из всех каналов
+    async def _kick_all():
+        kicked = 0
+        for uid, uname in newly_added:
+            kicked += await kick_single_user(owner_id, uid, uname)
+        if kicked > 0:
+            try:
+                await message.answer(
+                    f"🚫 <b>Выкинуто из каналов: {kicked}</b>\n"
+                    f"Пользователи находились в ваших площадках и были удалены.",
+                    parse_mode="HTML",
+                )
+            except Exception:
+                pass
+    asyncio.create_task(_kick_all())
 
 
 # ── Загрузка файла ────────────────────────────────────────────
@@ -202,6 +222,7 @@ async def on_bs_bl_text(message: Message, state: FSMContext, platform_user: dict
     lines = message.text.replace(",", "\n").split()
     added = removed = invalid = exists = 0
     results = []
+    newly_added = []  # (user_id, username) для кика
 
     for token in lines[:100]:
         parsed = parse_blacklist_line(token)
@@ -214,6 +235,7 @@ async def on_bs_bl_text(message: Message, state: FSMContext, platform_user: dict
             if ok:
                 added += 1
                 results.append(f"• {token} ✅")
+                newly_added.append((parsed["user_id"], parsed["username"]))
             else:
                 exists += 1
                 results.append(f"• {token} (уже в базе)")
@@ -248,11 +270,27 @@ async def on_bs_bl_text(message: Message, state: FSMContext, platform_user: dict
         await message.answer(
             f"✅ <b>Добавлено: {added}</b> | Ошибок: {invalid}\n\n"
             f"{result_text}\n\n"
-            f"Итого в ЧС: {total:,}",
+            f"Итого в ЧС: {total:,}\n"
+            f"⚡ Запускаю зачистку из каналов...",
+            parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="◀️ Назад к ЧС", callback_data=f"bs_blacklist:{child_bot_id}")]
             ])
         )
+        # Фоновый кик
+        async def _kick_bs():
+            kicked = 0
+            for uid, uname in newly_added:
+                kicked += await kick_single_user(owner_id, uid, uname)
+            if kicked > 0:
+                try:
+                    await message.answer(
+                        f"🚫 <b>Выкинуто из каналов: {kicked}</b>",
+                        parse_mode="HTML",
+                    )
+                except Exception:
+                    pass
+        asyncio.create_task(_kick_bs())
     else:
         await message.answer(
             f"✅ <b>Удалено: {removed}</b> | Ошибок: {invalid}\n\n"

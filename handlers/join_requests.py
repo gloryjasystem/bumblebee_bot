@@ -64,6 +64,11 @@ async def on_join_request(event: ChatJoinRequest, bot: Bot):
                 await bot.ban_chat_member(event.chat.id, user.id)
             except Exception:
                 pass
+            # Счётчик заблокированных
+            await db.execute(
+                "UPDATE platform_users SET blocked_count = blocked_count + 1 WHERE user_id = $1",
+                owner_id,
+            )
             await _log_action(owner_id, event.chat.id, "reject_bl", user.id)
             logger.info(f"[BL] Rejected {user.id} from {event.chat.id}")
             return
@@ -199,6 +204,11 @@ async def on_member_update(event: ChatMemberUpdated, bot: Bot):
                     await bot.ban_chat_member(event.chat.id, user.id)
                 except Exception:
                     pass
+                # Счётчик заблокированных
+                await db.execute(
+                    "UPDATE platform_users SET blocked_count = blocked_count + 1 WHERE user_id = $1",
+                    owner_id,
+                )
                 await _log_action(owner_id, event.chat.id, "ban_on_join", user.id)
                 return
 

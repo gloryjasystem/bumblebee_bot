@@ -12,6 +12,63 @@ logger = logging.getLogger(__name__)
 router = Router()
 
 
+# ══════════════════════════════════════════════════════════
+# ВРЕМЕННЫЙ ДИАГНОСТИЧЕСКИЙ ХЕНДЛЕР — удалить после проверки
+# Команда: /dbcheck <child_bot_id>
+# ══════════════════════════════════════════════════════════
+@router.message(Command("dbcheck"))
+async def cmd_dbcheck(message: Message):
+    from config import settings
+    if message.from_user.id != settings.owner_telegram_id:
+        return
+    args = (message.text or "").split()
+    child_bot_id = int(args[1]) if len(args) > 1 else None
+
+    async with get_pool().acquire() as conn:
+        # Все боты владельца
+        bots = await conn.fetch(
+            "SELECT id, bot_username, owner_id FROM child_bots ORDER BY id"
+        )
+        bots_text = "\n".join(f"  id={b['id']} @{b['bot_username']} owner={b['owner_id']}" for b in bots)
+
+        if child_bot_id is None and bots:
+            child_bot_id = bots[0]['id']
+
+        # Чаты этого бота
+        chats = await conn.fetch(
+            "SELECT chat_id, chat_title FROM bot_chats WHERE child_bot_id=$1 AND is_active=true",
+            child_bot_id
+        )
+
+        users_text = ""
+        for chat in chats:
+            users = await conn.fetch(
+                """SELECT user_id, username, first_name, is_active
+                   FROM bot_users WHERE chat_id=$1
+                   ORDER BY joined_at DESC LIMIT 10""",
+                chat['chat_id']
+            )
+            users_text += f"\n📋 chat={chat['chat_id']} ({chat['chat_title']}):\n"
+            for u in users:
+                users_text += f"  uid={u['user_id']} uname={repr(u['username'])} name={repr(u['first_name'])} active={u['is_active']}\n"
+
+        # Последние записи ЧС
+        bl = await conn.fetch(
+            "SELECT user_id, username FROM blacklist WHERE child_bot_id=$1 ORDER BY added_at DESC LIMIT 5",
+            child_bot_id
+        )
+        bl_text = "\n".join(f"  uid={r['user_id']} uname={repr(r['username'])}" for r in bl)
+
+    await message.answer(
+        f"🤖 <b>child_bots:</b>\n<code>{bots_text}</code>\n\n"
+        f"🎯 <b>Диагностика child_bot_id={child_bot_id}</b>\n\n"
+        f"👥 <b>bot_users (последние 10 на чат):</b>\n<code>{users_text.strip()}</code>\n\n"
+        f"🚫 <b>blacklist (последние 5):</b>\n<code>{bl_text or 'пусто'}</code>",
+        parse_mode="HTML"
+    )
+# ══════════════════════════════════════════════════════════
+
+
 class BotNetworkFSM(StatesGroup):
     waiting_search = State()
 

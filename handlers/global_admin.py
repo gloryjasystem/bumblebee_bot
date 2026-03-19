@@ -513,16 +513,17 @@ async def on_ga_top_bots(callback: CallbackQuery):
     await callback.answer()
 
 
-async def _kick_from_all_chats(owner_id: int, target_user_id: int):
-    """Кикает пользователя изо всех площадок ботов, активированных в глобальной сети."""
+async def _kick_from_all_chats(admin_id: int, target_user_id: int):
+    """Кикает пользователя изо всех площадок ботов, отмеченных админом в своей выборке (ga_selected_bots)."""
     from services.security import decrypt_token
     async with get_pool().acquire() as conn:
         bots_chats = await conn.fetch("""
             SELECT cb.token_encrypted, bc.chat_id
-            FROM bot_chats bc
-            JOIN child_bots cb ON cb.id = bc.child_bot_id
-            WHERE bc.owner_id = $1 AND bc.is_active = true AND cb.in_global_network = true
-        """, owner_id)
+            FROM ga_selected_bots gsb
+            JOIN child_bots cb ON cb.id = gsb.child_bot_id
+            JOIN bot_chats bc ON bc.child_bot_id = cb.id
+            WHERE gsb.admin_id = $1 AND bc.is_active = true
+        """, admin_id)
 
     import asyncio
     kicked = 0
@@ -540,14 +541,8 @@ async def _kick_from_all_chats(owner_id: int, target_user_id: int):
             await temp_bot.session.close()
         await asyncio.sleep(0.05)
 
-    # Инкрементируем счётчик заблокированных
     if kicked > 0:
-        async with get_pool().acquire() as conn:
-            await conn.execute(
-                "UPDATE platform_users SET blocked_count = blocked_count + $1 WHERE user_id = $2",
-                kicked, owner_id,
-            )
-        logger.info(f"[GA KICK] user={target_user_id} kicked from {kicked} chats for owner={owner_id}")
+        logger.info(f"[GA KICK] user={target_user_id} kicked from {kicked} chats by admin={admin_id}")
 
 
 
@@ -557,7 +552,10 @@ async def on_ga_bl(callback: CallbackQuery):
     if not role:
         return await callback.answer("❌ Нет прав", show_alert=True)
 
+    admin_id = callback.from_user.id
+
     async with get_pool().acquire() as conn:
+        # ЧС считается глобально по owner_id (владельцу платформы)
         bl_count = await conn.fetchval("SELECT COUNT(*) FROM blacklist WHERE owner_id=$1", owner_id) or 0
         pu_row = await conn.fetchrow(
             "SELECT blacklist_active, COALESCE(blocked_count, 0) AS blocked_count FROM platform_users WHERE user_id=$1",
@@ -567,15 +565,18 @@ async def on_ga_bl(callback: CallbackQuery):
         if bl_active is None:
             bl_active = True
         total_blocked = pu_row['blocked_count'] if pu_row else 0
-        active_bots = await conn.fetch("""
-            SELECT bot_username FROM child_bots
-            WHERE owner_id=$1 AND in_global_network=true
-            ORDER BY created_at ASC
-        """, owner_id)
+        # Отображаем боты из выборки текущего администратора
+        selected_bots = await conn.fetch("""
+            SELECT cb.bot_username
+            FROM ga_selected_bots gsb
+            JOIN child_bots cb ON cb.id = gsb.child_bot_id
+            WHERE gsb.admin_id = $1
+            ORDER BY gsb.selected_at ASC
+        """, admin_id)
 
-    bots_list = ("\n".join(f"• @{r['bot_username']}" for r in active_bots)
-                 if active_bots else
-                 "❎ Нет активных ботов. Перейдите в '🗄️ Управление общей базой'")
+    bots_list = ("\n".join(f"• @{r['bot_username']}" for r in selected_bots)
+                 if selected_bots else
+                 "❎ Выборка пуста. Перейдите в '🗄️ Управление общей базой'")
 
     if bl_active:
         shield = "🛡️ <b>Защита АКТИВНА</b> — записи ЧС блокируют вход"
@@ -706,9 +707,9 @@ async def cmd_block(message: Message):
                 VALUES ($1, $2, 'block', $3)
             """, owner_id, message.from_user.id,
                 json.dumps({"info": f"Blocked user {target_id} via /block"}))
-            await message.answer(f"✅ Пользователь <code>{target_id}</code> занесён в Глобальный ЧС.\nНачинаю блокировку во всех активных ботах...")
+            await message.answer(f"✅ Пользователь <code>{target_id}</code> занесён в Глобальный ЧС.\nНачинаю блокировку во всех активных ботах...", parse_mode="HTML")
             import asyncio
-            asyncio.create_task(_kick_from_all_chats(owner_id, target_id))
+            asyncio.create_task(_kick_from_all_chats(message.from_user.id, target_id))
         except asyncpg.UniqueViolationError:
             await message.answer("⚠️ Пользователь уже находится в Глобальном ЧС.")
 
@@ -745,26 +746,26 @@ import csv
 import os
 from aiogram.types import FSInputFile
 
-async def _show_ga_users(message_or_cb, owner_id: int):
+async def _show_ga_users(message_or_cb, admin_id: int, owner_id: int):
     async with get_pool().acquire() as conn:
         total_users = await conn.fetchval("""
             SELECT COUNT(DISTINCT bu.user_id) FROM bot_users bu
             JOIN bot_chats bc ON bu.chat_id = bc.chat_id
             JOIN child_bots cb ON cb.id = bc.child_bot_id
-            WHERE bc.owner_id = $1 AND bc.is_active=true AND bu.user_id IS NOT NULL
-            AND cb.in_global_network=true
-        """, owner_id) or 0
+            JOIN ga_selected_bots gsb ON gsb.child_bot_id = cb.id AND gsb.admin_id = $1
+            WHERE bc.is_active=true AND bu.user_id IS NOT NULL
+        """, admin_id) or 0
 
         alive_users = await conn.fetchval("""
             SELECT COUNT(DISTINCT bu.user_id) FROM bot_users bu
             JOIN bot_chats bc ON bu.chat_id = bc.chat_id
             JOIN child_bots cb ON cb.id = bc.child_bot_id
-            WHERE bc.owner_id = $1 AND bc.is_active=true AND bu.is_active=true AND bu.user_id IS NOT NULL
-            AND cb.in_global_network=true
-        """, owner_id) or 0
+            JOIN ga_selected_bots gsb ON gsb.child_bot_id = cb.id AND gsb.admin_id = $1
+            WHERE bc.is_active=true AND bu.is_active=true AND bu.user_id IS NOT NULL
+        """, admin_id) or 0
 
         net_bots = await conn.fetchval(
-            "SELECT COUNT(*) FROM child_bots WHERE owner_id=$1 AND in_global_network=true", owner_id
+            "SELECT COUNT(*) FROM ga_selected_bots WHERE admin_id=$1", admin_id
         ) or 0
 
         dead_users = total_users - alive_users
@@ -772,19 +773,19 @@ async def _show_ga_users(message_or_cb, owner_id: int):
     text = (
         "👥 <b>Сводная База Аудитории</b>\n"
         "─────────────────────────────\n"
-        f"🗂️ Активных ботов в сети: <b>{net_bots}</b>\n"
-        "Показываются только пользователи активированных ботов сети.\n\n"
+        f"🗂️ Ботов в выборке: <b>{net_bots}</b>\n"
+        "Показываются пользователи только из ботов, отмеченных в 'Управление общей базой'.\n\n"
         f"👥 Уникальных пользователей: <b>{total_users:,}</b>\n"
         f" ├ 🟢 Живые: {alive_users:,}\n"
         f" └ 🔴 Мёртвые: {dead_users:,}"
     )
-    
+
     kb = [
         [InlineKeyboardButton(text="📥 Выгрузить всю базу (CSV)", callback_data=f"ga_export_users:all:{owner_id}")],
         [InlineKeyboardButton(text="🟢 Выгрузить только живых", callback_data=f"ga_export_users:alive:{owner_id}")],
         [InlineKeyboardButton(text="◀️ Назад", callback_data=f"ga_main:{owner_id}")]
     ]
-    
+
     markup = InlineKeyboardMarkup(inline_keyboard=kb)
     if isinstance(message_or_cb, Message):
         await message_or_cb.answer(text, reply_markup=markup, parse_mode="HTML")
@@ -797,30 +798,39 @@ async def on_ga_users(callback: CallbackQuery):
     role, owner_id = await get_admin_context(callback.from_user.id, callback.from_user.username)
     if not role:
         return await callback.answer("❌ Нет прав", show_alert=True)
-    await _show_ga_users(callback, owner_id)
+    await _show_ga_users(callback, callback.from_user.id, owner_id)
     await callback.answer()
 
 
-async def _export_users_csv(bot: Bot, chat_id: int, owner_id: int, export_type: str, msg_to_delete: Message = None):
-    # Базовый запрос берёт только пользователей из активированных ботов сети
-    query = """
-        SELECT DISTINCT ON (bu.user_id)
-               bu.user_id, bu.first_name, bu.username, bu.is_active, bu.joined_at
-        FROM bot_users bu
-        JOIN bot_chats bc ON bu.chat_id = bc.chat_id
-        JOIN child_bots cb ON cb.id = bc.child_bot_id
-        WHERE bc.owner_id = $1 AND bc.is_active=true AND bu.user_id IS NOT NULL
-        AND cb.in_global_network=true
-    """
-    if export_type == "alive":
-        query += " AND bu.is_active = true"
-    elif export_type == "blocked":
-        query = "SELECT user_id, reason as first_name, username, false as is_active, added_at as joined_at FROM blacklist WHERE owner_id = $1"
+async def _export_users_csv(bot: Bot, chat_id: int, admin_id: int, export_type: str, msg_to_delete: Message = None):
+    """Export audience from bots selected by admin_id in ga_selected_bots."""
+    if export_type == "blocked":
+        query = """
+            SELECT user_id, reason AS first_name, username, false AS is_active, added_at AS joined_at
+            FROM blacklist WHERE owner_id = $1
+        """
+        # For blocked list we use owner_id. admin_id IS the owner here.
+        async with get_pool().acquire() as conn:
+            rows = await conn.fetch(query, admin_id)
     elif export_type == "admins":
-        query = "SELECT admin_id as user_id, admin_username as first_name, NULL as username, true as is_active, added_at as joined_at FROM global_admins WHERE owner_id = $1"
-        
-    async with get_pool().acquire() as conn:
-        rows = await conn.fetch(query, owner_id)
+        query = "SELECT admin_id AS user_id, admin_username AS first_name, NULL AS username, true AS is_active, added_at AS joined_at FROM global_admins WHERE owner_id = $1"
+        async with get_pool().acquire() as conn:
+            rows = await conn.fetch(query, admin_id)
+    else:
+        # Cross-user audience export: only from bots in ga_selected_bots for this admin
+        base_query = """
+            SELECT DISTINCT ON (bu.user_id)
+                   bu.user_id, bu.first_name, bu.username, bu.is_active, bu.joined_at
+            FROM bot_users bu
+            JOIN bot_chats bc ON bu.chat_id = bc.chat_id
+            JOIN child_bots cb ON cb.id = bc.child_bot_id
+            JOIN ga_selected_bots gsb ON gsb.child_bot_id = cb.id AND gsb.admin_id = $1
+            WHERE bc.is_active = true AND bu.user_id IS NOT NULL
+        """
+        if export_type == "alive":
+            base_query += " AND bu.is_active = true"
+        async with get_pool().acquire() as conn:
+            rows = await conn.fetch(base_query, admin_id)
         
     if msg_to_delete:
         try:
@@ -869,7 +879,7 @@ async def on_ga_export_users(callback: CallbackQuery):
         
     msg = await callback.message.edit_text("⏳ Идёт сбор глобальной базы и генерация CSV. Пожалуйста, подождите...")
     import asyncio
-    asyncio.create_task(_export_users_csv(callback.bot, callback.message.chat.id, owner_id, export_type, msg))
+    asyncio.create_task(_export_users_csv(callback.bot, callback.message.chat.id, callback.from_user.id, export_type, msg))
     await callback.answer()
 
 
@@ -1036,52 +1046,59 @@ async def cmd_broadcast(message: Message):
 # 🗂️ Управление общей базой
 # ══════════════════════════════════════════════════════════════
 
-async def _show_bots_network_page(callback: CallbackQuery, owner_id: int, page: int):
-    """Отрисовывает страницу со списком ботов и тумблерами активации."""
+async def _show_bots_network_page(callback: CallbackQuery, admin_id: int, page: int):
+    """Отрисовывает страницу со списком ВСЕХ ботов платформы и чекбоксами выбора."""
     async with get_pool().acquire() as conn:
         all_bots = await conn.fetch("""
-            SELECT id, bot_username, bot_name, in_global_network, created_at
-            FROM child_bots WHERE owner_id=$1
-            ORDER BY in_global_network DESC, created_at ASC
-        """, owner_id)
+            SELECT cb.id, cb.bot_username, cb.bot_name, cb.created_at,
+                   pu.username AS owner_username,
+                   EXISTS(
+                       SELECT 1 FROM ga_selected_bots gsb
+                       WHERE gsb.admin_id=$1 AND gsb.child_bot_id=cb.id
+                   ) AS selected
+            FROM child_bots cb
+            JOIN platform_users pu ON pu.user_id = cb.owner_id
+            ORDER BY selected DESC, cb.created_at DESC
+        """, admin_id)
 
     total = len(all_bots)
     total_pages = max(1, (total + BOTS_PER_PAGE - 1) // BOTS_PER_PAGE)
     page = max(0, min(page, total_pages - 1))
-    active_count = sum(1 for b in all_bots if b['in_global_network'])
+    selected_count = sum(1 for b in all_bots if b['selected'])
 
     page_bots = all_bots[page * BOTS_PER_PAGE : (page + 1) * BOTS_PER_PAGE]
 
     text = (
         "🗄️ <b>Управление общей базой</b>\n"
         "─────────────────────────────\n"
-        f"🤖 Всего ботов: <b>{total}</b>   │   ✅ Активных: <b>{active_count}</b>\n\n"
-        "Включённые боты участвуют в общей аудитории, рассылках и Глобальном ЧС.\n"
-        "<i>Нажмите на бота — переключить ВКЛ / ВЫКЛ</i>"
+        f"🤖 Всего ботов: <b>{total}</b>   │   ✅ В выборке: <b>{selected_count}</b>\n\n"
+        "Отметьте нужные боты — они будут использоваться в Глобальном ЧС и экспорте аудитории.\n"
+        "<i>Нажмите на бота — поставить/снять галочку</i>"
     )
 
     kb = [
-        [InlineKeyboardButton(text="🔍 Найти и активировать бота по названию", callback_data=f"ga_bots_search:{owner_id}")]
+        [InlineKeyboardButton(text="🔍 Найти бота по названию", callback_data=f"ga_bots_search:{admin_id}")]
     ]
 
     for bot_row in page_bots:
-        icon = "✅" if bot_row['in_global_network'] else "⛔"
+        icon = "✅" if bot_row['selected'] else "⬜"
+        owner_tag = f" (@{bot_row['owner_username']})" if bot_row['owner_username'] else ""
         kb.append([InlineKeyboardButton(
-            text=f"{icon} @{bot_row['bot_username']}",
-            callback_data=f"ga_bot_net_toggle:{owner_id}:{bot_row['id']}:{page}"
+            text=f"{icon} @{bot_row['bot_username']}{owner_tag}",
+            callback_data=f"ga_bot_sel:{admin_id}:{bot_row['id']}:{page}"
         )])
 
     # Пагинация
     if total_pages > 1:
         nav = []
         if page > 0:
-            nav.append(InlineKeyboardButton(text="◀️", callback_data=f"ga_bots:{owner_id}:{page - 1}"))
+            nav.append(InlineKeyboardButton(text="◀️", callback_data=f"ga_bots:{admin_id}:{page - 1}"))
         nav.append(InlineKeyboardButton(text=f"{page + 1} / {total_pages}", callback_data="ga_bots_noop"))
         if page < total_pages - 1:
-            nav.append(InlineKeyboardButton(text="▶️", callback_data=f"ga_bots:{owner_id}:{page + 1}"))
+            nav.append(InlineKeyboardButton(text="▶️", callback_data=f"ga_bots:{admin_id}:{page + 1}"))
         kb.append(nav)
 
-    kb.append([InlineKeyboardButton(text="◀️ Назад в Панель", callback_data=f"ga_main:{owner_id}")])
+    kb.append([InlineKeyboardButton(text="◀️ Назад в Панель", callback_data=f"ga_main:{admin_id}")])
 
     await callback.message.edit_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
 
@@ -1089,46 +1106,50 @@ async def _show_bots_network_page(callback: CallbackQuery, owner_id: int, page: 
 @router.callback_query(F.data.startswith("ga_bots:"))
 async def on_ga_bots(callback: CallbackQuery):
     parts = callback.data.split(":")
-    owner_id = int(parts[1])
+    admin_id = int(parts[1])
     page = int(parts[2]) if len(parts) > 2 else 0
 
     role, _ = await get_admin_context(callback.from_user.id, callback.from_user.username)
     if not role:
         return await callback.answer("❌ Нет прав", show_alert=True)
 
-    await _show_bots_network_page(callback, owner_id, page)
+    await _show_bots_network_page(callback, callback.from_user.id, page)
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("ga_bot_net_toggle:"))
-async def on_ga_bot_net_toggle(callback: CallbackQuery):
+@router.callback_query(F.data.startswith("ga_bot_sel:"))
+async def on_ga_bot_select_toggle(callback: CallbackQuery):
+    """PUT/DELETE row in ga_selected_bots for this admin + chosen child_bot."""
     parts = callback.data.split(":")
-    owner_id = int(parts[1])
-    bot_id = int(parts[2])
+    # admin_id in callback data is the platform owner_id — ignored, we trust the caller
+    child_bot_id = int(parts[2])
     page = int(parts[3]) if len(parts) > 3 else 0
+    admin_id = callback.from_user.id  # always tied to the actual admin pressing the button
 
     role, _ = await get_admin_context(callback.from_user.id, callback.from_user.username)
     if not role:
         return await callback.answer("❌ Нет прав", show_alert=True)
 
     async with get_pool().acquire() as conn:
-        current = await conn.fetchval(
-            "SELECT in_global_network FROM child_bots WHERE id=$1 AND owner_id=$2",
-            bot_id, owner_id
+        exists = await conn.fetchval(
+            "SELECT 1 FROM ga_selected_bots WHERE admin_id=$1 AND child_bot_id=$2",
+            admin_id, child_bot_id
         )
-        if current is None:
-            return await callback.answer("⚠️ Бот не найден", show_alert=True)
+        if exists:
+            await conn.execute(
+                "DELETE FROM ga_selected_bots WHERE admin_id=$1 AND child_bot_id=$2",
+                admin_id, child_bot_id
+            )
+            status = "⬜ Убран из выборки"
+        else:
+            await conn.execute(
+                "INSERT INTO ga_selected_bots(admin_id, child_bot_id) VALUES($1,$2) ON CONFLICT DO NOTHING",
+                admin_id, child_bot_id
+            )
+            status = "✅ Добавлен в выборку"
 
-        new_val = not current
-        await conn.execute(
-            "UPDATE child_bots SET in_global_network=$1 WHERE id=$2",
-            new_val, bot_id
-        )
-
-    status = "✅ Добавлен в сеть" if new_val else "⛔ Удалён из сети"
     await callback.answer(status)
-    # Всегда возвращаемся на страницу 0, чтобы включённый бот появился первым
-    await _show_bots_network_page(callback, owner_id, 0)
+    await _show_bots_network_page(callback, admin_id, page)
 
 
 @router.callback_query(F.data == "ga_bots_noop")
@@ -1138,17 +1159,17 @@ async def on_ga_bots_noop(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("ga_bots_search:"))
 async def on_ga_bots_search(callback: CallbackQuery, state: FSMContext):
-    owner_id = int(callback.data.split(":")[1])
+    admin_id = callback.from_user.id
     await state.set_state(BotNetworkFSM.waiting_search)
-    await state.update_data(owner_id=owner_id)
+    await state.update_data(admin_id=admin_id)
 
     text = (
         "🔍 <b>Поиск бота</b>\n"
         "─────────────────────────────\n"
-        "Введите <b>@username</b> бота, который нужно найти и включить в сеть.\n\n"
+        "Введите <b>@username</b> бота, который нужно найти и добавить в выборку.\n\n"
         "<i>Пример: @mybotname или просто mybotname</i>"
     )
-    kb = [[InlineKeyboardButton(text="❌ Отмена", callback_data=f"ga_bots_search_cancel:{owner_id}")]]
+    kb = [[InlineKeyboardButton(text="❌ Отмена", callback_data=f"ga_bots_search_cancel:{admin_id}")]]
     await callback.message.edit_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
     await callback.answer()
 
@@ -1156,44 +1177,49 @@ async def on_ga_bots_search(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data.startswith("ga_bots_search_cancel:"))
 async def on_ga_bots_search_cancel(callback: CallbackQuery, state: FSMContext):
     await state.clear()
-    owner_id = int(callback.data.split(":")[1])
-    await _show_bots_network_page(callback, owner_id, 0)
+    admin_id = callback.from_user.id
+    await _show_bots_network_page(callback, admin_id, 0)
     await callback.answer()
 
 
 @router.message(BotNetworkFSM.waiting_search)
 async def on_bots_search_input(message: Message, state: FSMContext):
     data = await state.get_data()
-    owner_id = data.get("owner_id")
+    admin_id = data.get("admin_id") or message.from_user.id
     await state.clear()
 
     query = message.text.strip().lstrip("@").lower()
 
     async with get_pool().acquire() as conn:
+        # Search across ALL bots on the platform, not just the admin's own
         bot_row = await conn.fetchrow(
-            "SELECT id, bot_username, in_global_network FROM child_bots WHERE owner_id=$1 AND LOWER(bot_username)=$2",
-            owner_id, query
+            "SELECT id, bot_username FROM child_bots WHERE LOWER(bot_username)=$1",
+            query
         )
 
     if not bot_row:
-        kb = [[InlineKeyboardButton(text="◀️ Назад к списку", callback_data=f"ga_bots:{owner_id}:0")]]
+        kb = [[InlineKeyboardButton(text="◀️ Назад к списку", callback_data=f"ga_bots:{admin_id}:0")]]
         await message.answer(
-            f"⚠️ Бот <code>@{query}</code> не найден в вашем списке.\n"
+            f"⚠️ Бот <code>@{query}</code> не найден на платформе.\n"
             "Убедитесь, что бот добавлен в систему.",
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
         )
         return
 
-    if not bot_row['in_global_network']:
-        async with get_pool().acquire() as conn:
+    async with get_pool().acquire() as conn:
+        already = await conn.fetchval(
+            "SELECT 1 FROM ga_selected_bots WHERE admin_id=$1 AND child_bot_id=$2",
+            admin_id, bot_row['id']
+        )
+        if not already:
             await conn.execute(
-                "UPDATE child_bots SET in_global_network=true WHERE id=$1",
-                bot_row['id']
+                "INSERT INTO ga_selected_bots(admin_id, child_bot_id) VALUES($1,$2) ON CONFLICT DO NOTHING",
+                admin_id, bot_row['id']
             )
-        result_text = f"✅ Бот <b>@{bot_row['bot_username']}</b> включён в сеть и теперь участвует в статистике и ЧС."
-    else:
-        result_text = f"ℹ️ Бот <b>@{bot_row['bot_username']}</b> уже активен в сети."
+            result_text = f"✅ Бот <b>@{bot_row['bot_username']}</b> добавлен в вашу выборку."
+        else:
+            result_text = f"ℹ️ Бот <b>@{bot_row['bot_username']}</b> уже в вашей выборке."
 
-    kb = [[InlineKeyboardButton(text="✅ К списку ботов", callback_data=f"ga_bots:{owner_id}:0")]]
+    kb = [[InlineKeyboardButton(text="✅ К списку ботов", callback_data=f"ga_bots:{admin_id}:0")]]
     await message.answer(result_text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))

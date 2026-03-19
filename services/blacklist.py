@@ -499,33 +499,45 @@ async def sweep_unban_records(owner_id: int, records: list, child_bot_id: int | 
 
     # ── Шаг 2: пытаемся резолвить username через bot_users ───────
     if unresolved_usernames:
-        rows = await db.fetch(
-            """
-            SELECT DISTINCT user_id FROM bot_users
-            WHERE owner_id=$1 AND lower(username)=ANY($2::text[]) AND user_id IS NOT NULL
-            """,
-            owner_id, unresolved_usernames,
-        )
-        for row in rows:
-            resolved_ids.add(row["user_id"])
-        # Отфильтровываем те, которые уже нашли
-        found_via_bu = {r["user_id"] for r in rows}
-        # Находим usernames, которые ещё не резолвились — попробуем через API
-        still_unresolved: list[str] = []
-        if found_via_bu:
-            # Если нашли хоть кого-то — нужно понять, какие username остались не резолвлены
-            # Делаем это через повторный запрос
-            found_usernames = await db.fetch(
+        # 2a. Ищем по каналам конкретного child_bot (самый точный поиск)
+        if child_bot_id:
+            rows = await db.fetch(
                 """
-                SELECT DISTINCT lower(username) as uname FROM bot_users
+                SELECT DISTINCT bu.user_id FROM bot_users bu
+                JOIN bot_chats bc ON bu.chat_id = bc.chat_id AND bu.owner_id = bc.owner_id
+                WHERE bc.child_bot_id = $1
+                  AND lower(bu.username) = ANY($2::text[])
+                  AND bu.user_id IS NOT NULL
+                """,
+                child_bot_id, unresolved_usernames,
+            )
+            for row in rows:
+                resolved_ids.add(row["user_id"])
+
+        # 2b. Ищем глобально по owner_id (fallback)
+        if len(resolved_ids) < len(unresolved_usernames):
+            still_unres = [u for u in unresolved_usernames]
+            rows2 = await db.fetch(
+                """
+                SELECT DISTINCT user_id FROM bot_users
                 WHERE owner_id=$1 AND lower(username)=ANY($2::text[]) AND user_id IS NOT NULL
                 """,
-                owner_id, unresolved_usernames,
+                owner_id, still_unres,
             )
-            found_uname_set = {r["uname"] for r in found_usernames}
-            still_unresolved = [u for u in unresolved_usernames if u not in found_uname_set]
-        else:
-            still_unresolved = unresolved_usernames
+            for row in rows2:
+                resolved_ids.add(row["user_id"])
+
+        # Определяем, какие usernames всё ещё не резолвлены
+        found_ids_set = set(resolved_ids)
+        still_unresolved: list[str] = []
+        for uname in unresolved_usernames:
+            # Ищем точное совпадение по username
+            found = await db.fetchval(
+                "SELECT 1 FROM bot_users WHERE lower(username)=$1 AND user_id=ANY($2::bigint[]) LIMIT 1",
+                uname, list(found_ids_set),
+            )
+            if not found:
+                still_unresolved.append(uname)
 
         # ── Шаг 3: резолвим оставшихся через Telegram API ────────
         for uname in still_unresolved:

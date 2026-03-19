@@ -7,6 +7,9 @@ from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 import asyncio
+import logging
+
+logger = logging.getLogger(__name__)
 
 import db.pool as db
 from services.blacklist import (
@@ -247,9 +250,29 @@ async def on_bs_bl_text(message: Message, state: FSMContext, platform_user: dict
             uid = parsed["user_id"]
             uname = parsed["username"]
             if not uid and uname:
+                # Уровень 1: Telegram API (публичные аккаунты)
                 resolved = await resolve_username_to_id(uname)
                 if resolved:
                     uid = resolved
+
+                # Уровень 2: ищем в bot_users по конкретным каналам этого child_bot
+                # (работает даже для приватных аккаунтов, если они уже в канале)
+                if not uid and child_bot_id:
+                    row = await db.fetchrow(
+                        """
+                        SELECT bu.user_id FROM bot_users bu
+                        JOIN bot_chats bc ON bu.chat_id = bc.chat_id AND bu.owner_id = bc.owner_id
+                        WHERE bc.child_bot_id = $1
+                          AND lower(bu.username) = lower($2)
+                          AND bu.user_id IS NOT NULL
+                        LIMIT 1
+                        """,
+                        child_bot_id, uname.lstrip("@"),
+                    )
+                    if row:
+                        uid = row["user_id"]
+                        logger.info(f"[BL ADD] Resolved @{uname} → {uid} via bot_users (child_bot_id={child_bot_id})")
+
             ok = await add_to_blacklist(owner_id, uid, uname, child_bot_id=child_bot_id)
             if ok:
                 added += 1

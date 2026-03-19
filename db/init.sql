@@ -103,8 +103,10 @@ CREATE TABLE IF NOT EXISTS blacklist (
     added_at        TIMESTAMPTZ DEFAULT now(),
     CONSTRAINT bl_has_identifier CHECK (user_id IS NOT NULL OR username IS NOT NULL)
 );
-CREATE UNIQUE INDEX IF NOT EXISTS idx_bl_user_id   ON blacklist(owner_id, user_id)   WHERE user_id IS NOT NULL;
-CREATE UNIQUE INDEX IF NOT EXISTS idx_bl_username  ON blacklist(owner_id, lower(username)) WHERE username IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_bl_uid_global   ON blacklist(owner_id, user_id)   WHERE user_id IS NOT NULL AND child_bot_id IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_bl_uname_global ON blacklist(owner_id, lower(username)) WHERE username IS NOT NULL AND child_bot_id IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_bl_uid_bot      ON blacklist(owner_id, child_bot_id, user_id)   WHERE user_id IS NOT NULL AND child_bot_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_bl_uname_bot    ON blacklist(owner_id, child_bot_id, lower(username)) WHERE username IS NOT NULL AND child_bot_id IS NOT NULL;
 
 -- 6. Рассылки
 CREATE TABLE IF NOT EXISTS mailings (

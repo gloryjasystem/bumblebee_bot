@@ -61,13 +61,41 @@ async def add_to_blacklist(owner_id: int, user_id: int | None, username: str | N
     child_bot_id=None — глобальная запись (global admin), иначе per-bot.
     Возвращает True если добавлена, False если уже была.
     """
+    uname_lower = username.lower() if username else None
+
+    # Явная проверка существования — не зависит от индексов
+    if child_bot_id is not None:
+        if user_id:
+            exists = await db.fetchval(
+                "SELECT 1 FROM blacklist WHERE owner_id=$1 AND child_bot_id=$2 AND user_id=$3",
+                owner_id, child_bot_id, user_id,
+            )
+        else:
+            exists = await db.fetchval(
+                "SELECT 1 FROM blacklist WHERE owner_id=$1 AND child_bot_id=$2 AND lower(username)=lower($3)",
+                owner_id, child_bot_id, uname_lower,
+            )
+    else:
+        if user_id:
+            exists = await db.fetchval(
+                "SELECT 1 FROM blacklist WHERE owner_id=$1 AND child_bot_id IS NULL AND user_id=$2",
+                owner_id, user_id,
+            )
+        else:
+            exists = await db.fetchval(
+                "SELECT 1 FROM blacklist WHERE owner_id=$1 AND child_bot_id IS NULL AND lower(username)=lower($2)",
+                owner_id, uname_lower,
+            )
+
+    if exists:
+        return False  # уже в базе
+
     result = await db.execute(
         """
         INSERT INTO blacklist (owner_id, user_id, username, child_bot_id)
         VALUES ($1, $2, $3, $4)
-        ON CONFLICT DO NOTHING
         """,
-        owner_id, user_id, username.lower() if username else None, child_bot_id,
+        owner_id, user_id, uname_lower, child_bot_id,
     )
     return result == "INSERT 0 1"
 

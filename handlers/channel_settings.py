@@ -3668,7 +3668,8 @@ async def on_bs_bl_export(callback: CallbackQuery, platform_user: dict | None):
 
     try:
         total = await db.fetchval(
-            "SELECT COUNT(*) FROM blacklist WHERE owner_id=$1", owner_id,
+            "SELECT COUNT(*) FROM blacklist WHERE owner_id=$1 AND child_bot_id=$2",
+            owner_id, child_bot_id,
         ) or 0
 
         if total == 0:

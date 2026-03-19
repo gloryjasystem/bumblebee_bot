@@ -65,7 +65,10 @@ async def on_bl_manual(callback: CallbackQuery, state: FSMContext, platform_user
     if not platform_user:
         return
     chat_id = callback.data.split(":")[1]
-    await state.update_data(chat_id=chat_id)
+    await state.update_data(
+        chat_id=chat_id,
+        prompt_msg_id=callback.message.message_id
+    )
     await state.set_state(BlacklistFSM.waiting_for_manual_input)
     await navigate(
         callback,
@@ -85,6 +88,13 @@ async def on_bl_manual_input(message: Message, state: FSMContext, platform_user:
         return
     data = await state.get_data()
     chat_id = data.get("chat_id")
+    prompt_msg_id = data.get("prompt_msg_id")
+    try:
+        await message.delete()
+        if prompt_msg_id:
+            await message.bot.delete_message(chat_id=message.chat.id, message_id=prompt_msg_id)
+    except Exception:
+        pass
     owner_id = platform_user["user_id"]
 
     from services.security import parse_blacklist_line
@@ -232,7 +242,19 @@ async def on_bs_bl_text(message: Message, state: FSMContext, platform_user: dict
     data = await state.get_data()
     child_bot_id = int(data.get("child_bot_id")) if data.get("child_bot_id") else None
     mode = data.get("bs_bl_mode", "add")
-    owner_id = platform_user["user_id"]
+    prompt_msg_id = data.get("prompt_msg_id")
+
+    from handlers.channel_settings import resolve_owner_id
+    owner_id = await resolve_owner_id(platform_user["user_id"], child_bot_id) if child_bot_id else platform_user["user_id"]
+    if owner_id is None:
+        return
+
+    try:
+        await message.delete()
+        if prompt_msg_id:
+            await message.bot.delete_message(chat_id=message.chat.id, message_id=prompt_msg_id)
+    except Exception:
+        pass
 
     from services.security import parse_blacklist_line
     from services.blacklist import resolve_username_to_id

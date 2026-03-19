@@ -4098,7 +4098,11 @@ async def on_bs_bl_add_file(callback: CallbackQuery, state: FSMContext,
     if not platform_user:
         return
     child_bot_id = callback.data.split(":")[1]
-    await state.update_data(child_bot_id=child_bot_id, bs_bl_mode="add")
+    await state.update_data(
+        child_bot_id=child_bot_id, 
+        bs_bl_mode="add",
+        prompt_msg_id=callback.message.message_id
+    )
     await state.set_state(SettingsFSM.bs_bl_waiting_add_file)
     await callback.message.edit_text(
         "➕ <b>Добавить в ЧС</b>\n\n"
@@ -4119,7 +4123,11 @@ async def on_bs_bl_del_file(callback: CallbackQuery, state: FSMContext,
     if not platform_user:
         return
     child_bot_id = callback.data.split(":")[1]
-    await state.update_data(child_bot_id=child_bot_id, bs_bl_mode="del")
+    await state.update_data(
+        child_bot_id=child_bot_id, 
+        bs_bl_mode="del",
+        prompt_msg_id=callback.message.message_id
+    )
     await state.set_state(SettingsFSM.bs_bl_waiting_del_file)
     await callback.message.edit_text(
         "➖ <b>Удалить из ЧС</b>\n\n"

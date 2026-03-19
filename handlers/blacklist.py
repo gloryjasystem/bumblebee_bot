@@ -237,7 +237,19 @@ async def on_bl_file_upload(message: Message, bot: Bot, state: FSMContext, platf
     )
     # Фоновая зачистка — передаём список ТОЛЬКО новых записей, чтобы не задваивать счётчик
     if stats.get("newly_added"):
-        asyncio.create_task(sweep_after_import(owner_id, newly_added=stats["newly_added"]))
+        async def _sweep_and_notify():
+            kicked = await sweep_after_import(owner_id, newly_added=stats["newly_added"])
+            if kicked > 0:
+                try:
+                    kmsg = await message.answer(
+                        f"🚫 <b>Успешно занесены в ЧС и выкинуты из {kicked} ваших каналов/групп</b>",
+                        parse_mode="HTML"
+                    )
+                    await asyncio.sleep(4)
+                    await kmsg.delete()
+                except Exception:
+                    pass
+        asyncio.create_task(_sweep_and_notify())
 
 
 
@@ -479,7 +491,19 @@ async def on_bs_bl_file(message: Message, bot: Bot, state: FSMContext,
         )
         # Фоновая зачистка — передаём список ТОЛЬКО новых записей, чтобы не задваивать счётчик
         if stats.get("newly_added"):
-            asyncio.create_task(sweep_after_import(owner_id, child_bot_id=child_bot_id, newly_added=stats["newly_added"]))
+            async def _sweep_bs_and_notify():
+                kicked = await sweep_after_import(owner_id, child_bot_id=child_bot_id, newly_added=stats["newly_added"])
+                if kicked > 0:
+                    try:
+                        kmsg = await message.answer(
+                            f"🚫 <b>Успешно занесены в ЧС и выкинуты из {kicked} ваших каналов/групп</b>",
+                            parse_mode="HTML"
+                        )
+                        await asyncio.sleep(4)
+                        await kmsg.delete()
+                    except Exception:
+                        pass
+            asyncio.create_task(_sweep_bs_and_notify())
     else:
         # Режим удаления из ЧС
         from services.security import parse_blacklist_line

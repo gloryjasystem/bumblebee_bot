@@ -3755,14 +3755,8 @@ async def on_bs_bl_export_csv(callback: CallbackQuery, bot: Bot, platform_user: 
     )
 
     try:
-        await callback.message.edit_text(
-            "🛡 <b>Экспорт базы ЧС</b>\n\n"
-            f"✅ Файл <code>{filename}</code> отправлен.\n"
-            f"Записей: <b>{len(rows):,}</b>",
-            reply_markup=None,
-        )
         await bot.send_document(
-            chat_id=owner_id,
+            chat_id=callback.from_user.id,
             document=BufferedInputFile(data, filename=filename),
             caption=caption,
             parse_mode="HTML",
@@ -3772,12 +3766,26 @@ async def on_bs_bl_export_csv(callback: CallbackQuery, bot: Bot, platform_user: 
         )
     except Exception as e:
         logger.error(f"Blacklist CSV export error: {e}")
+        try:
+            await callback.message.edit_text(
+                "❌ Ошибка при отправке файла. Попробуйте позже.",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="◀️ Назад", callback_data=f"bs_blacklist:{child_bot_id}")],
+                ]),
+            )
+        except Exception:
+            pass
+        return
+
+    try:
         await callback.message.edit_text(
-            "❌ Ошибка при отправке файла. Попробуйте позже.",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="◀️ Назад", callback_data=f"bs_blacklist:{child_bot_id}")],
-            ]),
+            "🛡 <b>Экспорт базы ЧС</b>\n\n"
+            f"✅ Файл <code>{filename}</code> отправлен.\n"
+            f"Записей: <b>{len(rows):,}</b>",
+            reply_markup=None,
         )
+    except Exception:
+        pass
 
 
 @router.callback_query(F.data.startswith("bs_bl_export_txt:"))
@@ -3820,14 +3828,8 @@ async def on_bs_bl_export_txt(callback: CallbackQuery, bot: Bot, platform_user: 
     )
 
     try:
-        await callback.message.edit_text(
-            "🛡 <b>Экспорт базы ЧС</b>\n\n"
-            f"✅ Файл <code>{filename}</code> отправлен.\n"
-            f"Записей: <b>{len(lines):,}</b>",
-            reply_markup=None,
-        )
         await bot.send_document(
-            chat_id=owner_id,
+            chat_id=callback.from_user.id,
             document=BufferedInputFile(data, filename=filename),
             caption=caption,
             parse_mode="HTML",
@@ -3837,12 +3839,26 @@ async def on_bs_bl_export_txt(callback: CallbackQuery, bot: Bot, platform_user: 
         )
     except Exception as e:
         logger.error(f"Blacklist TXT export error: {e}")
+        try:
+            await callback.message.edit_text(
+                "❌ Ошибка при отправке файла. Попробуйте позже.",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="◀️ Назад", callback_data=f"bs_blacklist:{child_bot_id}")],
+                ]),
+            )
+        except Exception:
+            pass
+        return
+
+    try:
         await callback.message.edit_text(
-            "❌ Ошибка при отправке файла. Попробуйте позже.",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="◀️ Назад", callback_data=f"bs_blacklist:{child_bot_id}")],
-            ]),
+            "🛡 <b>Экспорт базы ЧС</b>\n\n"
+            f"✅ Файл <code>{filename}</code> отправлен.\n"
+            f"Записей: <b>{len(lines):,}</b>",
+            reply_markup=None,
         )
+    except Exception:
+        pass
 
 
 @router.callback_query(F.data.startswith("bs_bl_dl_bck:"))
@@ -4350,14 +4366,8 @@ async def on_bs_base_export(callback: CallbackQuery, bot: Bot, platform_user: di
     )
 
     try:
-        await callback.message.edit_text(
-            "🗄 <b>База пользователей</b>\n\n"
-            f"✅ Файл <code>{filename}</code> отправлен.\n"
-            f"Записей: <b>{len(rows):,}</b>",
-            reply_markup=None,
-        )
         await bot.send_document(
-            chat_id=owner_id,
+            chat_id=callback.from_user.id,
             document=file,
             caption=caption,
             parse_mode="HTML",
@@ -4367,12 +4377,26 @@ async def on_bs_base_export(callback: CallbackQuery, bot: Bot, platform_user: di
         )
     except Exception as e:
         logger.error(f"CSV export error: {e}")
+        try:
+            await callback.message.edit_text(
+                "❌ Ошибка при отправке файла. Попробуйте позже.",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="◀️ Назад", callback_data=f"bs_base:{child_bot_id}")],
+                ]),
+            )
+        except Exception:
+            pass
+        return
+
+    try:
         await callback.message.edit_text(
-            "❌ Ошибка при отправке файла. Попробуйте позже.",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="◀️ Назад", callback_data=f"bs_base:{child_bot_id}")],
-            ]),
+            "🗄 <b>База пользователей</b>\n\n"
+            f"✅ Файл <code>{filename}</code> отправлен.\n"
+            f"Записей: <b>{len(rows):,}</b>",
+            reply_markup=None,
         )
+    except Exception:
+        pass
 
 
 @router.callback_query(F.data.startswith("bs_base_dl_bck:"))

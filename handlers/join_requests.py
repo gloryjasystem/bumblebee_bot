@@ -69,6 +69,13 @@ async def on_join_request(event: ChatJoinRequest, bot: Bot):
                 "UPDATE platform_users SET blocked_count = blocked_count + 1 WHERE user_id = $1",
                 owner_id,
             )
+            # Per-bot счётчик ("Заблокировано ботом")
+            child_bot_id = settings_row.get("child_bot_id")
+            if child_bot_id:
+                await db.execute(
+                    "UPDATE child_bots SET blocked_count = blocked_count + 1 WHERE id = $1",
+                    child_bot_id,
+                )
             await _log_action(owner_id, event.chat.id, "reject_bl", user.id)
             logger.info(f"[BL] Rejected {user.id} from {event.chat.id}")
             return
@@ -209,6 +216,13 @@ async def on_member_update(event: ChatMemberUpdated, bot: Bot):
                     "UPDATE platform_users SET blocked_count = blocked_count + 1 WHERE user_id = $1",
                     owner_id,
                 )
+                # Per-bot счётчик ("Заблокировано ботом")
+                child_bot_id = settings_row.get("child_bot_id")
+                if child_bot_id:
+                    await db.execute(
+                        "UPDATE child_bots SET blocked_count = blocked_count + 1 WHERE id = $1",
+                        child_bot_id,
+                    )
                 await _log_action(owner_id, event.chat.id, "ban_on_join", user.id)
                 return
 

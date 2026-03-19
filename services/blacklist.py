@@ -114,7 +114,7 @@ async def _ban_user_in_chat(token: str, chat_id: int, user_id: int) -> bool:
         return False
 
 
-async def kick_single_user(owner_id: int, user_id: int | None, username: str | None) -> int:
+async def kick_single_user(owner_id: int, user_id: int | None, username: str | None, child_bot_id: int | None = None) -> int:
     """
     Кикает конкретного пользователя из всех активных площадок владельца.
     Работает для ВСЕХ участников чата — независимо от того, когда они вступили.
@@ -160,6 +160,11 @@ async def kick_single_user(owner_id: int, user_id: int | None, username: str | N
             "UPDATE platform_users SET blocked_count = blocked_count + $1 WHERE user_id = $2",
             kicked, owner_id,
         )
+        if child_bot_id:
+            await db.execute(
+                "UPDATE child_bots SET blocked_count = blocked_count + $1 WHERE id = $2",
+                kicked, child_bot_id,
+            )
         logger.info(f"[BL KICK] user={resolved_user_id} kicked from {kicked} chats for owner={owner_id}")
 
     return kicked
@@ -208,7 +213,7 @@ async def import_file(owner_id: int, content: bytes, filename: str) -> dict:
     }
 
 
-async def sweep_after_import(owner_id: int) -> int:
+async def sweep_after_import(owner_id: int, child_bot_id: int | None = None) -> int:
     """
     После загрузки файла — банит всех нарушителей во всех активных площадках.
 
@@ -275,6 +280,11 @@ async def sweep_after_import(owner_id: int) -> int:
             "UPDATE platform_users SET blocked_count = blocked_count + $1 WHERE user_id = $2",
             total_banned, owner_id,
         )
+        if child_bot_id:
+            await db.execute(
+                "UPDATE child_bots SET blocked_count = blocked_count + $1 WHERE id = $2",
+                total_banned, child_bot_id,
+            )
         logger.info(f"[BL SWEEP] owner={owner_id}: banned {total_banned} users across {len(chats)} chats")
 
     return total_banned

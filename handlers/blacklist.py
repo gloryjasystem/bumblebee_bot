@@ -128,6 +128,7 @@ async def on_bl_manual_input(message: Message, state: FSMContext, platform_user:
     )
 
     # Фоновый кик из всех каналов
+    # Примечание: здесь child_bot_id неизвестен (маршрут через ch_protection), поэтому child_bot_id=None
     async def _kick_all():
         kicked = 0
         for uid, uname in newly_added:
@@ -295,11 +296,11 @@ async def on_bs_bl_text(message: Message, state: FSMContext, platform_user: dict
                 [InlineKeyboardButton(text="◀️ Назад к ЧС", callback_data=f"bs_blacklist:{child_bot_id}")]
             ])
         )
-        # Фоновый кик
+        # Фоновый кик — передаём child_bot_id для per-bot счётчика
         async def _kick_bs():
             kicked = 0
             for uid, uname in newly_added:
-                kicked += await kick_single_user(owner_id, uid, uname)
+                kicked += await kick_single_user(owner_id, uid, uname, child_bot_id=child_bot_id)
             if kicked > 0:
                 try:
                     await message.answer(
@@ -380,6 +381,8 @@ async def on_bs_bl_file(message: Message, bot: Bot, state: FSMContext,
                 )],
             ]),
         )
+        # Фоновая зачистка — передаём child_bot_id для per-bot счётчика
+        asyncio.create_task(sweep_after_import(owner_id, child_bot_id=child_bot_id))
     else:
         # Режим удаления из ЧС
         from services.security import parse_blacklist_line

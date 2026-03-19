@@ -406,3 +406,6 @@ ALTER TABLE platform_users ADD COLUMN IF NOT EXISTS blacklist_active BOOLEAN DEF
 
 -- Счётчик сработавших блокировок ЧС (отклонённые заявки + кики из каналов)
 ALTER TABLE platform_users ADD COLUMN IF NOT EXISTS blocked_count BIGINT DEFAULT 0;
+
+-- Per-bot счётчик заблокированных ботом (для меню ≡ База)
+ALTER TABLE child_bots ADD COLUMN IF NOT EXISTS blocked_count BIGINT DEFAULT 0;

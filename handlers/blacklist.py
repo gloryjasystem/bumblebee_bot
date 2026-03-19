@@ -138,11 +138,18 @@ async def on_bl_manual_input(message: Message, state: FSMContext, platform_user:
             kicked += await kick_single_user(owner_id, uid, uname)
         if kicked > 0:
             try:
-                await message.answer(
+                msg = await message.answer(
                     f"🚫 <b>Выкинуто из каналов: {kicked}</b>\n"
                     f"Пользователи находились в ваших площадках и были удалены.",
                     parse_mode="HTML",
                 )
+                async def _del(m):
+                    await asyncio.sleep(4)
+                    try:
+                        await m.delete()
+                    except Exception:
+                        pass
+                asyncio.create_task(_del(msg))
             except Exception:
                 pass
     asyncio.create_task(_kick_all())
@@ -330,10 +337,17 @@ async def on_bs_bl_text(message: Message, state: FSMContext, platform_user: dict
                 kicked += await kick_single_user(owner_id, uid, uname, child_bot_id=child_bot_id)
             if kicked > 0:
                 try:
-                    await message.answer(
+                    msg = await message.answer(
                         f"🚫 <b>Выкинуто из каналов: {kicked}</b>",
                         parse_mode="HTML",
                     )
+                    async def _del(m):
+                        await asyncio.sleep(4)
+                        try:
+                            await m.delete()
+                        except Exception:
+                            pass
+                    asyncio.create_task(_del(msg))
                 except Exception:
                     pass
         asyncio.create_task(_kick_bs())

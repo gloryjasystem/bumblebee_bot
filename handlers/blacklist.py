@@ -272,6 +272,21 @@ async def on_bs_bl_text(message: Message, state: FSMContext, platform_user: dict
                     if row:
                         uid = row["user_id"]
                         logger.info(f"[BL ADD] Resolved @{uname} → {uid} via bot_users (child_bot_id={child_bot_id})")
+                    else:
+                        # Диагностика: показываем что реально хранится в bot_users для этого бота
+                        diag = await db.fetch(
+                            """
+                            SELECT bu.user_id, bu.username, bu.first_name FROM bot_users bu
+                            JOIN bot_chats bc ON bu.chat_id = bc.chat_id AND bu.owner_id = bc.owner_id
+                            WHERE bc.child_bot_id = $1 AND bu.user_id IS NOT NULL
+                            ORDER BY bu.joined_at DESC LIMIT 5
+                            """,
+                            child_bot_id,
+                        )
+                        logger.warning(
+                            f"[BL ADD] @{uname} not found in bot_users for child_bot_id={child_bot_id}. "
+                            f"Last 5 users: {[(r['user_id'], r['username'], r['first_name']) for r in diag]}"
+                        )
 
             ok = await add_to_blacklist(owner_id, uid, uname, child_bot_id=child_bot_id)
             if ok:

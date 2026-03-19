@@ -10,23 +10,63 @@ from services.security import parse_blacklist_line
 logger = logging.getLogger(__name__)
 
 
-async def resolve_username_to_id(username: str) -> int | None:
+async def resolve_username_to_id(username: str, owner_id: int | None = None, child_bot_id: int | None = None) -> int | None:
     """
-    Пробует резолвить @username → Telegram user_id через Bot API (get_chat).
-    Работает для ПУБЛИЧНЫХ аккаунтов.
-    Возвращает user_id (int) или None если не удалось.
+    Глобальный механизм резолва @username → Telegram user_id.
+    1. Ищет юзернейм во всех таблицах БД (bot_users, platform_users, join_requests, blacklist).
+    2. Если не находит — пробует get_chat через master-бота.
+    3. Если не находит — пробует get_chat через нужного child_bot.
     """
+    uname_clean = username.lower().lstrip("@")
+    
+    # 1. Супер-поиск по всей базе данных (т.к. юзернеймы могут быть где угодно)
+    uid = await db.fetchval(
+        """
+        SELECT user_id FROM (
+            SELECT user_id FROM bot_users WHERE lower(username) = $1 AND user_id IS NOT NULL
+            UNION
+            SELECT user_id FROM platform_users WHERE lower(username) = $1 AND user_id IS NOT NULL
+            UNION
+            SELECT user_id FROM blacklist WHERE lower(username) = $1 AND user_id IS NOT NULL
+            UNION
+            SELECT user_id FROM join_requests WHERE lower(username) = $1 AND user_id IS NOT NULL
+        ) as t LIMIT 1
+        """,
+        uname_clean,
+    )
+    if uid:
+        logger.info(f"[BL RESOLVE] @{uname_clean} → {uid} (found in DB)")
+        return uid
+
+    # 2. Пробуем через master-бота
     from aiogram import Bot
     from config import settings
     try:
         master_bot = Bot(token=settings.bot_token)
-        chat = await master_bot.get_chat(f"@{username.lstrip('@')}")
-        await master_bot.session.close()
+        chat = await master_bot.get_chat(f"@{uname_clean}")
         if chat and chat.id:
-            logger.info(f"[BL] Resolved @{username} → user_id={chat.id}")
+            logger.info(f"[BL RESOLVE] @{uname_clean} → {chat.id} (via master bot)")
             return chat.id
-    except Exception as e:
-        logger.debug(f"[BL] Cannot resolve @{username}: {e}")
+    except Exception:
+        pass
+    finally:
+        await master_bot.session.close()
+
+    # 3. Пробуем через child_bot (он может видеть юзера в своём канале)
+    if child_bot_id:
+        try:
+            from services.security import decrypt_token
+            bot_row = await db.fetchrow("SELECT token_encrypted FROM child_bots WHERE id=$1", child_bot_id)
+            if bot_row:
+                async with Bot(token=decrypt_token(bot_row["token_encrypted"])).context() as child_bot:
+                    chat = await child_bot.get_chat(f"@{uname_clean}")
+                    if chat and chat.id:
+                        logger.info(f"[BL RESOLVE] @{uname_clean} → {chat.id} (via child bot {child_bot_id})")
+                        return chat.id
+        except Exception:
+            pass
+
+    logger.debug(f"[BL RESOLVE] Cannot resolve @{uname_clean}")
     return None
 
 
@@ -171,57 +211,13 @@ async def kick_single_user(owner_id: int, user_id: int | None, username: str | N
     chats = await _get_chats_with_tokens(owner_id, child_bot_id)
     kicked = 0
 
-    # Резолвим user_id через username если не задан явно
+    # Резолвим user_id через наш новый мощный resolve_username_to_id
     resolved_user_id = user_id
     if not resolved_user_id and username:
-        uname_clean = username.lower().lstrip("@")
-
-        # Уровень 1: ищем в bot_users по owner
-        row = await db.fetchrow(
-            "SELECT user_id FROM bot_users WHERE owner_id=$1 AND lower(username)=lower($2) AND user_id IS NOT NULL LIMIT 1",
-            owner_id, uname_clean,
-        )
-        if row:
-            resolved_user_id = row["user_id"]
-
-        # Уровень 2: ищем в bot_users без фильтра по owner (вдруг owner_id другой)
-        if not resolved_user_id:
-            row = await db.fetchrow(
-                "SELECT user_id FROM bot_users WHERE lower(username)=lower($1) AND user_id IS NOT NULL LIMIT 1",
-                uname_clean,
-            )
-            if row:
-                resolved_user_id = row["user_id"]
-                logger.info(f"[BL KICK] Resolved @{uname_clean} → {resolved_user_id} via bot_users (any owner)")
-
-        # Уровень 3: запрашиваем Telegram API (работает для публичных аккаунтов)
-        if not resolved_user_id:
-            resolved_user_id = await resolve_username_to_id(uname_clean)
-            if resolved_user_id:
-                logger.info(f"[BL KICK] Resolved @{uname_clean} → {resolved_user_id} via Telegram API")
+        resolved_user_id = await resolve_username_to_id(username, owner_id=owner_id, child_bot_id=child_bot_id)
 
     if not resolved_user_id:
-        # Уровень 4: пробуем getChatMember(@username) прямо через дочернего бота.
-        # Telegram принимает @username в getChatMember и возвращает user_id даже для приватных аккаунтов.
-        if username and chats:
-            uname_at = f"@{username.lstrip('@')}"
-            from aiogram import Bot as _Bot
-            for chat in chats:
-                try:
-                    async with _Bot(token=chat["token"]).context() as _cb:
-                        member = await _cb.get_chat_member(chat["chat_id"], uname_at)
-                        if member and member.user and member.user.id:
-                            resolved_user_id = member.user.id
-                            logger.info(
-                                f"[BL KICK] Resolved {uname_at} → {resolved_user_id} via getChatMember "
-                                f"in chat={chat['chat_id']}"
-                            )
-                            break
-                except Exception as e:
-                    logger.debug(f"[BL KICK] getChatMember({uname_at}) failed in chat={chat['chat_id']}: {e}")
-
-    if not resolved_user_id:
-        logger.info(f"[BL KICK] Cannot resolve user_id for username={username}, skip kick")
+        logger.warning(f"[BL KICK] Cannot resolve user_id for username={username}, skip kick (user not seen by bot)")
         return 0
 
     for chat in chats:
@@ -377,17 +373,47 @@ async def sweep_after_import(owner_id: int, child_bot_id: int | None = None, new
     usernames_only = [r["username"].lower() for r in bl_records
                       if r["user_id"] is None and r["username"] is not None]
 
-    # Резолвим username → user_id через bot_users
+    # 1. Резолвим username → user_id через глобальную БД (массовый быстрый запрос)
     resolved_ids_from_usernames = set()
     if usernames_only:
         rows = await db.fetch(
             """
-            SELECT DISTINCT user_id FROM bot_users
-            WHERE owner_id = $1 AND lower(username) = ANY($2::text[])
+            SELECT DISTINCT user_id FROM (
+                SELECT user_id FROM bot_users WHERE lower(username) = ANY($1::text[]) AND user_id IS NOT NULL
+                UNION
+                SELECT user_id FROM platform_users WHERE lower(username) = ANY($1::text[]) AND user_id IS NOT NULL
+                UNION
+                SELECT user_id FROM blacklist WHERE lower(username) = ANY($1::text[]) AND user_id IS NOT NULL
+                UNION
+                SELECT user_id FROM join_requests WHERE lower(username) = ANY($1::text[]) AND user_id IS NOT NULL
+            ) t
             """,
-            owner_id, usernames_only,
+            usernames_only,
         )
         resolved_ids_from_usernames = {r["user_id"] for r in rows}
+
+        # Вычисляем, какие usernames мы НЕ нашли в БД массовым способом
+        # Чтобы не дергать API на каждого уже найденного
+        if len(resolved_ids_from_usernames) < len(usernames_only):
+            # Найдем, кого именно мы не обнаружили
+            found_users = await db.fetch(
+                """
+                SELECT lower(username) as un FROM (
+                    SELECT username FROM bot_users WHERE user_id = ANY($1::bigint[]) AND username IS NOT NULL
+                    UNION
+                    SELECT username FROM blacklist WHERE user_id = ANY($1::bigint[]) AND username IS NOT NULL
+                ) t
+                """,
+                list(resolved_ids_from_usernames)
+            )
+            found_unames_set = {r["un"] for r in found_users}
+            
+            # 2. Оставшиеся резолвим по одному через мощную функцию (Telegram API)
+            for uname in usernames_only:
+                if uname not in found_unames_set:
+                    api_uid = await resolve_username_to_id(uname, owner_id=owner_id, child_bot_id=child_bot_id)
+                    if api_uid:
+                        resolved_ids_from_usernames.add(api_uid)
 
     all_user_ids = list(set(explicit_ids) | resolved_ids_from_usernames)
     if not all_user_ids:

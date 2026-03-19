@@ -99,9 +99,9 @@ async def on_bl_manual_input(message: Message, state: FSMContext, platform_user:
         if parsed:
             uid = parsed["user_id"]
             uname = parsed["username"]
-            # Если только username — пробуем резолвить в user_id через API
+            # Пробуем резолвить в user_id через нашу глобальную базу и API
             if not uid and uname:
-                resolved = await resolve_username_to_id(uname)
+                resolved = await resolve_username_to_id(uname, owner_id=owner_id, child_bot_id=child_bot_id)
                 if resolved:
                     uid = resolved
             ok = await add_to_blacklist(owner_id, uid, uname, child_bot_id=child_bot_id)
@@ -251,43 +251,25 @@ async def on_bs_bl_text(message: Message, state: FSMContext, platform_user: dict
             uid = parsed["user_id"]
             uname = parsed["username"]
             if not uid and uname:
-                # Уровень 1: Telegram API (публичные аккаунты)
-                resolved = await resolve_username_to_id(uname)
+                # Наша новая глобальная функция проверит всю БД и API и master, и child бота
+                resolved = await resolve_username_to_id(uname, owner_id=owner_id, child_bot_id=child_bot_id)
                 if resolved:
                     uid = resolved
-
-                # Уровень 2: ищем в bot_users по конкретным каналам этого child_bot
-                # (работает даже для приватных аккаунтов, если они уже в канале)
-                if not uid and child_bot_id:
-                    row = await db.fetchrow(
+                else:
+                    # Для отладки показываем последние 5 юзеров этого бота (если нигде не нашли)
+                    diag = await db.fetch(
                         """
-                        SELECT bu.user_id FROM bot_users bu
+                        SELECT bu.user_id, bu.username, bu.first_name FROM bot_users bu
                         JOIN bot_chats bc ON bu.chat_id = bc.chat_id AND bu.owner_id = bc.owner_id
-                        WHERE bc.child_bot_id = $1
-                          AND lower(bu.username) = lower($2)
-                          AND bu.user_id IS NOT NULL
-                        LIMIT 1
+                        WHERE bc.child_bot_id = $1 AND bu.user_id IS NOT NULL
+                        ORDER BY bu.joined_at DESC LIMIT 5
                         """,
-                        child_bot_id, uname.lstrip("@"),
+                        child_bot_id,
                     )
-                    if row:
-                        uid = row["user_id"]
-                        logger.info(f"[BL ADD] Resolved @{uname} → {uid} via bot_users (child_bot_id={child_bot_id})")
-                    else:
-                        # Диагностика: показываем что реально хранится в bot_users для этого бота
-                        diag = await db.fetch(
-                            """
-                            SELECT bu.user_id, bu.username, bu.first_name FROM bot_users bu
-                            JOIN bot_chats bc ON bu.chat_id = bc.chat_id AND bu.owner_id = bc.owner_id
-                            WHERE bc.child_bot_id = $1 AND bu.user_id IS NOT NULL
-                            ORDER BY bu.joined_at DESC LIMIT 5
-                            """,
-                            child_bot_id,
-                        )
-                        logger.warning(
-                            f"[BL ADD] @{uname} not found in bot_users for child_bot_id={child_bot_id}. "
-                            f"Last 5 users: {[(r['user_id'], r['username'], r['first_name']) for r in diag]}"
-                        )
+                    logger.warning(
+                        f"[BL ADD] @{uname} not found anywhere (DB or API) for child_bot_id={child_bot_id}. "
+                        f"Last 5 users in DB: {[(r['user_id'], r['username'], r['first_name']) for r in diag]}"
+                    )
 
             ok = await add_to_blacklist(owner_id, uid, uname, child_bot_id=child_bot_id)
             if ok:

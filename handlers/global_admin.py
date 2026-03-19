@@ -891,10 +891,10 @@ async def on_ga_dl_bck(callback: CallbackQuery):
     except Exception:
         pass
         
-    role, _ = await get_admin_context(callback.from_user.id, callback.from_user.username)
+    role, owner_id2 = await get_admin_context(callback.from_user.id, callback.from_user.username)
     if role:
         msg = await callback.message.answer("♻️ Открываю меню...")
-        await _show_ga_users(msg, owner_id)
+        await _show_ga_users(msg, callback.from_user.id, owner_id2)
     await callback.answer()
 
 

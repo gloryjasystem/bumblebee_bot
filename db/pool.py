@@ -26,6 +26,32 @@ async def create_pool() -> asyncpg.Pool:
         await conn.execute(
             "ALTER TABLE blacklist ADD COLUMN IF NOT EXISTS child_bot_id INTEGER REFERENCES child_bots(id) ON DELETE CASCADE"
         )
+        # Пересоздаём уникальные индексы с учётом child_bot_id
+        # Старые индексы (owner_id, user_id/username) блокируют per-bot добавление ON CONFLICT
+        await conn.execute("DROP INDEX IF EXISTS idx_bl_user_id")
+        await conn.execute("DROP INDEX IF EXISTS idx_bl_username")
+        # Глобальные записи (global admin, child_bot_id IS NULL)
+        await conn.execute(
+            """CREATE UNIQUE INDEX IF NOT EXISTS idx_bl_uid_global
+               ON blacklist(owner_id, user_id)
+               WHERE user_id IS NOT NULL AND child_bot_id IS NULL"""
+        )
+        await conn.execute(
+            """CREATE UNIQUE INDEX IF NOT EXISTS idx_bl_uname_global
+               ON blacklist(owner_id, lower(username))
+               WHERE username IS NOT NULL AND child_bot_id IS NULL"""
+        )
+        # Per-bot записи (child_bot_id IS NOT NULL)
+        await conn.execute(
+            """CREATE UNIQUE INDEX IF NOT EXISTS idx_bl_uid_bot
+               ON blacklist(owner_id, child_bot_id, user_id)
+               WHERE user_id IS NOT NULL AND child_bot_id IS NOT NULL"""
+        )
+        await conn.execute(
+            """CREATE UNIQUE INDEX IF NOT EXISTS idx_bl_uname_bot
+               ON blacklist(owner_id, child_bot_id, lower(username))
+               WHERE username IS NOT NULL AND child_bot_id IS NOT NULL"""
+        )
     return _pool
 
 

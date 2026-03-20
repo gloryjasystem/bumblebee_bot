@@ -1672,12 +1672,10 @@ async def on_ga_discount_select(callback: CallbackQuery):
         [
             InlineKeyboardButton(text="3 дня", callback_data=f"ga_dsave:{owner_id}:{percent}:3"),
             InlineKeyboardButton(text="1 неделя", callback_data=f"ga_dsave:{owner_id}:{percent}:7"),
-        ],
-        [
             InlineKeyboardButton(text="2 недели", callback_data=f"ga_dsave:{owner_id}:{percent}:14"),
-            InlineKeyboardButton(text="1 месяц", callback_data=f"ga_dsave:{owner_id}:{percent}:30"),
         ],
         [
+            InlineKeyboardButton(text="1 месяц", callback_data=f"ga_dsave:{owner_id}:{percent}:30"),
             InlineKeyboardButton(text="2 месяца", callback_data=f"ga_dsave:{owner_id}:{percent}:60"),
             InlineKeyboardButton(text="3 месяца", callback_data=f"ga_dsave:{owner_id}:{percent}:90"),
         ],

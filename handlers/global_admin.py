@@ -527,7 +527,6 @@ async def _build_segment_text(period: str, owner_id: int, conn) -> str:
     clients = start_c + pro_c + biz_c
     quals   = pro_c + biz_c
 
-    banned_w = f"WHERE added_at >= {where.replace('created_at', 'added_at').split('>= ')[1]}" if where else ""
     banned = await conn.fetchval(
         f"SELECT COUNT(*) FROM blacklist WHERE owner_id=$1 AND child_bot_id IS NULL"
         + (f" AND {_period_where(period, 'added_at')}" if where else ""),

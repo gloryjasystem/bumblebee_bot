@@ -2365,11 +2365,14 @@ async def _show_bots_network_page(callback: CallbackQuery, admin_id: int, page: 
     )
 
     kb = [
-        [InlineKeyboardButton(text="🔍 Найти бота по названию", callback_data=f"ga_bots_search:{admin_id}")]
+        [
+            InlineKeyboardButton(text="🔍 По названию",  callback_data=f"ga_bots_search:{admin_id}"),
+            InlineKeyboardButton(text="🔍 По владельцу", callback_data=f"ga_bots_owner_search:{admin_id}"),
+        ]
     ]
 
     for bot_row in page_bots:
-        icon = "✅" if bot_row['selected'] else "⬜"
+        icon = "✅" if bot_row['selected'] else "☑️"
         owner_tag = f" (@{bot_row['owner_username']})" if bot_row['owner_username'] else ""
         kb.append([InlineKeyboardButton(
             text=f"{icon} @{bot_row['bot_username']}{owner_tag}",
@@ -2449,16 +2452,33 @@ async def on_ga_bots_noop(callback: CallbackQuery):
 async def on_ga_bots_search(callback: CallbackQuery, state: FSMContext):
     admin_id = callback.from_user.id
     await state.set_state(BotNetworkFSM.waiting_search)
-    await state.update_data(admin_id=admin_id)
-
-    text = (
-        "🔍 <b>Поиск бота</b>\n"
-        "─────────────────────────────\n"
-        "Введите <b>@username</b> бота, который нужно найти и добавить в выборку.\n\n"
-        "<i>Пример: @mybotname или просто mybotname</i>"
-    )
+    await state.update_data(admin_id=admin_id, search_mode="name")
     kb = [[InlineKeyboardButton(text="❌ Отмена", callback_data=f"ga_bots_search_cancel:{admin_id}")]]
-    await callback.message.edit_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+    await callback.message.edit_text(
+        "🔍 <b>Поиск по названию</b>\n"
+        "─────────────────────────────\n"
+        "Введите <b>часть или полное название</b> бота.\n"
+        "<i>Пример: market, mybot, rec</i>",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("ga_bots_owner_search:"))
+async def on_ga_bots_owner_search(callback: CallbackQuery, state: FSMContext):
+    admin_id = callback.from_user.id
+    await state.set_state(BotNetworkFSM.waiting_search)
+    await state.update_data(admin_id=admin_id, search_mode="owner")
+    kb = [[InlineKeyboardButton(text="❌ Отмена", callback_data=f"ga_bots_search_cancel:{admin_id}")]]
+    await callback.message.edit_text(
+        "🔍 <b>Поиск по владельцу</b>\n"
+        "─────────────────────────────\n"
+        "Введите <b>@username</b> или <b>Telegram ID</b> владельца бота.\n"
+        "<i>Пример: @ivan_user или 123456789</i>",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
+    )
     await callback.answer()
 
 
@@ -2474,43 +2494,122 @@ async def on_ga_bots_search_cancel(callback: CallbackQuery, state: FSMContext):
 async def on_bots_search_input(message: Message, state: FSMContext):
     data = await state.get_data()
     admin_id = data.get("admin_id") or message.from_user.id
+    search_mode = data.get("search_mode", "name")
     await state.clear()
+    try:
+        await message.delete()
+    except Exception:
+        pass
+    raw = (message.text or "").strip()
 
-    query = message.text.strip().lstrip("@").lower()
-
-    async with get_pool().acquire() as conn:
-        # Search across ALL bots on the platform, not just the admin's own
-        bot_row = await conn.fetchrow(
-            "SELECT id, bot_username FROM child_bots WHERE LOWER(bot_username)=$1",
-            query
-        )
-
-    if not bot_row:
-        kb = [[InlineKeyboardButton(text="◀️ Назад к списку", callback_data=f"ga_bots:{admin_id}:0")]]
+    if search_mode == "owner":
+        # Search by owner username or ID
+        async with get_pool().acquire() as conn:
+            if raw.lstrip("@").lstrip("-").isdigit():
+                owner = await conn.fetchrow(
+                    "SELECT user_id, username FROM platform_users WHERE user_id=$1",
+                    int(raw.lstrip("@"))
+                )
+            else:
+                owner = await conn.fetchrow(
+                    "SELECT user_id, username FROM platform_users WHERE lower(username)=lower($1)",
+                    raw.lstrip("@")
+                )
+        if not owner:
+            return await message.answer(
+                f"⚠️ Владелец <b>{raw}</b> не найден.",
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="◀️ Назад к списку", callback_data=f"ga_bots:{admin_id}:0")]
+                ])
+            )
+        async with get_pool().acquire() as conn:
+            bots = await conn.fetch(
+                """
+                SELECT cb.id, cb.bot_username,
+                       pu.username AS owner_username,
+                       EXISTS(
+                           SELECT 1 FROM ga_selected_bots gsb
+                           WHERE gsb.admin_id=$1 AND gsb.child_bot_id=cb.id
+                       ) AS selected
+                FROM child_bots cb
+                JOIN platform_users pu ON pu.user_id=cb.owner_id
+                WHERE cb.owner_id=$2
+                ORDER BY selected DESC, cb.created_at DESC
+                """,
+                admin_id, owner['user_id']
+            )
+        if not bots:
+            return await message.answer(
+                f"ℹ️ У владельца <b>@{owner.get('username') or owner['user_id']}</b> нет ботов.",
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="◀️ Назад к списку", callback_data=f"ga_bots:{admin_id}:0")]
+                ])
+            )
+        uname = f"@{owner['username']}" if owner.get('username') else str(owner['user_id'])
+        selected_count = sum(1 for b in bots if b['selected'])
+        kb = []
+        for b in bots:
+            icon = "✅" if b['selected'] else "☑️"
+            kb.append([InlineKeyboardButton(
+                text=f"{icon} @{b['bot_username']}",
+                callback_data=f"ga_bot_sel:{admin_id}:{b['id']}:0"
+            )])
+        kb.append([InlineKeyboardButton(text="◀️ Назад к списку", callback_data=f"ga_bots:{admin_id}:0")])
         await message.answer(
-            f"⚠️ Бот <code>@{query}</code> не найден на платформе.\n"
-            "Убедитесь, что бот добавлен в систему.",
+            f"🔍 <b>Боты владельца {uname}</b>\n"
+            f"─────────────────────────────\n"
+            f"Найдено: <b>{len(bots)}</b>  │  В выборке: <b>{selected_count}</b>",
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
         )
-        return
-
-    async with get_pool().acquire() as conn:
-        already = await conn.fetchval(
-            "SELECT 1 FROM ga_selected_bots WHERE admin_id=$1 AND child_bot_id=$2",
-            admin_id, bot_row['id']
-        )
-        if not already:
-            await conn.execute(
-                "INSERT INTO ga_selected_bots(admin_id, child_bot_id) VALUES($1,$2) ON CONFLICT DO NOTHING",
-                admin_id, bot_row['id']
+    else:
+        # Search by name — partial ILIKE match
+        query = raw.lstrip("@").lower()
+        async with get_pool().acquire() as conn:
+            bots = await conn.fetch(
+                """
+                SELECT cb.id, cb.bot_username,
+                       pu.username AS owner_username,
+                       EXISTS(
+                           SELECT 1 FROM ga_selected_bots gsb
+                           WHERE gsb.admin_id=$1 AND gsb.child_bot_id=cb.id
+                       ) AS selected
+                FROM child_bots cb
+                JOIN platform_users pu ON pu.user_id=cb.owner_id
+                WHERE LOWER(cb.bot_username) LIKE $2
+                   OR LOWER(cb.bot_name) LIKE $2
+                ORDER BY selected DESC, cb.created_at DESC
+                LIMIT 30
+                """,
+                admin_id, f"%{query}%"
             )
-            result_text = f"✅ Бот <b>@{bot_row['bot_username']}</b> добавлен в вашу выборку."
-        else:
-            result_text = f"ℹ️ Бот <b>@{bot_row['bot_username']}</b> уже в вашей выборке."
-
-    kb = [[InlineKeyboardButton(text="✅ К списку ботов", callback_data=f"ga_bots:{admin_id}:0")]]
-    await message.answer(result_text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+        if not bots:
+            return await message.answer(
+                f"⚠️ Боты с названием <b>{raw}</b> не найдены.",
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="◀️ Назад к списку", callback_data=f"ga_bots:{admin_id}:0")]
+                ])
+            )
+        selected_count = sum(1 for b in bots if b['selected'])
+        kb = []
+        for b in bots:
+            icon = "✅" if b['selected'] else "☑️"
+            owner_tag = f" (@{b['owner_username']})" if b['owner_username'] else ""
+            kb.append([InlineKeyboardButton(
+                text=f"{icon} @{b['bot_username']}{owner_tag}",
+                callback_data=f"ga_bot_sel:{admin_id}:{b['id']}:0"
+            )])
+        kb.append([InlineKeyboardButton(text="◀️ Назад к списку", callback_data=f"ga_bots:{admin_id}:0")])
+        await message.answer(
+            f"🔍 <b>Результаты поиска: «{raw}»</b>\n"
+            f"─────────────────────────────\n"
+            f"Найдено: <b>{len(bots)}</b>  │  В выборке: <b>{selected_count}</b>",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
+        )
 
 
 # ──────────────────────────────────────────────────────────────

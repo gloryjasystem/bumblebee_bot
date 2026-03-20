@@ -662,7 +662,7 @@ async def on_ga_pu_bot_del(callback: CallbackQuery):
 
 TARIFFS = ["free", "start", "pro", "business"]
 TARIFF_LABELS = {"free": "Free", "start": "Start", "pro": "Pro", "business": "Business"}
-DURATIONS = [("1m", "1 месяц", 1), ("1y", "1 год", 12), ("forever", "♾ Навсегда", 0)]
+DURATIONS = [("1m", "1 мес.", 1), ("1y", "1 год", 12), ("forever", "♾ Навсегда", 0)]
 
 
 @router.callback_query(F.data.startswith("ga_pu_tariff:"))
@@ -684,8 +684,7 @@ async def on_ga_pu_tariff(callback: CallbackQuery):
         if t == cur_tariff:
             continue
         row_btns.append(InlineKeyboardButton(text=TARIFF_LABELS[t], callback_data=f"ga_pu_tariff_pick:{t}:{target_uid}:{admin_owner_id}"))
-    for i in range(0, len(row_btns), 2):
-        kb.append(row_btns[i:i+2])
+    kb.append(row_btns)  # all tariff buttons in one row
     kb.append([InlineKeyboardButton(text="◀️ Назад к карточке", callback_data=f"ga_pu_card:{target_uid}:{admin_owner_id}")])
     await callback.message.edit_text(
         f"💎 <b>Управление тарифом</b> {uname}\n\n{tariff_line}\n\nСмените тариф:",
@@ -701,11 +700,14 @@ async def on_ga_pu_tariff_pick(callback: CallbackQuery):
     new_tariff, target_uid, admin_owner_id = parts[1], int(parts[2]), int(parts[3])
     label = TARIFF_LABELS.get(new_tariff, new_tariff.title())
     kb = []
-    for dur_key, dur_label, _ in DURATIONS:
-        kb.append([InlineKeyboardButton(
+    dur_row = [
+        InlineKeyboardButton(
             text=dur_label,
             callback_data=f"ga_pu_tariff_dur:{new_tariff}:{dur_key}:{target_uid}:{admin_owner_id}"
-        )])
+        )
+        for dur_key, dur_label, _ in DURATIONS
+    ]
+    kb.append(dur_row)  # all durations in one row
     kb.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"ga_pu_tariff:{target_uid}:{admin_owner_id}")])
     await callback.message.edit_text(
         f"💎 <b>Тариф: {label}</b>\n\nВыберите срок:",

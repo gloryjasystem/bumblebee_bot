@@ -642,14 +642,110 @@ async def on_ga_bl_master_toggle(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("ga_bl_export_csv:"))
 async def on_ga_bl_export_csv(callback: CallbackQuery):
     owner_id = int(callback.data.split(":")[1])
+    admin_id = callback.from_user.id
     role, _ = await get_admin_context(callback.from_user.id, callback.from_user.username)
     if not role:
         return await callback.answer("❌ Нет прав", show_alert=True)
 
-    msg = await callback.message.edit_text("⏳ Генерирую CSV черного списка...")
+    msg = await callback.message.edit_text("⏳ Генерирую CSV чёрного списка из выбранных ботов...")
     import asyncio
-    asyncio.create_task(_export_users_csv(callback.bot, callback.message.chat.id, owner_id, "blocked", msg))
+    asyncio.create_task(_export_bl_csv(callback.bot, callback.message.chat.id, admin_id, owner_id, msg))
     await callback.answer()
+
+
+async def _export_bl_csv(bot, chat_id: int, admin_id: int, owner_id: int, msg_to_edit=None):
+    """
+    Собирает ЧС из ВСЕХ ботов, выбранных администратором через ga_selected_bots.
+    Дедуплицирует записи по user_id / username.
+    Только SELECT-запросы — ни одна запись не изменяется / не удаляется.
+    """
+    import tempfile, os, csv
+    from aiogram.types import FSInputFile, InlineKeyboardMarkup, InlineKeyboardButton
+
+    async with get_pool().acquire() as conn:
+        # 1. Получаем child_bot_id выбранных ботов
+        sel_bots = await conn.fetch(
+            "SELECT child_bot_id FROM ga_selected_bots WHERE admin_id=$1",
+            admin_id
+        )
+        selected_bot_ids = [r['child_bot_id'] for r in sel_bots]
+
+        if not selected_bot_ids:
+            kb = [[InlineKeyboardButton(text="◀️ Назад", callback_data=f"ga_bl:{owner_id}")]]
+            if msg_to_edit:
+                try:
+                    await msg_to_edit.edit_text(
+                        "⚠️ Выборка ботов пуста. Отметьте боты в '🗄️ Управление общей базой'",
+                        reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
+                    )
+                except Exception:
+                    pass
+            return
+
+        # 2. Читаем ЧС из выбранных ботов + глобальные записи платформы (child_bot_id IS NULL)
+        rows = await conn.fetch("""
+            SELECT DISTINCT ON (COALESCE(user_id::text, lower(username)))
+                user_id, username, reason, added_at, child_bot_id
+            FROM blacklist
+            WHERE
+                child_bot_id = ANY($1::int[])
+                OR (owner_id = $2 AND child_bot_id IS NULL)
+            ORDER BY COALESCE(user_id::text, lower(username)), added_at DESC
+        """, selected_bot_ids, owner_id)
+
+    kb = [[InlineKeyboardButton(text="◀️ Назад в ЧС", callback_data=f"ga_bl:{owner_id}")]]
+
+    if not rows:
+        if msg_to_edit:
+            try:
+                await msg_to_edit.edit_text(
+                    "⚠️ Чёрный список пуст по выбранным ботам.",
+                    reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
+                )
+            except Exception:
+                pass
+        return
+
+    # 3. Генерация CSV
+    fd, path = tempfile.mkstemp(suffix=".csv")
+    try:
+        with open(path, "w", encoding="utf-8-sig", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(["ID", "Username", "Причина", "Дата добавления", "Bot ID"])
+            for r in rows:
+                writer.writerow([
+                    r['user_id'] or "",
+                    f"@{r['username']}" if r['username'] else "",
+                    r['reason'] or "",
+                    r['added_at'].strftime("%Y-%m-%d %H:%M:%S") if r['added_at'] else "",
+                    r['child_bot_id'] if r['child_bot_id'] else "global",
+                ])
+
+        doc = FSInputFile(path, filename="global_blacklist_export.csv")
+
+        if msg_to_edit:
+            try:
+                await msg_to_edit.delete()
+            except Exception:
+                pass
+
+        await bot.send_document(
+            chat_id,
+            document=doc,
+            caption=(
+                f"✅ <b>Чёрный список готов!</b>\n"
+                f"📄 Записей: <b>{len(rows):,}</b>\n"
+                f"🤖 Из ботов: <b>{len(selected_bot_ids)}</b> выбранных"
+            ),
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
+        )
+    finally:
+        try:
+            os.close(fd)
+            os.remove(path)
+        except Exception:
+            pass
 
 
 @router.callback_query(F.data.startswith("ga_bl_add:"))

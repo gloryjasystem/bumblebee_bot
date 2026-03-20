@@ -168,16 +168,18 @@ async def _show_admin_panel(message_or_cb, role: str, owner_id: int, admin_id: i
         tariff_str = "  \u2022  ".join(
             f"<b>{r['tariff'].title()}</b>\u202f{r['cnt']}" for r in tariff_rows
         ) if tariff_rows else "\u2014"
+        sep30 = "━" * 30
+        sep8  = "─" * 8
         header = (
-            "\U0001f310 <b>BotCloud \u2014 \u0413\u043b\u043e\u0431\u0430\u043b\u044c\u043d\u0430\u044f \u041f\u0430\u043d\u0435\u043b\u044c</b>  \u2022  \U0001f451 <b>Owner</b>\n"
-            "\u2501" * 30 + "\n\n"
-            f"\U0001f5c4\ufe0f  \u0410\u043a\u0442\u0438\u0432\u043d\u044b\u0445 \u0431\u043e\u0442\u043e\u0432:  <b>{net_bots}</b> \u0438\u0437 <b>{total_bots}</b>\n"
-            f"\U0001f465  \u0410\u0443\u0434\u0438\u0442\u043e\u0440\u0438\u044f (\u0430\u043a\u0442\u0438\u0432\u043d\u044b\u0445):  <b>{total_users:,}</b>\n\n"
-            f"\U0001f6ab  \u0417\u0430\u0431\u043b\u043e\u043a\u0438\u0440\u043e\u0432\u0430\u043d\u043e \u0432 \u0432\u044b\u0431\u0440\u0430\u043d\u043d\u044b\u0445:  <b>{bl_count:,}</b>\n"
-            f"\U0001f465  \u041a\u043e\u043c\u0430\u043d\u0434\u0430:  <b>{admin_count}</b>\n\n"
-            "\u2500" * 8 + " \U0001f4ca \u041f\u043b\u0430\u0442\u0444\u043e\u0440\u043c\u0430 " + "\u2500" * 8 + "\n"
-            f"\U0001f464  \u041f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u0435\u0439:  <b>{pu_total:,}</b>    \u2728  \u041d\u043e\u0432\u044b\u0445 (7\u00a0\u0434\u043d.):  <b>{pu_new7}</b>\n"
-            f"\U0001f4ce  {tariff_str}"
+            f"🌐 <b>BotCloud — Глобальная Панель</b>  •  👑 <b>Owner</b>\n"
+            f"{sep30}\n\n"
+            f"🗄️  Активных ботов:  <b>{net_bots}</b> из <b>{total_bots}</b>\n"
+            f"👥  Аудитория (активных):  <b>{total_users:,}</b>\n\n"
+            f"🚫  Заблокировано в выбранных:  <b>{bl_count:,}</b>\n"
+            f"👥  Команда:  <b>{admin_count}</b>\n\n"
+            f"{sep8} 📊 Платформа {sep8}\n"
+            f"👤  Пользователей:  <b>{pu_total:,}</b>    ✨  Новых (7 дн.):  <b>{pu_new7}</b>\n"
+            f"📎  {tariff_str}"
         )
     else:
         header = (

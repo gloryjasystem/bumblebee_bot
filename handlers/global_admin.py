@@ -581,8 +581,11 @@ async def _build_finance_text(period: str, conn) -> str:
         f"SELECT COUNT(*) as cnt, COALESCE(SUM(amount_usd),0) as total FROM payments WHERE status='paid' {paid_cond}"
     )
     pending_row = await conn.fetchrow(
-        f"SELECT COUNT(*) as cnt, COALESCE(SUM(amount_usd),0) as total FROM payments WHERE status='pending' {created_cond}"
+        f"SELECT COUNT(*) as cnt, COALESCE(SUM(amount_usd),0) as total FROM payments WHERE status='pending' AND created_at >= NOW() - INTERVAL '1 hour' {created_cond}"
     )
+    expired_pending_cnt = await conn.fetchval(
+        f"SELECT COUNT(*) FROM payments WHERE status='pending' AND created_at < NOW() - INTERVAL '1 hour' {created_cond}"
+    ) or 0
     failed_cnt = await conn.fetchval(
         f"SELECT COUNT(*) FROM payments WHERE status='failed' {created_cond}"
     ) or 0
@@ -594,7 +597,7 @@ async def _build_finance_text(period: str, conn) -> str:
     paid_sum    = float(paid_row['total'])
     pending_cnt = pending_row['cnt']
     pending_sum = float(pending_row['total'])
-    cancelled   = failed_cnt + expired_cnt
+    cancelled   = failed_cnt + expired_cnt + expired_pending_cnt
     attempts    = paid_cnt + cancelled + pending_cnt
     conversion  = round(paid_cnt / attempts * 100, 1) if attempts > 0 else 0.0
 

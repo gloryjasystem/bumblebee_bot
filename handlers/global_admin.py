@@ -169,12 +169,12 @@ async def _show_admin_panel(message_or_cb, role: str, owner_id: int, admin_id: i
         
     kb.extend([
         [
-            InlineKeyboardButton(text="🚫 Глобальный ЧС",     callback_data=f"ga_bl:{owner_id}"),
-            InlineKeyboardButton(text="👥 База пользователей", callback_data=f"ga_users:{owner_id}")
-        ],
-        [
             InlineKeyboardButton(text="📢 Рассылка",           callback_data=f"ga_broadcast:{owner_id}"),
             InlineKeyboardButton(text="🏷 Скидки",             callback_data=f"ga_discounts:{owner_id}")
+        ],
+        [
+            InlineKeyboardButton(text="🚫 Глобальный ЧС",     callback_data=f"ga_bl:{owner_id}"),
+            InlineKeyboardButton(text="👥 База пользователей", callback_data=f"ga_users:{owner_id}")
         ],
         [InlineKeyboardButton(text="🗄️ Управление общей базой", callback_data=f"ga_bots:{owner_id}:0")],
         [InlineKeyboardButton(text="⚙️ Управление пользователями", callback_data=f"ga_manage_users:{owner_id}")],

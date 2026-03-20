@@ -7,6 +7,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
 from db.pool import get_pool
+from services.discount import get_active_discount, set_discount
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -1612,3 +1613,93 @@ async def on_bots_search_input(message: Message, state: FSMContext):
 
     kb = [[InlineKeyboardButton(text="✅ К списку ботов", callback_data=f"ga_bots:{admin_id}:0")]]
     await message.answer(result_text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+
+
+# ──────────────────────────────────────────────────────────────
+# СКИДКИ
+# ──────────────────────────────────────────────────────────────
+@router.callback_query(F.data.startswith("ga_discounts:"))
+async def on_ga_discounts(callback: CallbackQuery):
+    owner_id = int(callback.data.split(":")[1])
+    role, _ = await get_admin_context(callback.from_user.id, callback.from_user.username)
+    if role != 'owner':
+        return await callback.answer("❌ Только для Владельца", show_alert=True)
+
+    percent, until = await get_active_discount()
+    
+    if percent > 0 and until:
+        status_text = f"Текущее значение: {percent}%\n(до {until.strftime('%d.%m.%Y %H:%M')})"
+    else:
+        status_text = "Текущее значение: 0%"
+
+    text = (
+        "🏷 <b>Скидка на подписку</b>\n\n"
+        f"{status_text}\n\n"
+        "Выбери готовое значение кнопкой."
+    )
+    kb = [
+        [
+            InlineKeyboardButton(text="0%", callback_data=f"ga_discount:{owner_id}:0"),
+            InlineKeyboardButton(text="10%", callback_data=f"ga_discount:{owner_id}:10"),
+            InlineKeyboardButton(text="20%", callback_data=f"ga_discount:{owner_id}:20"),
+            InlineKeyboardButton(text="30%", callback_data=f"ga_discount:{owner_id}:30")
+        ],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"ga_main:{owner_id}")]
+    ]
+    await callback.message.edit_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("ga_discount:"))
+async def on_ga_discount_select(callback: CallbackQuery):
+    parts = callback.data.split(":")
+    owner_id = int(parts[1])
+    percent = int(parts[2])
+
+    role, _ = await get_admin_context(callback.from_user.id, callback.from_user.username)
+    if role != 'owner':
+        return await callback.answer("❌ Только для Владельца", show_alert=True)
+
+    if percent == 0:
+        await set_discount(0)
+        await callback.answer("Скидка отключена", show_alert=True)
+        # return to the discounts menu
+        callback.data = f"ga_discounts:{owner_id}"
+        return await on_ga_discounts(callback)
+
+    text = f"На сколько времени включить скидку <b>{percent}%</b>?"
+    kb = [
+        [
+            InlineKeyboardButton(text="3 дня", callback_data=f"ga_dsave:{owner_id}:{percent}:3"),
+            InlineKeyboardButton(text="1 неделя", callback_data=f"ga_dsave:{owner_id}:{percent}:7"),
+        ],
+        [
+            InlineKeyboardButton(text="2 недели", callback_data=f"ga_dsave:{owner_id}:{percent}:14"),
+            InlineKeyboardButton(text="1 месяц", callback_data=f"ga_dsave:{owner_id}:{percent}:30"),
+        ],
+        [
+            InlineKeyboardButton(text="2 месяца", callback_data=f"ga_dsave:{owner_id}:{percent}:60"),
+            InlineKeyboardButton(text="3 месяца", callback_data=f"ga_dsave:{owner_id}:{percent}:90"),
+        ],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"ga_discounts:{owner_id}")]
+    ]
+    await callback.message.edit_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("ga_dsave:"))
+async def on_ga_discount_save(callback: CallbackQuery):
+    parts = callback.data.split(":")
+    owner_id = int(parts[1])
+    percent = int(parts[2])
+    days = int(parts[3])
+
+    role, _ = await get_admin_context(callback.from_user.id, callback.from_user.username)
+    if role != 'owner':
+        return await callback.answer("❌ Только для Владельца", show_alert=True)
+
+    await set_discount(percent, days)
+    await callback.answer(f"✅ Скидка {percent}% включена на {days} дней!", show_alert=True)
+    
+    callback.data = f"ga_discounts:{owner_id}"
+    await on_ga_discounts(callback)

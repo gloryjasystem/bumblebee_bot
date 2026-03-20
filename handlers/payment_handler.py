@@ -8,6 +8,7 @@ from aiogram.types import (
 )
 from config import settings
 import db.pool as db
+from services.discount import get_active_discount
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -104,12 +105,20 @@ async def on_tariffs(callback: CallbackQuery, platform_user: dict | None):
             callback_data="tariff_activate:trial",
         )])
 
+    percent, until_date = await get_active_discount()
+    discount_text = ""
+    if percent > 0 and until_date:
+        discount_text = f"\n🔥 <b>Текущая акция!</b> Скидка {percent}% действует до {until_date.strftime('%d.%m.%Y')} ⏳\n"
+
     # Кнопки тарифов
     for key in ("start", "pro", "business"):
         info = TARIFF_INFO[key]
         mark = " ✅" if tariff == key else ""
+        btn_text = f"{info['icon']} {info['name']}{mark}"
+        if percent > 0 and tariff != key:
+            btn_text += f" (-{percent}%)"
         buttons.append([InlineKeyboardButton(
-            text=f"{info['icon']} {info['name']}{mark}",
+            text=btn_text,
             callback_data=f"tariff_detail:{key}",
         )])
 
@@ -117,7 +126,8 @@ async def on_tariffs(callback: CallbackQuery, platform_user: dict | None):
 
     await callback.message.edit_text(
         f"💎 <b>Тарифы Bumblebee Bot</b>\n\n"
-        f"Текущий: {TARIFF_LABELS.get(tariff, tariff)}{until}\n\n"
+        f"Текущий: {TARIFF_LABELS.get(tariff, tariff)}{until}\n"
+        f"{discount_text}\n"
         f"Выберите тариф для подробной информации 👇",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
     )
@@ -141,15 +151,30 @@ async def on_tariff_detail(callback: CallbackQuery, platform_user: dict | None):
     month_price = p.get(f"{tariff_key}_month", 0)
     year_price  = p.get(f"{tariff_key}_year", 0)
 
+    percent, until_date = await get_active_discount()
+    desc = info["desc"]
+
+    if percent > 0 and until_date:
+        new_month = round(month_price * (1 - percent / 100.0), 2)
+        new_year = round(year_price * (1 - percent / 100.0), 2)
+        
+        btn_month_text = f"💳 ~${month_price}~ ${new_month} / месяц"
+        btn_year_text  = f"💳 ~${year_price}~ ${new_year} / год  (−29%)"
+        
+        desc += f"\n\n🔥 <b>Внимание!</b> Успей купить со скидкой {percent}% до {until_date.strftime('%d.%m.%Y')} ⏳"
+    else:
+        btn_month_text = f"💳 ${month_price} / месяц"
+        btn_year_text  = f"💳 ${year_price} / год  (−29%)"
+
     await callback.message.edit_text(
-        info["desc"],
+        desc,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(
-                text=f"💳 ${month_price} / месяц",
+                text=btn_month_text,
                 callback_data=f"tariff_buy:{tariff_key}:month",
             )],
             [InlineKeyboardButton(
-                text=f"💳 ${year_price} / год  (−29%)",
+                text=btn_year_text,
                 callback_data=f"tariff_buy:{tariff_key}:year",
             )],
             [InlineKeyboardButton(text="◀️ Назад", callback_data="menu:tariffs")],

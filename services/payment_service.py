@@ -7,6 +7,7 @@ from datetime import timedelta
 
 import db.pool as db
 from config import settings
+from services.discount import get_active_discount
 
 logger = logging.getLogger(__name__)
 
@@ -20,9 +21,14 @@ async def create_invoice(user_id: int, tariff: str, period: str, currency: str =
     Используем /v1/invoice — пользователь сам выбирает валюту на странице NP.
     """
     key = f"{tariff}_{period}"
-    amount = settings.tariff_prices.get(key)
-    if not amount:
+    base_amount = settings.tariff_prices.get(key)
+    if not base_amount:
         raise ValueError(f"Unknown tariff/period: {key}")
+
+    percent, _ = await get_active_discount()
+    amount = base_amount
+    if percent > 0:
+        amount = round(base_amount * (1 - percent / 100.0), 2)
 
     # Создаём pending-запись в БД
     payment_id = await db.fetchval(

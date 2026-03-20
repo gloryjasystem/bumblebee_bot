@@ -429,3 +429,13 @@ CREATE TABLE IF NOT EXISTS ga_selected_bots (
     PRIMARY KEY (admin_id, child_bot_id)
 );
 CREATE INDEX IF NOT EXISTS idx_ga_selected_bots_admin ON ga_selected_bots(admin_id);
+
+-- ════════════════════════════════════════════════════════════
+-- Глобальные настройки (скидки и прочее)
+-- ════════════════════════════════════════════════════════════
+CREATE TABLE IF NOT EXISTS global_settings (
+    id SERIAL PRIMARY KEY,
+    discount_percent INTEGER DEFAULT 0,
+    discount_until TIMESTAMPTZ
+);
+INSERT INTO global_settings (id, discount_percent) VALUES (1, 0) ON CONFLICT (id) DO NOTHING;

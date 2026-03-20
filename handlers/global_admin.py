@@ -177,7 +177,8 @@ async def _show_admin_panel(message_or_cb, role: str, owner_id: int, admin_id: i
             InlineKeyboardButton(text="🏷 Скидки",             callback_data=f"ga_discounts:{owner_id}")
         ],
         [InlineKeyboardButton(text="🗄️ Управление общей базой", callback_data=f"ga_bots:{owner_id}:0")],
-        [InlineKeyboardButton(text="⚙️ Управление пользователями", callback_data=f"ga_manage_users:{owner_id}")]
+        [InlineKeyboardButton(text="⚙️ Управление пользователями", callback_data=f"ga_manage_users:{owner_id}")],
+        [InlineKeyboardButton(text="❌ Закрыть панель", callback_data=f"ga_close:{owner_id}")]
     ])
 
     markup = InlineKeyboardMarkup(inline_keyboard=kb)
@@ -199,6 +200,14 @@ async def on_ga_main(callback: CallbackQuery):
     await _show_admin_panel(callback, role, owner_id, admin_id=callback.from_user.id)
     await callback.answer()
 
+
+@router.callback_query(F.data.startswith("ga_close:"))
+async def on_ga_close(callback: CallbackQuery):
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
+    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("ga_team:"))

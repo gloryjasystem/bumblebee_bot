@@ -16,6 +16,9 @@ router = Router()
 class BroadcastFSM(StatesGroup):
     waiting_message = State()
 
+class StaffFSM(StatesGroup):
+    waiting_remove_input = State()
+
 
 # ══════════════════════════════════════════════════════════
 # ВРЕМЕННЫЙ ДИАГНОСТИЧЕСКИЙ ХЕНДЛЕР — удалить после проверки
@@ -245,6 +248,7 @@ async def on_ga_team(callback: CallbackQuery):
     )
     kb = [
         [InlineKeyboardButton(text="➕ Добавить админа", callback_data=f"ga_team_howto:{owner_id}")],
+        [InlineKeyboardButton(text="➖ Удалить админа", callback_data=f"ga_team_remove:{owner_id}")],
         [InlineKeyboardButton(text="◀️ Назад", callback_data=f"ga_main:{owner_id}")]
     ]
     await callback.message.edit_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
@@ -265,6 +269,95 @@ async def on_ga_team_howto(callback: CallbackQuery):
     await callback.message.edit_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb),
                                      disable_web_page_preview=True)
     await callback.answer()
+
+
+@router.callback_query(F.data.startswith("ga_team_remove:"))
+async def on_ga_team_remove(callback: CallbackQuery, state: FSMContext):
+    owner_id = int(callback.data.split(":")[1])
+    role, _ = await get_admin_context(callback.from_user.id, callback.from_user.username)
+    if role != 'owner':
+        return await callback.answer("❌ Только для Владельца", show_alert=True)
+    await state.set_state(StaffFSM.waiting_remove_input)
+    await state.update_data(owner_id=owner_id)
+    text = (
+        "➖ <b>Удалить администратора</b>\n\n"
+        "Введите <b>@username</b> или <b>Telegram ID</b> сотрудника, которого хотите убрать:\n\n"
+        "<code>@username</code> или <code>123456789</code>"
+    )
+    kb = [[InlineKeyboardButton(text="🚫 Отмена", callback_data=f"ga_team:{owner_id}")]]
+    await callback.message.edit_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+    await callback.answer()
+
+
+@router.message(StaffFSM.waiting_remove_input)
+async def on_ga_team_remove_input(message: Message, state: FSMContext):
+    role, _ = await get_admin_context(message.from_user.id, message.from_user.username)
+    if role != 'owner':
+        return
+    data = await state.get_data()
+    owner_id = data.get("owner_id")
+    await state.clear()
+
+    raw = (message.text or "").strip()
+    try:
+        await message.delete()
+    except Exception:
+        pass
+
+    target_id = None
+    target_username = None
+
+    if raw.lstrip("-").isdigit():
+        target_id = int(raw)
+    elif raw.startswith("@"):
+        target_username = raw.lstrip("@").lower()
+    else:
+        return await message.answer("❌ Неверный формат. Введите @username или числовой ID.",
+                                    reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                                        [InlineKeyboardButton(text="◀️ Назад", callback_data=f"ga_team:{owner_id}")]
+                                    ]))
+
+    async with get_pool().acquire() as conn:
+        if target_id:
+            row = await conn.fetchrow(
+                "SELECT admin_id, admin_username FROM global_admins WHERE owner_id=$1 AND admin_id=$2",
+                owner_id, target_id
+            )
+        else:
+            row = await conn.fetchrow(
+                "SELECT admin_id, admin_username FROM global_admins WHERE owner_id=$1 AND lower(admin_username)=$2",
+                owner_id, target_username
+            )
+
+        if not row:
+            ident = raw
+            return await message.answer(
+                f"⚠️ Администратор <b>{ident}</b> не найден в вашем списке сотрудников.",
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="◀️ Назад", callback_data=f"ga_team:{owner_id}")]
+                ])
+            )
+
+        removed_id = row["admin_id"]
+        removed_name = f"@{row['admin_username']}" if row['admin_username'] else f"<code>{removed_id}</code>"
+        await conn.execute(
+            "DELETE FROM global_admins WHERE owner_id=$1 AND admin_id=$2",
+            owner_id, removed_id
+        )
+        await conn.execute("""
+            INSERT INTO audit_log (owner_id, user_id, action, details)
+            VALUES ($1, $2, 'remove_admin', $3)
+        """, owner_id, message.from_user.id,
+            json.dumps({"removed_admin_id": removed_id, "removed_by": message.from_user.id}))
+
+    await message.answer(
+        f"✅ Администратор {removed_name} успешно удалён из списка сотрудников.",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="◀️ К сотрудникам", callback_data=f"ga_team:{owner_id}")]
+        ])
+    )
 
 
 @router.callback_query(F.data.startswith("ga_audit:"))

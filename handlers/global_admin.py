@@ -105,55 +105,82 @@ async def cmd_admin(message: Message, state: FSMContext):
         return await message.answer("❌ Эта панель доступна только администраторам сети ботов.")
         
     await state.clear()
-    await _show_admin_panel(message, role, owner_id)
+    await _show_admin_panel(message, role, owner_id, admin_id=message.from_user.id)
 
-async def _show_admin_panel(message_or_cb, role: str, owner_id: int):
+async def _show_admin_panel(message_or_cb, role: str, owner_id: int, admin_id: int = None):
+    if admin_id is None:
+        admin_id = owner_id
+
     async with get_pool().acquire() as conn:
         total_bots = await conn.fetchval("SELECT COUNT(*) FROM child_bots WHERE owner_id=$1", owner_id) or 0
-        net_bots = await conn.fetchval("SELECT COUNT(*) FROM child_bots WHERE owner_id=$1 AND in_global_network=true", owner_id) or 0
+        net_bots   = await conn.fetchval("SELECT COUNT(*) FROM child_bots WHERE owner_id=$1 AND in_global_network=true", owner_id) or 0
+
         total_users = await conn.fetchval("""
             SELECT COUNT(DISTINCT bu.user_id) FROM bot_users bu
             JOIN bot_chats bc ON bu.chat_id = bc.chat_id
             JOIN child_bots cb ON cb.id = bc.child_bot_id
             WHERE bc.owner_id=$1 AND bc.is_active=true AND bu.user_id IS NOT NULL
-            AND cb.in_global_network=true
+              AND cb.in_global_network=true
         """, owner_id) or 0
-        bl_count = await conn.fetchval("SELECT COUNT(*) FROM blacklist WHERE owner_id=$1", owner_id) or 0
+
+        # Заблокировано — уникальные ЧС-записи из ВЫБРАННЫХ ботов (ga_selected_bots)
+        selected_bot_ids_rows = await conn.fetch(
+            "SELECT child_bot_id FROM ga_selected_bots WHERE admin_id=$1", admin_id
+        )
+        selected_bot_ids = [r['child_bot_id'] for r in selected_bot_ids_rows]
+        if selected_bot_ids:
+            bl_count = await conn.fetchval("""
+                SELECT COUNT(*) FROM (
+                    SELECT DISTINCT ON (COALESCE(user_id::text, lower(username))) user_id
+                    FROM blacklist
+                    WHERE child_bot_id = ANY($1::int[]) OR (owner_id = $2 AND child_bot_id IS NULL)
+                ) t
+            """, selected_bot_ids, owner_id) or 0
+        else:
+            bl_count = await conn.fetchval(
+                "SELECT COUNT(*) FROM blacklist WHERE owner_id=$1 AND child_bot_id IS NULL", owner_id
+            ) or 0
+
         admin_count = await conn.fetchval("SELECT COUNT(*) FROM global_admins WHERE owner_id=$1", owner_id) or 0
 
     if role == 'owner':
         header = (
-            "🌐 <b>BotCloud — Глобальная Панель</b> • 👑 Owner\n"
-            "─────────────────────────────\n"
-            f"🗄️ Активных ботов: <b>{net_bots} из {total_bots}</b>\n"
-            f"👥 Аудитория (активных): <b>{total_users:,}</b>\n"
-            f"🚫 Записей в ЧС: <b>{bl_count}</b>   │   👷 Сотрудников: <b>{admin_count}</b>"
+            "🌐 <b>BotCloud — Глобальная Панель</b>  •  👑 <b>Owner</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"🗄️  Активных ботов:  <b>{net_bots}</b> из <b>{total_bots}</b>\n"
+            f"👥  Аудитория (активных):  <b>{total_users:,}</b>\n\n"
+            f"🚫  Заблокировано в выбранных:  <b>{bl_count:,}</b>\n"
+            f"👥  Команда:  <b>{admin_count}</b>"
         )
     else:
         header = (
-            "🌐 <b>BotCloud — Глобальная Панель</b> • 👷 Admin\n"
-            "─────────────────────────────\n"
-            f"👥 Активная аудитория сети: <b>{total_users:,}</b>\n"
-            f"🚫 Записей в ЧС: <b>{bl_count}</b>"
+            "🌐 <b>BotCloud — Глобальная Панель</b>  •  👷 <b>Admin</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"👥  Активная аудитория сети:  <b>{total_users:,}</b>\n"
+            f"🚫  Заблокировано в выбранных:  <b>{bl_count:,}</b>"
         )
 
-    kb = []
-    kb.append([InlineKeyboardButton(text="🗄️ Управление общей базой", callback_data=f"ga_bots:{owner_id}:0")])
-    kb.append([InlineKeyboardButton(text="🚫 Глобальный ЧС — 🛡️ Защита сети", callback_data=f"ga_bl:{owner_id}")])
-    kb.append([InlineKeyboardButton(text="👥 База аудитории — Выгрузка CSV", callback_data=f"ga_users:{owner_id}")])
-    kb.append([InlineKeyboardButton(text="📢 Рассылки и Личные сообщения", callback_data=f"ga_broadcast:{owner_id}")])
-    kb.append([InlineKeyboardButton(text="📜 Журнал действий (Audit Log)", callback_data=f"ga_audit:{owner_id}")])
+    kb = [
+        [InlineKeyboardButton(text="🗄️  Управление общей базой",         callback_data=f"ga_bots:{owner_id}:0")],
+        [InlineKeyboardButton(text="🚫  Глобальный ЧС  —  🛡️ Защита сети", callback_data=f"ga_bl:{owner_id}")],
+        [InlineKeyboardButton(text="👥  База аудитории  —  Выгрузка CSV",  callback_data=f"ga_users:{owner_id}")],
+        [InlineKeyboardButton(text="📢  Рассылки и Личные сообщения",      callback_data=f"ga_broadcast:{owner_id}")],
+    ]
     if role == 'owner':
         kb.append([
-            InlineKeyboardButton(text="🎖️ Команда", callback_data=f"ga_team:{owner_id}"),
-            InlineKeyboardButton(text="📊 Аналитика", callback_data=f"ga_stats:{owner_id}")
+            InlineKeyboardButton(text="👥 Команда",   callback_data=f"ga_team:{owner_id}"),
+            InlineKeyboardButton(text="📊 Аналитика", callback_data=f"ga_stats:{owner_id}"),
         ])
 
     markup = InlineKeyboardMarkup(inline_keyboard=kb)
     if isinstance(message_or_cb, Message):
         await message_or_cb.answer(header, reply_markup=markup, parse_mode="HTML")
     else:
-        await message_or_cb.message.edit_text(header, reply_markup=markup, parse_mode="HTML")
+        try:
+            await message_or_cb.message.edit_text(header, reply_markup=markup, parse_mode="HTML")
+        except Exception:
+            await message_or_cb.message.answer(header, reply_markup=markup, parse_mode="HTML")
+
 
 @router.callback_query(F.data.startswith("ga_main:"))
 async def on_ga_main(callback: CallbackQuery):
@@ -161,8 +188,9 @@ async def on_ga_main(callback: CallbackQuery):
     role, _ = await get_admin_context(callback.from_user.id, callback.from_user.username)
     if not role:
         return await callback.answer("❌ Нет прав", show_alert=True)
-    await _show_admin_panel(callback, role, owner_id)
+    await _show_admin_panel(callback, role, owner_id, admin_id=callback.from_user.id)
     await callback.answer()
+
 
 
 @router.callback_query(F.data.startswith("ga_team:"))

@@ -8,6 +8,7 @@ from aiogram.fsm.state import State, StatesGroup
 
 from db.pool import get_pool
 from services.discount import get_active_discount, set_discount
+from services.security import decrypt_token
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -1323,7 +1324,9 @@ async def cmd_users(message: Message):
 
 
 @router.callback_query(F.data.startswith("ga_broadcast:"))
-async def on_ga_broadcast(callback: CallbackQuery):
+async def on_ga_broadcast(callback: CallbackQuery, state: FSMContext):
+    await state.clear()  # <-- Очищаем состояние при входе в меню рассылок или нажатии "Отмена"
+    
     role, owner_id = await get_admin_context(callback.from_user.id, callback.from_user.username)
     if not role:
         return await callback.answer("❌ Нет прав", show_alert=True)
@@ -1444,7 +1447,7 @@ async def on_broadcast_message_received(message: Message, state: FSMContext):
     async with get_pool().acquire() as conn:
         if segment == "all":
             rows = await conn.fetch("""
-                SELECT DISTINCT ON (bu.user_id) bu.user_id, cb.bot_token
+                SELECT DISTINCT ON (bu.user_id) bu.user_id, cb.token_encrypted
                 FROM bot_users bu
                 JOIN bot_chats bc ON bu.chat_id = bc.chat_id
                 JOIN child_bots cb ON cb.id = bc.child_bot_id
@@ -1453,7 +1456,7 @@ async def on_broadcast_message_received(message: Message, state: FSMContext):
             """, owner_id)
         elif segment == "active":
             rows = await conn.fetch("""
-                SELECT DISTINCT ON (bu.user_id) bu.user_id, cb.bot_token
+                SELECT DISTINCT ON (bu.user_id) bu.user_id, cb.token_encrypted
                 FROM bot_users bu
                 JOIN bot_chats bc ON bu.chat_id = bc.chat_id
                 JOIN child_bots cb ON cb.id = bc.child_bot_id
@@ -1470,7 +1473,7 @@ async def on_broadcast_message_received(message: Message, state: FSMContext):
                 tariff_filter = "pu.tariff IN ('start', 'pro', 'business')"
                 
             rows = await conn.fetch(f"""
-                SELECT DISTINCT ON (bu.user_id) bu.user_id, cb.bot_token
+                SELECT DISTINCT ON (bu.user_id) bu.user_id, cb.token_encrypted
                 FROM bot_users bu
                 JOIN bot_chats bc ON bu.chat_id = bc.chat_id
                 JOIN child_bots cb ON cb.id = bc.child_bot_id
@@ -1490,7 +1493,12 @@ async def on_broadcast_message_received(message: Message, state: FSMContext):
         valid_bots = {}
         for r in rows:
             u_id = r['user_id']
-            token = r['bot_token']
+            enc_token = r['token_encrypted']
+            try:
+                token = decrypt_token(enc_token)
+            except Exception:
+                continue
+                
             if token not in valid_bots:
                 valid_bots[token] = Bot(token=token, default=DefaultBotProperties(parse_mode="HTML"))
             

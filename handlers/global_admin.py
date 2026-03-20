@@ -411,99 +411,208 @@ async def cmd_admins(message: Message):
 
 
 
-async def _build_analytics_text(owner_id: int, conn) -> str:
-    from datetime import datetime, timezone
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 📊 АНАЛИТИКА — вспомогательные функции
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-    # ── СЕТЬ БОТОВ ──────────────────────────────────────────
-    total_bots  = await conn.fetchval("SELECT COUNT(*) FROM child_bots WHERE owner_id=$1", owner_id) or 0
-    total_chats = await conn.fetchval("SELECT COUNT(*) FROM bot_chats WHERE owner_id=$1 AND is_active=true", owner_id) or 0
+_FRAME_TOP    = "┌────────────────────────────\n"
+_FRAME_BOTTOM = "└────────────────────────────"
+_FRAME_LINE   = "│ "
+
+_PERIOD_META = {
+    "today": ("Сегодня",    "date_trunc('day', {col} AT TIME ZONE 'UTC') = current_date"),
+    "week":  ("За неделю",  "{col} >= now() - interval '7 days'"),
+    "month": ("За месяц",   "{col} >= now() - interval '30 days'"),
+    "all":   ("За всё время", None),
+}
+_PERIOD_TABS = [
+    ("📅 Сегодня",   "today"),
+    ("📆 Неделя",    "week"),
+    ("🗓 Месяц",     "month"),
+    ("🕰 Всё время", "all"),
+]
+
+
+def _period_where(period: str, col: str = "created_at") -> str | None:
+    """Returns a SQL WHERE condition string for the given period, or None for 'all'."""
+    tmpl = _PERIOD_META.get(period, _PERIOD_META["all"])[1]
+    if tmpl is None:
+        return None
+    return tmpl.format(col=col)
+
+
+def _period_label(period: str) -> str:
+    return _PERIOD_META.get(period, _PERIOD_META["all"])[0]
+
+
+def _period_tabs_kb(owner_id: int, section: str, current_period: str) -> InlineKeyboardMarkup:
+    """Reusable period tab keyboard. Active tab is omitted. section = 'audience'|'segment'|'finance'|'rev'."""
+    tabs = [
+        InlineKeyboardButton(text=label, callback_data=f"ga_{section}:{owner_id}:{p}")
+        for label, p in _PERIOD_TABS if p != current_period
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=[
+        tabs,
+        [InlineKeyboardButton(text="🔄 Обновить", callback_data=f"ga_{section}:{owner_id}:{current_period}")],
+        [InlineKeyboardButton(text="◀️ Назад в Аналитику", callback_data=f"ga_stats:{owner_id}")],
+    ])
+
+
+# ── Main screen builder (СЕТЬ БОТОВ only) ──────────────────────────────────
+
+async def _build_network_text(owner_id: int, conn) -> str:
+    total_bots   = await conn.fetchval("SELECT COUNT(*) FROM child_bots WHERE owner_id=$1", owner_id) or 0
+    total_chats  = await conn.fetchval("SELECT COUNT(*) FROM bot_chats WHERE owner_id=$1 AND is_active=true", owner_id) or 0
     total_owners = await conn.fetchval("SELECT COUNT(*) FROM platform_users") or 0
 
-    # ── АУДИТОРИЯ BUMBLEBEE BOT (platform_users) ────────────
-    all_pu       = await conn.fetchval("SELECT COUNT(*) FROM platform_users") or 0
-    active_today = await conn.fetchval(
-        "SELECT COUNT(*) FROM platform_users WHERE created_at >= now() - interval '1 day'"
-    ) or 0
-    new_today    = await conn.fetchval(
-        "SELECT COUNT(*) FROM platform_users WHERE date_trunc('day', created_at AT TIME ZONE 'UTC') = current_date"
-    ) or 0
-    new_yesterday = await conn.fetchval(
-        "SELECT COUNT(*) FROM platform_users WHERE date_trunc('day', created_at AT TIME ZONE 'UTC') = current_date - 1"
-    ) or 0
-    new_week     = await conn.fetchval(
-        "SELECT COUNT(*) FROM platform_users WHERE created_at >= now() - interval '7 days'"
-    ) or 0
-
-    # ── СЕГМЕНТАЦИЯ ─────────────────────────────────────────
-    seg_rows = await conn.fetch("SELECT tariff, COUNT(*) as cnt FROM platform_users GROUP BY tariff")
-    seg = {r['tariff']: r['cnt'] for r in seg_rows}
-    leads   = seg.get('free', 0) + seg.get(None, 0)
-    clients = seg.get('start', 0) + seg.get('pro', 0) + seg.get('business', 0)
-    quals   = seg.get('pro', 0) + seg.get('business', 0)
-    banned_global = await conn.fetchval(
-        "SELECT COUNT(*) FROM blacklist WHERE owner_id=$1 AND child_bot_id IS NULL", owner_id
-    ) or 0
-
-    # ── ФИНАНСЫ (NOWPayments) ────────────────────────────────
-    fin = await conn.fetch(
-        "SELECT status, COUNT(*) as cnt, COALESCE(SUM(amount_usd),0) as total FROM payments GROUP BY status"
+    lines = (
+        f"{_FRAME_LINE}🗄️  Подключено ботов:  <b>{total_bots}</b>\n"
+        f"{_FRAME_LINE}📡  Активных каналов/групп:  <b>{total_chats}</b>\n"
+        f"{_FRAME_LINE}👤  Владельцев ботов:  <b>{total_owners}</b>\n"
     )
-    fin_map = {r['status']: (r['cnt'], float(r['total'])) for r in fin}
-    pending_cnt, pending_sum   = fin_map.get('pending', (0, 0.0))
-    paid_cnt,    paid_sum      = fin_map.get('paid',    (0, 0.0))
-    failed_cnt,  _             = fin_map.get('failed',  (0, 0.0))
-    expired_cnt, _             = fin_map.get('expired', (0, 0.0))
-    cancelled_cnt = failed_cnt + expired_cnt
-
-    total_attempts = paid_cnt + cancelled_cnt + pending_cnt
-    conversion = round(paid_cnt / total_attempts * 100, 1) if total_attempts > 0 else 0.0
-
     return (
         "📊 <b>Аналитика BotCloud</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
         "🤖 <b>СЕТЬ БОТОВ</b>\n"
-        f"🗄️  Подключено ботов:  <b>{total_bots}</b>\n"
-        f"📡  Активных каналов/групп:  <b>{total_chats}</b>\n"
-        f"👤  Владельцев ботов:  <b>{total_owners}</b>\n\n"
-        "🐝 <b>АУДИТОРИЯ BUMBLEBEE BOT</b>\n"
-        f"📊  Всего пользователей:  <b>{all_pu:,}</b>\n"
-        f"🟢  Активных сегодня:  <b>{active_today:,}</b>\n"
-        f"🆕  Новых сегодня:  <b>{new_today}</b>   │   Вчера:  <b>{new_yesterday}</b>\n"
-        f"📅  За неделю:  <b>{new_week}</b>\n\n"
-        "📦 <b>СЕГМЕНТАЦИЯ</b>\n"
-        f"💡  Лиды (free):  <b>{leads:,}</b>\n"
-        f"✅  Клиенты (платные):  <b>{clients:,}</b>\n"
-        f"🏆  Квалы (pro+business):  <b>{quals:,}</b>\n"
-        f"🚫  Забаненных в платформе:  <b>{banned_global}</b>\n\n"
-        "💳 <b>ФИНАНСЫ (NOWPayments)</b>\n"
-        f"⏳  В ожидании:  <b>{pending_cnt}</b>  •  <b>${pending_sum:,.2f}</b>\n"
-        f"✅  Оплачено:  <b>{paid_cnt}</b>  •  <b>${paid_sum:,.2f}</b>\n"
-        f"❌  Отмены/Просроченных:  <b>{cancelled_cnt}</b>\n"
-        f"📈  Конверсия:  <b>{conversion}%</b>\n"
-        f"💰  Общий доход:  <b>${paid_sum:,.2f}</b>"
+        f"{_FRAME_TOP}{lines}{_FRAME_BOTTOM}"
     )
 
 
+# ── Аудитория ───────────────────────────────────────────────────────────────
+
+async def _build_audience_text(period: str, conn) -> str:
+    label = _period_label(period)
+    where = _period_where(period, "created_at")
+    cond  = f"WHERE {where}" if where else ""
+
+    total_all  = await conn.fetchval("SELECT COUNT(*) FROM platform_users") or 0
+    new_period = await conn.fetchval(f"SELECT COUNT(*) FROM platform_users {cond}") or 0
+    paid_period = await conn.fetchval(
+        f"SELECT COUNT(*) FROM platform_users {cond} {'AND' if cond else 'WHERE'} tariff != 'free'"
+        if cond else
+        "SELECT COUNT(*) FROM platform_users WHERE tariff != 'free'"
+    ) or 0
+    free_period = new_period - paid_period
+
+    lines = (
+        f"{_FRAME_LINE}📊  Всего пользователей (всего):  <b>{total_all:,}</b>\n"
+        f"{_FRAME_LINE}🆕  Новых {label.lower()}:  <b>{new_period:,}</b>\n"
+        f"{_FRAME_LINE}✅  Платных (из новых):  <b>{paid_period:,}</b>\n"
+        f"{_FRAME_LINE}💡  Бесплатных (из новых):  <b>{free_period:,}</b>\n"
+    )
+    return (
+        f"🐝 <b>АУДИТОРИЯ BUMBLEBEE BOT</b>  —  <b>{label}</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"{_FRAME_TOP}{lines}{_FRAME_BOTTOM}"
+    )
+
+
+# ── Сегментация ─────────────────────────────────────────────────────────────
+
+async def _build_segment_text(period: str, owner_id: int, conn) -> str:
+    label = _period_label(period)
+    where = _period_where(period, "created_at")
+    base  = f"WHERE {where}" if where else ""
+    and_  = "AND" if base else "WHERE"
+
+    seg_rows = await conn.fetch(
+        f"SELECT COALESCE(tariff,'free') as t, COUNT(*) as cnt FROM platform_users {base} GROUP BY tariff"
+    )
+    seg = {r['t']: r['cnt'] for r in seg_rows}
+
+    leads   = seg.get('free', 0)
+    start_c = seg.get('start', 0)
+    pro_c   = seg.get('pro', 0)
+    biz_c   = seg.get('business', 0)
+    clients = start_c + pro_c + biz_c
+    quals   = pro_c + biz_c
+
+    banned_w = f"WHERE added_at >= {where.replace('created_at', 'added_at').split('>= ')[1]}" if where else ""
+    banned = await conn.fetchval(
+        f"SELECT COUNT(*) FROM blacklist WHERE owner_id=$1 AND child_bot_id IS NULL"
+        + (f" AND {_period_where(period, 'added_at')}" if where else ""),
+        owner_id
+    ) or 0
+
+    period_note = f"  <i>(новых {label.lower()})</i>" if period != "all" else ""
+    lines = (
+        f"{_FRAME_LINE}💡  Лиды (free):  <b>{leads:,}</b>{period_note}\n"
+        f"{_FRAME_LINE}✅  Клиенты (start):  <b>{start_c:,}</b>{period_note}\n"
+        f"{_FRAME_LINE}🏆  Квалы (pro+business):  <b>{quals:,}</b>{period_note}\n"
+        f"{_FRAME_LINE}💼  Всего платных:  <b>{clients:,}</b>{period_note}\n"
+        f"{_FRAME_LINE}🚫  Новых в ЧС:  <b>{banned}</b>{period_note}\n"
+    )
+    return (
+        f"📦 <b>СЕГМЕНТАЦИЯ</b>  —  <b>{label}</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"{_FRAME_TOP}{lines}{_FRAME_BOTTOM}"
+    )
+
+
+# ── Финансы ─────────────────────────────────────────────────────────────────
+
+async def _build_finance_text(period: str, conn) -> str:
+    label   = _period_label(period)
+    # Paid: use paid_at; Pending/Failed/Expired: use created_at
+    w_paid    = _period_where(period, "paid_at")
+    w_created = _period_where(period, "created_at")
+
+    paid_cond    = f"AND {w_paid}"    if w_paid    else ""
+    created_cond = f"AND {w_created}" if w_created else ""
+
+    paid_row = await conn.fetchrow(
+        f"SELECT COUNT(*) as cnt, COALESCE(SUM(amount_usd),0) as total FROM payments WHERE status='paid' {paid_cond}"
+    )
+    pending_row = await conn.fetchrow(
+        f"SELECT COUNT(*) as cnt, COALESCE(SUM(amount_usd),0) as total FROM payments WHERE status='pending' {created_cond}"
+    )
+    failed_cnt = await conn.fetchval(
+        f"SELECT COUNT(*) FROM payments WHERE status='failed' {created_cond}"
+    ) or 0
+    expired_cnt = await conn.fetchval(
+        f"SELECT COUNT(*) FROM payments WHERE status='expired' {created_cond}"
+    ) or 0
+
+    paid_cnt    = paid_row['cnt']
+    paid_sum    = float(paid_row['total'])
+    pending_cnt = pending_row['cnt']
+    pending_sum = float(pending_row['total'])
+    cancelled   = failed_cnt + expired_cnt
+    attempts    = paid_cnt + cancelled + pending_cnt
+    conversion  = round(paid_cnt / attempts * 100, 1) if attempts > 0 else 0.0
+
+    lines = (
+        f"{_FRAME_LINE}⏳  В ожидании:  <b>{pending_cnt}</b>  •  <b>${pending_sum:,.2f}</b>\n"
+        f"{_FRAME_LINE}✅  Оплачено:  <b>{paid_cnt}</b>  •  <b>${paid_sum:,.2f}</b>\n"
+        f"{_FRAME_LINE}❌  Отмены/Просрочено:  <b>{cancelled}</b>\n"
+        f"{_FRAME_LINE}📈  Конверсия:  <b>{conversion}%</b>\n"
+        f"{_FRAME_LINE}💰  Доход {label.lower()}:  <b>${paid_sum:,.2f}</b>\n"
+    )
+    return (
+        f"💳 <b>ФИНАНСЫ (NOWPayments)</b>  —  <b>{label}</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"{_FRAME_TOP}{lines}{_FRAME_BOTTOM}"
+    )
+
+
+# ── Revenue (Доходы) builder stays the same but updated kb ──────────────────
+
 async def _build_revenue_text(owner_id: int, period: str, conn) -> str:
-    period_labels = {
-        "today": ("📅 Сегодня", "date_trunc('day', paid_at AT TIME ZONE 'UTC') = current_date"),
-        "week":  ("📆 За неделю", "paid_at >= now() - interval '7 days'"),
-        "month": ("🗓 За месяц", "paid_at >= now() - interval '30 days'"),
-        "all":   ("🕰 За всё время", "paid_at IS NOT NULL"),
-    }
-    label, where_clause = period_labels.get(period, period_labels["all"])
+    label    = _period_label(period)
+    w_paid   = _period_where(period, "paid_at")
+    paid_cond = f"AND {w_paid}" if w_paid else ""
 
     rows = await conn.fetch(f"""
         SELECT tariff, period, COUNT(*) as cnt, SUM(amount_usd) as total
         FROM payments
-        WHERE status='paid' AND {where_clause}
+        WHERE status='paid' {paid_cond}
         GROUP BY tariff, period
         ORDER BY SUM(amount_usd) DESC
     """)
 
-    total_sum  = sum(float(r['total']) for r in rows)
-    total_cnt  = sum(r['cnt'] for r in rows)
-    avg_check  = round(total_sum / total_cnt, 2) if total_cnt > 0 else 0.0
+    total_sum = sum(float(r['total']) for r in rows)
+    total_cnt = sum(r['cnt'] for r in rows)
+    avg_check = round(total_sum / total_cnt, 2) if total_cnt > 0 else 0.0
 
     tariff_icons = {"start": "🌱 Start", "pro": "⭐ Pro", "business": "💼 Business"}
     period_icons = {"month": "/ месяц", "year": "/ год"}
@@ -512,7 +621,7 @@ async def _build_revenue_text(owner_id: int, period: str, conn) -> str:
     for r in rows:
         t_label = tariff_icons.get(r['tariff'], r['tariff'].capitalize())
         p_label = period_icons.get(r['period'], r['period'])
-        breakdown += f"   {t_label} {p_label}  —  {r['cnt']} шт.  ${float(r['total']):,.2f}\n"
+        breakdown += f"{_FRAME_LINE}{t_label} {p_label}  —  {r['cnt']} шт.  ${float(r['total']):,.2f}\n"
 
     top_row = rows[0] if rows else None
     top_label = ""
@@ -521,37 +630,24 @@ async def _build_revenue_text(owner_id: int, period: str, conn) -> str:
         p = period_icons.get(top_row['period'], top_row['period'])
         top_label = f"{t} {p}"
 
+    lines = (
+        f"{_FRAME_LINE}💵  Итого:  <b>${total_sum:,.2f}</b>  ({total_cnt} платежей)\n"
+        f"{_FRAME_LINE}📊  Средний чек:  <b>${avg_check:,.2f}</b>\n"
+        f"{_FRAME_LINE}🏆  Топ-тариф:  <b>{top_label or '—'}</b>\n"
+        "│\n"
+        f"{_FRAME_LINE}<b>По тарифам:</b>\n"
+        f"{breakdown or _FRAME_LINE + 'Нет оплат за период\n'}"
+    )
     return (
-        f"💰 <b>Доходы — {label}</b>\n"
+        f"💰 <b>ДОХОДЫ</b>  —  <b>{label}</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"💵  Итого:  <b>${total_sum:,.2f}</b>  ({total_cnt} платежей)\n"
-        "────────────────────────────\n"
-        f"<b>📦 По тарифам:</b>\n"
-        f"{breakdown or '   Нет оплат за период\n'}"
-        "────────────────────────────\n"
-        f"📊  Средний чек:  <b>${avg_check:,.2f}</b>\n"
-        f"🏆  Топ-тариф:  <b>{top_label or '—'}</b>"
+        f"{_FRAME_TOP}{lines}{_FRAME_BOTTOM}"
     )
 
 
-def _revenue_period_kb(owner_id: int, current_period: str) -> InlineKeyboardMarkup:
-    all_periods = [
-        ("📅 Сегодня", "today"),
-        ("📆 Неделя",  "week"),
-        ("🗓 Месяц",   "month"),
-        ("🕰 Всё время", "all"),
-    ]
-    # Активная вкладка убирается из кнопок
-    tabs = [
-        InlineKeyboardButton(text=label, callback_data=f"ga_rev:{owner_id}:{p}")
-        for label, p in all_periods if p != current_period
-    ]
-    return InlineKeyboardMarkup(inline_keyboard=[
-        tabs,
-        [InlineKeyboardButton(text="🔄 Обновить", callback_data=f"ga_rev:{owner_id}:{current_period}")],
-        [InlineKeyboardButton(text="◀️ Назад в Аналитику", callback_data=f"ga_stats:{owner_id}")],
-    ])
-
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 📊 ОБРАБОТЧИКИ
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 @router.message(Command("stats"))
 async def cmd_stats(message: Message):
@@ -559,9 +655,9 @@ async def cmd_stats(message: Message):
     if not role:
         return await message.answer("❌ Нет доступа.")
     if role != 'owner':
-        return await message.answer("❌ Нет прав. Эта команда доступна только Владельцу.")
+        return await message.answer("❌ Только для Владельца.")
     async with get_pool().acquire() as conn:
-        text = await _build_analytics_text(owner_id, conn)
+        text = await _build_network_text(owner_id, conn)
     await message.answer(text, parse_mode="HTML")
 
 
@@ -572,13 +668,74 @@ async def on_ga_stats(callback: CallbackQuery):
         return await callback.answer("❌ Нет прав", show_alert=True)
 
     async with get_pool().acquire() as conn:
-        text = await _build_analytics_text(owner_id, conn)
+        text = await _build_network_text(owner_id, conn)
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💰 Доходы по периодам", callback_data=f"ga_rev:{owner_id}:week")],
+        [
+            InlineKeyboardButton(text="🐝 Аудитория",   callback_data=f"ga_audience:{owner_id}:all"),
+            InlineKeyboardButton(text="📦 Сегментация", callback_data=f"ga_segment:{owner_id}:all"),
+        ],
+        [
+            InlineKeyboardButton(text="💳 Финансы",     callback_data=f"ga_finance:{owner_id}:all"),
+            InlineKeyboardButton(text="💰 Доходы",      callback_data=f"ga_rev:{owner_id}:all"),
+        ],
         [InlineKeyboardButton(text="🔄 Обновить", callback_data=f"ga_stats:{owner_id}")],
-        [InlineKeyboardButton(text="◀️ Назад", callback_data=f"ga_main:{owner_id}")],
+        [InlineKeyboardButton(text="◀️ Назад",    callback_data=f"ga_main:{owner_id}")],
     ])
+    try:
+        await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+    except Exception:
+        await callback.message.answer(text, parse_mode="HTML", reply_markup=kb)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("ga_audience:"))
+async def on_ga_audience(callback: CallbackQuery):
+    parts    = callback.data.split(":")
+    owner_id = int(parts[1])
+    period   = parts[2] if len(parts) > 2 else "all"
+    role, _  = await get_admin_context(callback.from_user.id, callback.from_user.username)
+    if role != 'owner':
+        return await callback.answer("❌ Нет прав", show_alert=True)
+    async with get_pool().acquire() as conn:
+        text = await _build_audience_text(period, conn)
+    kb = _period_tabs_kb(owner_id, "audience", period)
+    try:
+        await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+    except Exception:
+        await callback.message.answer(text, parse_mode="HTML", reply_markup=kb)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("ga_segment:"))
+async def on_ga_segment(callback: CallbackQuery):
+    parts    = callback.data.split(":")
+    owner_id = int(parts[1])
+    period   = parts[2] if len(parts) > 2 else "all"
+    role, _  = await get_admin_context(callback.from_user.id, callback.from_user.username)
+    if role != 'owner':
+        return await callback.answer("❌ Нет прав", show_alert=True)
+    async with get_pool().acquire() as conn:
+        text = await _build_segment_text(period, owner_id, conn)
+    kb = _period_tabs_kb(owner_id, "segment", period)
+    try:
+        await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+    except Exception:
+        await callback.message.answer(text, parse_mode="HTML", reply_markup=kb)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("ga_finance:"))
+async def on_ga_finance(callback: CallbackQuery):
+    parts    = callback.data.split(":")
+    owner_id = int(parts[1])
+    period   = parts[2] if len(parts) > 2 else "all"
+    role, _  = await get_admin_context(callback.from_user.id, callback.from_user.username)
+    if role != 'owner':
+        return await callback.answer("❌ Нет прав", show_alert=True)
+    async with get_pool().acquire() as conn:
+        text = await _build_finance_text(period, conn)
+    kb = _period_tabs_kb(owner_id, "finance", period)
     try:
         await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
     except Exception:
@@ -588,24 +745,20 @@ async def on_ga_stats(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("ga_rev:"))
 async def on_ga_revenue(callback: CallbackQuery):
-    parts = callback.data.split(":")
+    parts    = callback.data.split(":")
     owner_id = int(parts[1])
     period   = parts[2] if len(parts) > 2 else "all"
-
-    role, _ = await get_admin_context(callback.from_user.id, callback.from_user.username)
+    role, _  = await get_admin_context(callback.from_user.id, callback.from_user.username)
     if role != 'owner':
         return await callback.answer("❌ Нет прав", show_alert=True)
-
     async with get_pool().acquire() as conn:
         text = await _build_revenue_text(owner_id, period, conn)
-
-    kb = _revenue_period_kb(owner_id, period)
+    kb = _period_tabs_kb(owner_id, "rev", period)
     try:
         await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
     except Exception:
         await callback.message.answer(text, parse_mode="HTML", reply_markup=kb)
     await callback.answer()
-
 
 
 

@@ -19,6 +19,10 @@ class BroadcastFSM(StatesGroup):
 class StaffFSM(StatesGroup):
     waiting_remove_input = State()
     waiting_add_input    = State()
+    waiting_user_search  = State()
+    waiting_set_expire   = State()
+    waiting_pm_input     = State()
+    waiting_note_input   = State()
 
 
 # ══════════════════════════════════════════════════════════
@@ -153,13 +157,27 @@ async def _show_admin_panel(message_or_cb, role: str, owner_id: int, admin_id: i
         admin_count = await conn.fetchval("SELECT COUNT(*) FROM global_admins WHERE owner_id=$1", owner_id) or 0
 
     if role == 'owner':
+        async with get_pool().acquire() as conn:
+            pu_total = await conn.fetchval("SELECT COUNT(*) FROM platform_users") or 0
+            pu_new7 = await conn.fetchval(
+                "SELECT COUNT(*) FROM platform_users WHERE created_at >= NOW() - INTERVAL '7 days'"
+            ) or 0
+            tariff_rows = await conn.fetch(
+                "SELECT tariff, COUNT(*) AS cnt FROM platform_users GROUP BY tariff ORDER BY cnt DESC LIMIT 5"
+            )
+        tariff_str = "  \u2022  ".join(
+            f"<b>{r['tariff'].title()}</b>\u202f{r['cnt']}" for r in tariff_rows
+        ) if tariff_rows else "\u2014"
         header = (
-            "🌐 <b>BotCloud — Глобальная Панель</b>  •  👑 <b>Owner</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-            f"🗄️  Активных ботов:  <b>{net_bots}</b> из <b>{total_bots}</b>\n"
-            f"👥  Аудитория (активных):  <b>{total_users:,}</b>\n\n"
-            f"🚫  Заблокировано в выбранных:  <b>{bl_count:,}</b>\n"
-            f"👥  Команда:  <b>{admin_count}</b>"
+            "\U0001f310 <b>BotCloud \u2014 \u0413\u043b\u043e\u0431\u0430\u043b\u044c\u043d\u0430\u044f \u041f\u0430\u043d\u0435\u043b\u044c</b>  \u2022  \U0001f451 <b>Owner</b>\n"
+            "\u2501" * 30 + "\n\n"
+            f"\U0001f5c4\ufe0f  \u0410\u043a\u0442\u0438\u0432\u043d\u044b\u0445 \u0431\u043e\u0442\u043e\u0432:  <b>{net_bots}</b> \u0438\u0437 <b>{total_bots}</b>\n"
+            f"\U0001f465  \u0410\u0443\u0434\u0438\u0442\u043e\u0440\u0438\u044f (\u0430\u043a\u0442\u0438\u0432\u043d\u044b\u0445):  <b>{total_users:,}</b>\n\n"
+            f"\U0001f6ab  \u0417\u0430\u0431\u043b\u043e\u043a\u0438\u0440\u043e\u0432\u0430\u043d\u043e \u0432 \u0432\u044b\u0431\u0440\u0430\u043d\u043d\u044b\u0445:  <b>{bl_count:,}</b>\n"
+            f"\U0001f465  \u041a\u043e\u043c\u0430\u043d\u0434\u0430:  <b>{admin_count}</b>\n\n"
+            "\u2500" * 8 + " \U0001f4ca \u041f\u043b\u0430\u0442\u0444\u043e\u0440\u043c\u0430 " + "\u2500" * 8 + "\n"
+            f"\U0001f464  \u041f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u0435\u0439:  <b>{pu_total:,}</b>    \u2728  \u041d\u043e\u0432\u044b\u0445 (7\u00a0\u0434\u043d.):  <b>{pu_new7}</b>\n"
+            f"\U0001f4ce  {tariff_str}"
         )
     else:
         header = (
@@ -219,7 +237,309 @@ async def on_ga_close(callback: CallbackQuery):
     await callback.answer()
 
 
+@router.callback_query(F.data.startswith("ga_manage_users:"))
+async def on_ga_manage_users(callback: CallbackQuery, state: FSMContext):
+    owner_id = int(callback.data.split(":")[1])
+    role, _ = await get_admin_context(callback.from_user.id, callback.from_user.username)
+    if not role:
+        return await callback.answer("❌ Нет прав", show_alert=True)
+    await state.set_state(StaffFSM.waiting_user_search)
+    await state.update_data(owner_id=owner_id)
+    await callback.message.edit_text(
+        "⚙️ <b>Управление пользователями</b>\n"
+        "──────────────────────────────\n\n"
+        "Введите <b>@username</b> или <b>Telegram ID</b> клиента платформы,\n"
+        "чтобы открыть его карточку:\n\n"
+        "<code>@ivan_user</code>  или  <code>123456789</code>",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🚫 Отмена", callback_data=f"ga_main:{owner_id}")]
+        ])
+    )
+    await callback.answer()
+
+
+@router.message(StaffFSM.waiting_user_search)
+async def on_ga_user_search_input(message: Message, state: FSMContext):
+    role, _ = await get_admin_context(message.from_user.id, message.from_user.username)
+    if not role:
+        return
+    data = await state.get_data()
+    owner_id = data.get("owner_id")
+    await state.clear()
+    raw = (message.text or "").strip()
+    try:
+        await message.delete()
+    except Exception:
+        pass
+    async with get_pool().acquire() as conn:
+        if raw.lstrip("-").isdigit():
+            row = await conn.fetchrow("SELECT * FROM platform_users WHERE user_id=$1", int(raw))
+        elif raw.startswith("@"):
+            row = await conn.fetchrow("SELECT * FROM platform_users WHERE lower(username)=lower($1)", raw.lstrip("@"))
+        else:
+            row = None
+    if not row:
+        return await message.answer(
+            f"⚠️ Пользователь <b>{raw}</b> не найден в базе платформы.",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="◀️ Назад", callback_data=f"ga_manage_users:{owner_id}")]
+            ])
+        )
+    await _show_platform_user_card(message, owner_id, row)
+
+
+async def _show_platform_user_card(message_or_cb, admin_owner_id: int, row):
+    uid = row["user_id"]
+    uname = f"@{row['username']}" if row.get("username") else "—"
+    name = row.get("first_name") or "Аноним"
+    tariff = (row.get("tariff") or "free").title()
+    until = row["tariff_until"].strftime("%d.%m.%Y") if row.get("tariff_until") else "Бессрочно"
+    reg = row["created_at"].strftime("%d.%m.%Y") if row.get("created_at") else "—"
+
+    async with get_pool().acquire() as conn:
+        bots_count = await conn.fetchval("SELECT COUNT(*) FROM child_bots WHERE owner_id=$1", uid) or 0
+        chats_count = await conn.fetchval(
+            "SELECT COUNT(*) FROM bot_chats bc"
+            " JOIN child_bots cb ON cb.id=bc.child_bot_id"
+            " WHERE cb.owner_id=$1 AND bc.is_active=true", uid
+        ) or 0
+        users_count = await conn.fetchval(
+            "SELECT COUNT(DISTINCT bu.user_id) FROM bot_users bu"
+            " JOIN bot_chats bc ON bu.chat_id=bc.chat_id AND bu.owner_id=bc.owner_id"
+            " WHERE bu.owner_id=$1", uid
+        ) or 0
+        bl_count = await conn.fetchval(
+            "SELECT COUNT(*) FROM blacklist WHERE owner_id=$1", uid
+        ) or 0
+        is_blocked = await conn.fetchval(
+            "SELECT 1 FROM blacklist WHERE owner_id=$1 AND user_id=$2 AND child_bot_id IS NULL",
+            admin_owner_id, uid
+        )
+        note_row = None
+        try:
+            note_row = await conn.fetchrow(
+                "SELECT note FROM platform_user_notes WHERE target_user_id=$1 AND owner_id=$2",
+                uid, admin_owner_id
+            )
+        except Exception:
+            pass
+
+    note_text = f"\n\n📝  <i>{note_row['note']}</i>" if note_row and note_row.get("note") else ""
+    blocked_mark = "\n⛔️ <b>Заблокирован на платформе!</b>" if is_blocked else ""
+
+    text = (
+        "👤 <b>Карточка пользователя платформы</b>\n"
+        "──────────────────────────────\n\n"
+        f"🧾  <b>ID:</b> <code>{uid}</code>\n"
+        f"🔗  <b>Username:</b> {uname}\n"
+        f"👤  <b>Имя:</b> {name}\n"
+        f"📅  <b>Регистрация:</b> {reg}\n\n"
+        "────── 📊 Статистика ──────\n"
+        f"📎  <b>Тариф:</b> {tariff}  (до {until})\n"
+        f"🤖  <b>Ботов:</b> {bots_count}    📡  <b>Каналов:</b> {chats_count}\n"
+        f"👥  <b>Пользователей:</b> {users_count:,}    🚫  <b>ЧС:</b> {bl_count:,}"
+        f"{blocked_mark}{note_text}"
+    )
+    kb = [
+        [InlineKeyboardButton(text="🤖 Боты и каналы",              callback_data=f"ga_pu_bots:{uid}:{admin_owner_id}")],
+        [InlineKeyboardButton(text="📤 Экспорт базы пользователей", callback_data=f"ga_pu_exp_users:{uid}:{admin_owner_id}")],
+        [InlineKeyboardButton(text="📤 Экспорт базы ЧС",            callback_data=f"ga_pu_exp_bl:{uid}:{admin_owner_id}")],
+        [InlineKeyboardButton(text="📢 Написать сообщение",         callback_data=f"ga_pu_pm:{uid}:{admin_owner_id}")],
+        [InlineKeyboardButton(text="💎 Изменить тариф",             callback_data=f"ga_pu_tariff:{uid}:{admin_owner_id}")],
+        [InlineKeyboardButton(text="📅 Продлить подписку",          callback_data=f"ga_pu_extend:{uid}:{admin_owner_id}")],
+        [InlineKeyboardButton(text="⏰ Установить срок истечения",   callback_data=f"ga_pu_expire:{uid}:{admin_owner_id}")],
+        [InlineKeyboardButton(
+            text="✅ Разблокировать" if is_blocked else "🚫 Заблокировать",
+            callback_data=f"ga_pu_block:{uid}:{admin_owner_id}"
+        )],
+        [InlineKeyboardButton(text="🤖 Выключить всех ботов",       callback_data=f"ga_pu_disbots:{uid}:{admin_owner_id}")],
+        [InlineKeyboardButton(text="🗑 Удалить аккаунт",            callback_data=f"ga_pu_delete:{uid}:{admin_owner_id}")],
+        [InlineKeyboardButton(text="📝 Добавить заметку",           callback_data=f"ga_pu_note:{uid}:{admin_owner_id}")],
+        [InlineKeyboardButton(text="◀️ Назад к поиску",             callback_data=f"ga_manage_users:{admin_owner_id}")],
+    ]
+    markup = InlineKeyboardMarkup(inline_keyboard=kb)
+    if isinstance(message_or_cb, Message):
+        await message_or_cb.answer(text, parse_mode="HTML", reply_markup=markup)
+    else:
+        await message_or_cb.message.edit_text(text, parse_mode="HTML", reply_markup=markup)
+
+
+@router.callback_query(F.data.startswith("ga_pu_card:"))
+async def on_ga_pu_card(callback: CallbackQuery):
+    parts = callback.data.split(":")
+    target_uid, admin_owner_id = int(parts[1]), int(parts[2])
+    async with get_pool().acquire() as conn:
+        row = await conn.fetchrow("SELECT * FROM platform_users WHERE user_id=$1", target_uid)
+    if not row:
+        return await callback.answer("❌ Пользователь не найден", show_alert=True)
+    await _show_platform_user_card(callback, admin_owner_id, row)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("ga_pu_block:"))
+async def on_ga_pu_block(callback: CallbackQuery):
+    parts = callback.data.split(":")
+    target_uid, admin_owner_id = int(parts[1]), int(parts[2])
+    async with get_pool().acquire() as conn:
+        existing = await conn.fetchval(
+            "SELECT 1 FROM blacklist WHERE owner_id=$1 AND user_id=$2 AND child_bot_id IS NULL",
+            admin_owner_id, target_uid
+        )
+        if existing:
+            await conn.execute(
+                "DELETE FROM blacklist WHERE owner_id=$1 AND user_id=$2 AND child_bot_id IS NULL",
+                admin_owner_id, target_uid
+            )
+            await callback.answer("✅ Пользователь разблокирован")
+        else:
+            await conn.execute(
+                "INSERT INTO blacklist (owner_id, user_id, reason) VALUES ($1,$2,'Admin block') ON CONFLICT DO NOTHING",
+                admin_owner_id, target_uid
+            )
+            await callback.answer("🚫 Пользователь заблокирован")
+        row = await conn.fetchrow("SELECT * FROM platform_users WHERE user_id=$1", target_uid)
+    await _show_platform_user_card(callback, admin_owner_id, row)
+
+
+@router.callback_query(F.data.startswith("ga_pu_delete:"))
+async def on_ga_pu_delete(callback: CallbackQuery):
+    parts = callback.data.split(":")
+    target_uid, admin_owner_id = int(parts[1]), int(parts[2])
+    await callback.message.edit_text(
+        f"⚠️ <b>Подтверждение удаления</b>\n\n"
+        f"Вы собираетесь полностью удалить аккаунт <code>{target_uid}</code>.\n"
+        "Действие необратимо!",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="⚠️ ДА, УДАЛИТЬ", callback_data=f"ga_pu_delete_confirm:{target_uid}:{admin_owner_id}")],
+            [InlineKeyboardButton(text="❌ Нет, отмена",  callback_data=f"ga_pu_card:{target_uid}:{admin_owner_id}")],
+        ])
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("ga_pu_delete_confirm:"))
+async def on_ga_pu_delete_confirm(callback: CallbackQuery):
+    parts = callback.data.split(":")
+    target_uid, admin_owner_id = int(parts[1]), int(parts[2])
+    async with get_pool().acquire() as conn:
+        await conn.execute("DELETE FROM platform_users WHERE user_id=$1", target_uid)
+    await callback.message.edit_text(
+        f"✅ Аккаунт <code>{target_uid}</code> удалён.",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="◀️ Назад", callback_data=f"ga_manage_users:{admin_owner_id}")]
+        ])
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("ga_pu_pm:"))
+async def on_ga_pu_pm(callback: CallbackQuery, state: FSMContext):
+    parts = callback.data.split(":")
+    target_uid, admin_owner_id = int(parts[1]), int(parts[2])
+    await state.set_state(StaffFSM.waiting_pm_input)
+    await state.update_data(pm_target_uid=target_uid, owner_id=admin_owner_id)
+    await callback.message.edit_text(
+        "📢 <b>Отправка сообщения</b>\n\n"
+        "Напишите текст, который будет отправлен пользователю\n"
+        "в личные сообщения через основного бота.",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🚫 Отмена", callback_data=f"ga_pu_card:{target_uid}:{admin_owner_id}")]
+        ])
+    )
+    await callback.answer()
+
+
+@router.message(StaffFSM.waiting_pm_input)
+async def on_ga_pu_pm_input(message: Message, state: FSMContext):
+    data = await state.get_data()
+    target_uid = data.get("pm_target_uid")
+    owner_id = data.get("owner_id")
+    await state.clear()
+    try:
+        await message.delete()
+    except Exception:
+        pass
+    try:
+        await message.bot.send_message(target_uid, message.text or "", parse_mode="HTML")
+        await message.answer(
+            f"✅ <b>Сообщение отправлено</b> пользователю <code>{target_uid}</code>.",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="◀️ Назад", callback_data=f"ga_pu_card:{target_uid}:{owner_id}")]
+            ])
+        )
+    except Exception:
+        await message.answer(
+            "❌ Не удалось отправить. Возможно, пользователь не запускал бота.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="◀️ Назад", callback_data=f"ga_pu_card:{target_uid}:{owner_id}")]
+            ])
+        )
+
+
+@router.callback_query(F.data.startswith("ga_pu_note:"))
+async def on_ga_pu_note(callback: CallbackQuery, state: FSMContext):
+    parts = callback.data.split(":")
+    target_uid, admin_owner_id = int(parts[1]), int(parts[2])
+    await state.set_state(StaffFSM.waiting_note_input)
+    await state.update_data(note_target_uid=target_uid, owner_id=admin_owner_id)
+    await callback.message.edit_text(
+        "📝 <b>Добавить заметку</b>\n\n"
+        "Напишите приватную заметку об этом пользователе\n"
+        "(видите только вы, до 500 символов):",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🚫 Отмена", callback_data=f"ga_pu_card:{target_uid}:{admin_owner_id}")]
+        ])
+    )
+    await callback.answer()
+
+
+@router.message(StaffFSM.waiting_note_input)
+async def on_ga_pu_note_input(message: Message, state: FSMContext):
+    data = await state.get_data()
+    target_uid = data.get("note_target_uid")
+    owner_id = data.get("owner_id")
+    await state.clear()
+    note = (message.text or "").strip()[:500]
+    try:
+        await message.delete()
+    except Exception:
+        pass
+    async with get_pool().acquire() as conn:
+        try:
+            await conn.execute(
+                """INSERT INTO platform_user_notes (owner_id, target_user_id, note)
+                   VALUES ($1,$2,$3)
+                   ON CONFLICT (owner_id, target_user_id) DO UPDATE SET note=EXCLUDED.note""",
+                owner_id, target_uid, note
+            )
+        except Exception:
+            pass
+    await message.answer(
+        "✅ <b>Заметка сохранена.</b>",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="◀️ Назад", callback_data=f"ga_pu_card:{target_uid}:{owner_id}")]
+        ])
+    )
+
+
+# Stub handlers for features in development
+for _pfx in ("ga_pu_bots", "ga_pu_exp_users", "ga_pu_exp_bl",
+             "ga_pu_tariff", "ga_pu_extend", "ga_pu_expire", "ga_pu_disbots"):
+    @router.callback_query(F.data.startswith(f"{_pfx}:"))
+    async def _stub_handler(cb: CallbackQuery, _p=_pfx):
+        await cb.answer("⏳ Раздел в разработке", show_alert=True)
+
+
 @router.callback_query(F.data.startswith("ga_team:"))
+
 async def on_ga_team(callback: CallbackQuery):
     owner_id = int(callback.data.split(":")[1])
     role, _ = await get_admin_context(callback.from_user.id, callback.from_user.username)

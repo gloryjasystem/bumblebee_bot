@@ -33,10 +33,10 @@ async def create_invoice(user_id: int, tariff: str, period: str, currency: str =
     # Создаём pending-запись в БД
     payment_id = await db.fetchval(
         """
-        INSERT INTO payments (user_id, tariff, period, amount_usd)
-        VALUES ($1, $2, $3, $4) RETURNING id
+        INSERT INTO payments (user_id, tariff, period, amount_usd, applied_discount)
+        VALUES ($1, $2, $3, $4, $5) RETURNING id
         """,
-        user_id, tariff, period, amount,
+        user_id, tariff, period, amount, percent,
     )
 
     # Вызываем NOWPayments Invoice API (не /payment — там нужна конкретная валюта)

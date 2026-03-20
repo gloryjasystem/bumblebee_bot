@@ -620,7 +620,9 @@ async def _build_revenue_text(owner_id: int, period: str, conn) -> str:
     paid_cond = f"AND {w_paid}" if w_paid else ""
 
     rows = await conn.fetch(f"""
-        SELECT tariff, period, COUNT(*) as cnt, SUM(amount_usd) as total
+        SELECT tariff, period, COUNT(*) as cnt, SUM(amount_usd) as total,
+               SUM(CASE WHEN applied_discount > 0 THEN 1 ELSE 0 END) as discount_cnt,
+               SUM(CASE WHEN applied_discount > 0 THEN amount_usd ELSE 0 END) as discount_total
         FROM payments
         WHERE status='paid' {paid_cond}
         GROUP BY tariff, period
@@ -629,6 +631,8 @@ async def _build_revenue_text(owner_id: int, period: str, conn) -> str:
 
     total_sum = sum(float(r['total']) for r in rows)
     total_cnt = sum(r['cnt'] for r in rows)
+    total_disc_sum = sum(float(r['discount_total']) for r in rows)
+    total_disc_cnt = sum(r['discount_cnt'] for r in rows)
     avg_check = round(total_sum / total_cnt, 2) if total_cnt > 0 else 0.0
 
     tariff_icons = {"start": "🌱 Start", "pro": "⭐ Pro", "business": "💼 Business"}
@@ -639,6 +643,8 @@ async def _build_revenue_text(owner_id: int, period: str, conn) -> str:
         t_label = tariff_icons.get(r['tariff'], r['tariff'].capitalize())
         p_label = period_icons.get(r['period'], r['period'])
         breakdown += f"{_FRAME_LINE}{t_label} {p_label}  —  {r['cnt']} шт.  ${float(r['total']):,.2f}\n"
+        if r['discount_cnt'] > 0:
+            breakdown += f"{_FRAME_LINE}  └ 🏷 По акциям: {r['discount_cnt']} шт. (${float(r['discount_total']):,.2f})\n"
 
     top_row = rows[0] if rows else None
     top_label = ""
@@ -647,8 +653,13 @@ async def _build_revenue_text(owner_id: int, period: str, conn) -> str:
         p = period_icons.get(top_row['period'], top_row['period'])
         top_label = f"{t} {p}"
 
+    discount_line = ""
+    if total_disc_cnt > 0:
+        discount_line = f"{_FRAME_LINE}🏷  Скидок:  <b>${total_disc_sum:,.2f}</b>  ({total_disc_cnt} шт.)\n"
+
     lines = (
         f"{_FRAME_LINE}💵  Итого:  <b>${total_sum:,.2f}</b>  ({total_cnt} платежей)\n"
+        f"{discount_line}"
         f"{_FRAME_LINE}📊  Средний чек:  <b>${avg_check:,.2f}</b>\n"
         f"{_FRAME_LINE}🏆  Топ-тариф:  <b>{top_label or '—'}</b>\n"
         "│\n"

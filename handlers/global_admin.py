@@ -12,6 +12,9 @@ from services.discount import get_active_discount, set_discount
 logger = logging.getLogger(__name__)
 router = Router()
 
+class BroadcastFSM(StatesGroup):
+    waiting_message = State()
+
 
 # ══════════════════════════════════════════════════════════
 # ВРЕМЕННЫЙ ДИАГНОСТИЧЕСКИЙ ХЕНДЛЕР — удалить после проверки
@@ -1325,25 +1328,59 @@ async def on_ga_broadcast(callback: CallbackQuery):
     if not role:
         return await callback.answer("❌ Нет прав", show_alert=True)
 
-    async with get_pool().acquire() as conn:
-        active_users = await conn.fetchval("""
-            SELECT COUNT(DISTINCT bu.user_id) FROM bot_users bu
-            JOIN bot_chats bc ON bu.chat_id = bc.chat_id
-            WHERE bc.owner_id=$1 AND bc.is_active=true AND bu.user_id IS NOT NULL AND bu.is_active=true
-        """, owner_id) or 0
+    text = (
+        "📣 <b>Глобальная Рассылка</b>\n"
+        "─────────────────────────────\n"
+        "Выберите аудиторию для отправки сообщения.\n\n"
+        "<i>После выбора бот попросит прислать текст/фото/видео.\n"
+        "Рассылка идет от имени подключенных ботов.</i>"
+    )
+    kb = [
+        [
+            InlineKeyboardButton(text="👥 Активные", callback_data=f"ga_bc_seg:{owner_id}:active"),
+            InlineKeyboardButton(text="🌍 Вся база", callback_data=f"ga_bc_seg:{owner_id}:all")
+        ],
+        [
+            InlineKeyboardButton(text="🆓 Лиды", callback_data=f"ga_bc_seg:{owner_id}:lead"),
+            InlineKeyboardButton(text="🔥 Квалы", callback_data=f"ga_bc_seg:{owner_id}:qual"),
+            InlineKeyboardButton(text="💎 Клиенты", callback_data=f"ga_bc_seg:{owner_id}:client")
+        ],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"ga_main:{owner_id}")]
+    ]
+    await callback.message.edit_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("ga_bc_seg:"))
+async def on_ga_broadcast_segment(callback: CallbackQuery, state: FSMContext):
+    parts = callback.data.split(":")
+    owner_id = int(parts[1])
+    segment = parts[2]
+
+    role, _ = await get_admin_context(callback.from_user.id, callback.from_user.username)
+    if not role:
+        return await callback.answer("❌ Нет прав", show_alert=True)
+
+    await state.set_state(BroadcastFSM.waiting_message)
+    await state.update_data(broadcast_owner=owner_id, broadcast_segment=segment)
+
+    seg_names = {
+        "active": "👥 Активных",
+        "all": "🌍 Вся база",
+        "lead": "🆓 Лиды (Free)",
+        "qual": "🔥 Квалы (Pro/Biz)",
+        "client": "💎 Клиенты (Платники)"
+    }
+    s_name = seg_names.get(segment, segment)
 
     text = (
-        "📢 <b>Глобальные Рассылки</b>\n"
+        f"Выбран сегмент: <b>{s_name}</b>\n"
         "─────────────────────────────\n"
-        f"🟢 Активных получателей: <b>{active_users:,}</b>\n\n"
-        "<b>📨 Массовая рассылка:</b>\n"
-        "<code>/broadcast Текст сообщения</code>\n"
-        "Разошлет <b>всем</b> активным юзерам сети. Сообщение отправляется от имени нужного бота.\n\n"
-        "<b>✉️ Личное сообщение:</b>\n"
-        "<code>/notify 123456789 Текст</code>\n"
-        "Отправить лично конкретному юзеру сети."
+        "Отправьте мне сообщение, которое нужно разослать.\n"
+        "<i>(Поддерживается текст, фото, видео)</i>\n\n"
+        "Для отмены нажмите кнопку ниже."
     )
-    kb = [[InlineKeyboardButton(text="◀️ Назад", callback_data=f"ga_main:{owner_id}")]]
+    kb = [[InlineKeyboardButton(text="❌ Отмена", callback_data=f"ga_broadcast:{owner_id}")]]
     await callback.message.edit_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
     await callback.answer()
 
@@ -1390,33 +1427,61 @@ async def cmd_notify(message: Message):
         await temp_bot.session.close()
 
 
-@router.message(Command("broadcast"))
-async def cmd_broadcast(message: Message):
-    role, owner_id = await get_admin_context(message.from_user.id, message.from_user.username)
-    if not role: 
-        return await message.answer("❌ Нет прав.")
-    
-    args = message.text.split(maxsplit=1)
-    if len(args) < 2:
-        return await message.answer("❌ Формат: <code>/broadcast &lt;Текст рассылки&gt;</code>")
-        
-    text_to_send = args[1]
-    msg = await message.answer("⏳ Начинаю глобальную рассылку. Это может занять несколько минут...")
-    
+
+@router.message(BroadcastFSM.waiting_message)
+async def on_broadcast_message_received(message: Message, state: FSMContext):
+    data = await state.get_data()
+    owner_id = data.get("broadcast_owner")
+    segment = data.get("broadcast_segment")
+
+    if not owner_id or not segment:
+        await state.clear()
+        return
+
+    await state.clear()
+    msg = await message.answer("⏳ Собираю аудиторию...")
+
     async with get_pool().acquire() as conn:
-        # Выбираем уникальных пользователей и токен первого попавшегося бота
-        rows = await conn.fetch("""
-            SELECT DISTINCT ON (bu.user_id) bu.user_id, cb.bot_token
-            FROM bot_users bu
-            JOIN bot_chats bc ON bu.chat_id = bc.chat_id
-            JOIN child_bots cb ON cb.id = bc.child_bot_id
-            WHERE bc.owner_id = $1 AND bu.user_id IS NOT NULL AND bu.is_active = true
-            ORDER BY bu.user_id, bu.created_at ASC
-        """, owner_id)
-        
+        if segment == "all":
+            rows = await conn.fetch("""
+                SELECT DISTINCT ON (bu.user_id) bu.user_id, cb.bot_token
+                FROM bot_users bu
+                JOIN bot_chats bc ON bu.chat_id = bc.chat_id
+                JOIN child_bots cb ON cb.id = bc.child_bot_id
+                WHERE bc.owner_id = $1 AND bu.user_id IS NOT NULL
+                ORDER BY bu.user_id, bu.created_at ASC
+            """, owner_id)
+        elif segment == "active":
+            rows = await conn.fetch("""
+                SELECT DISTINCT ON (bu.user_id) bu.user_id, cb.bot_token
+                FROM bot_users bu
+                JOIN bot_chats bc ON bu.chat_id = bc.chat_id
+                JOIN child_bots cb ON cb.id = bc.child_bot_id
+                WHERE bc.owner_id = $1 AND bu.user_id IS NOT NULL AND bu.is_active = true
+                ORDER BY bu.user_id, bu.created_at ASC
+            """, owner_id)
+        else:
+            tariff_filter = ""
+            if segment == "lead":
+                tariff_filter = "COALESCE(pu.tariff, 'free') = 'free'"
+            elif segment == "qual":
+                tariff_filter = "pu.tariff IN ('pro', 'business')"
+            elif segment == "client":
+                tariff_filter = "pu.tariff IN ('start', 'pro', 'business')"
+                
+            rows = await conn.fetch(f"""
+                SELECT DISTINCT ON (bu.user_id) bu.user_id, cb.bot_token
+                FROM bot_users bu
+                JOIN bot_chats bc ON bu.chat_id = bc.chat_id
+                JOIN child_bots cb ON cb.id = bc.child_bot_id
+                JOIN platform_users pu ON bu.user_id = pu.user_id
+                WHERE bc.owner_id = $1 AND bu.user_id IS NOT NULL AND {tariff_filter}
+                ORDER BY bu.user_id, bu.created_at ASC
+            """, owner_id)
+
     if not rows:
-        return await msg.edit_text("⚠️ Активная аудитория не найдена.")
-        
+        return await msg.edit_text("⚠️ В этом сегменте нет ни одного получателя.")
+
     async def run_broadcast():
         success = 0
         import asyncio
@@ -1431,16 +1496,16 @@ async def cmd_broadcast(message: Message):
             
             tb = valid_bots[token]
             try:
-                await tb.send_message(chat_id=u_id, text=text_to_send)
+                await message.copy_to(chat_id=u_id, bot=tb)
                 success += 1
             except Exception:
                 pass
-            await asyncio.sleep(0.04) # Telegram limits ~30 msg/sec
+            await asyncio.sleep(0.04)
             
         for b in valid_bots.values():
             await b.session.close()
             
-        await msg.edit_text(f"✅ <b>Глобальная рассылка завершена!</b>\n\nУспешно доставлено: <b>{success}</b> пользователей.", parse_mode="HTML")
+        await msg.edit_text(f"✅ <b>Рассылка завершена!</b>\n\nДоставлено: <b>{success}</b> пользователей.", parse_mode="HTML")
 
     import asyncio
     asyncio.create_task(run_broadcast())

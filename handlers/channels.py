@@ -14,7 +14,7 @@ from aiogram.fsm.state import State, StatesGroup
 import db.pool as db
 from services.child_bot_service import validate_and_save_child_bot, verify_bot_is_admin
 from config import settings
-from utils.nav import navigate
+from utils.nav import navigate, safe_edit_text
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -666,7 +666,7 @@ async def on_verify_bot(callback: CallbackQuery, state: FSMContext, platform_use
     await state.set_state(ChannelFSM.waiting_for_chat_verify)
     await state.update_data(child_bot_id=child_bot_id, owner_id=platform_user["user_id"])
 
-    await callback.message.edit_text(
+    await safe_edit_text(callback, 
         "📡 <b>Проверить подключение</b>\n\n"
         "Введите <b>@username</b> или <b>ID</b> канала/группы, "
         "куда вы добавили бота:\n\n"

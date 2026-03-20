@@ -16,7 +16,7 @@ from aiogram.fsm.state import State, StatesGroup
 import db.pool as db
 from services import mailing as mailing_svc
 from services.security import sanitize
-from utils.nav import navigate
+from utils.nav import navigate, safe_edit_text
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -271,7 +271,7 @@ async def on_ml_mass_scheduled(callback: CallbackQuery, platform_user: dict | No
         owner_id,
     )
     if not rows:
-        await callback.message.edit_text(
+        await safe_edit_text(callback, 
             "📅 <b>Запланированные рассылки</b>\n\nНет запланированных рассылок.",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="◀️ Назад", callback_data="menu:mailing")],
@@ -291,7 +291,7 @@ async def on_ml_mass_scheduled(callback: CallbackQuery, platform_user: dict | No
         )])
     buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data="menu:mailing")])
 
-    await callback.message.edit_text(
+    await safe_edit_text(callback, 
         "📅 <b>Запланированные рассылки</b>",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
     )
@@ -481,7 +481,7 @@ async def _show_draft(callback: CallbackQuery, m: dict):
 
         # ── Редактируем меню на месте ───────────────────────────────
         try:
-            await callback.message.edit_text(
+            await safe_edit_text(callback, 
                 _draft_settings_text(m, tz_name),
                 parse_mode="HTML",
                 reply_markup=_kb_draft(m),
@@ -649,7 +649,7 @@ async def on_mailing_bot_scheduled(callback: CallbackQuery, platform_user: dict 
     )
 
     if not rows:
-        await callback.message.edit_text(
+        await safe_edit_text(callback, 
             "📅 <b>Запланированные</b>\n\nСписок задач ⬇️\n\nНет запланированных рассылок.",
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
@@ -671,7 +671,7 @@ async def on_mailing_bot_scheduled(callback: CallbackQuery, platform_user: dict 
     buttons.append([InlineKeyboardButton(text="◀️ Назад",
                                           callback_data=f"bs_mailing:{child_bot_id}")])
 
-    await callback.message.edit_text(
+    await safe_edit_text(callback, 
         "📅 <b>Запланированные</b>\n\nСписок задач ⬇️",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
@@ -851,7 +851,7 @@ async def on_ml_stoggle(callback: CallbackQuery, platform_user: dict | None):
 
     _tz = await _get_bot_tz(child_bot_id)
     try:
-        await callback.message.edit_text(
+        await safe_edit_text(callback, 
             _scheduled_settings_text(md, _tz),
             parse_mode="HTML",
             reply_markup=_kb_scheduled(md, child_bot_id),
@@ -877,7 +877,7 @@ async def on_ml_sched_cancel(callback: CallbackQuery, platform_user: dict | None
     )
     await _delete_draft_echo(callback.bot, mid)
 
-    await callback.message.edit_text(
+    await safe_edit_text(callback, 
         "✅ <b>Запланированная рассылка отменена.</b>",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
@@ -905,7 +905,7 @@ async def on_ml_sched_reschedule(callback: CallbackQuery, state: FSMContext,
     now_str = now_utc.strftime("%H:%M")
     back_cb = f"ml_scheduled_view:{mid}:{child_bot_id}"
 
-    await callback.message.edit_text(
+    await safe_edit_text(callback, 
         "<u>Отправьте новую дату в формате</u>\n"
         "├ <code>01.01.25 12:00</code>\n"
         "├ <code>01.01.23, 11:24 (+3)</code>\n"
@@ -1050,7 +1050,7 @@ async def on_mailing_scheduled(callback: CallbackQuery, platform_user: dict | No
         owner_id, chat_id,
     )
     if not rows:
-        await callback.message.edit_text(
+        await safe_edit_text(callback, 
             "📅 <b>Запланированные рассылки</b>\n\nНет запланированных рассылок.",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="◀️ Назад", callback_data=f"ch_mailing:{chat_id}")],
@@ -1071,7 +1071,7 @@ async def on_mailing_scheduled(callback: CallbackQuery, platform_user: dict | No
         )])
     buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"ch_mailing:{chat_id}")])
 
-    await callback.message.edit_text(
+    await safe_edit_text(callback, 
         text, parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
     )
@@ -1103,7 +1103,7 @@ async def on_mailing_start(callback: CallbackQuery, state: FSMContext, platform_
         platform_user["user_id"], chat_id,
     ) or 0
 
-    await callback.message.edit_text(
+    await safe_edit_text(callback, 
         f"📨 Отправьте сообщение для рассылки.\n\n"
         f"<b>Переменные:</b>\n"
         f"├ Имя: <code>{{name}}</code>\n"
@@ -1405,7 +1405,7 @@ async def on_ml_input_buttons(callback: CallbackQuery, state: FSMContext, platfo
     mid = int(callback.data.split(":")[1])
     await state.set_state(MailingFSM.waiting_for_buttons)
     await state.update_data(mailing_id=mid, owner_id=platform_user["user_id"])
-    await callback.message.edit_text(
+    await safe_edit_text(callback, 
         "🔗 Отправьте кнопки, которые будут добавлены к сообщению.\n\n"
         "<b>Формат одной кнопки:</b> <code>Текст — ссылка</code>\n"
         "<b>Несколько в ряду:</b> <code>Текст — ссылка | Текст 2 — ссылка</code>\n"
@@ -1518,7 +1518,7 @@ async def on_mailing_schedule(callback: CallbackQuery, state: FSMContext, platfo
     now_utc = datetime.now(timezone.utc)
     now_str = now_utc.strftime("%H:%M")
 
-    await callback.message.edit_text(
+    await safe_edit_text(callback, 
         "<u>Отправьте дату в формате</u>\n"
         "├ <code>01.01.25 12:00</code>\n"
         "├ <code>01.01.23, 11:24 (+3)</code>\n"
@@ -1847,7 +1847,7 @@ async def on_mailing_save(callback: CallbackQuery, platform_user: dict | None):
     back_cb = f"bs_mailing:{child_bot_id}" if child_bot_id else "menu:mailing"
     dt_str = scheduled_at.strftime("%d.%m.%Y %H:%M") if scheduled_at else "—"
 
-    await callback.message.edit_text(
+    await safe_edit_text(callback, 
         f"✅ <b>Рассылка успешно сохранена.</b>\n\n"
         f"📅 Дата отправки: <b>{dt_str}</b> (UTC)",
         parse_mode="HTML",
@@ -2062,7 +2062,7 @@ async def on_ml_pause(callback: CallbackQuery):
 async def on_ml_cancel(callback: CallbackQuery):
     mailing_id = int(callback.data.split(":")[1])
     mailing_svc.cancel_mailing(mailing_id)
-    await callback.message.edit_text("⏹ Рассылка остановлена.")
+    await safe_edit_text(callback, "⏹ Рассылка остановлена.")
     await callback.answer("Рассылка остановлена")
 
 

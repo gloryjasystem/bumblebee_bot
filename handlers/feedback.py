@@ -10,7 +10,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
 import db.pool as db
-from utils.nav import navigate
+from utils.nav import navigate, safe_edit_text
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -490,7 +490,7 @@ async def on_fb_reply(callback: CallbackQuery, state: FSMContext):
             [InlineKeyboardButton(text="❌ Отмена", callback_data="fb_cancel_reply")],
         ])
         try:
-            await callback.message.edit_text(
+            await safe_edit_text(callback, 
                 f"✉️ <b>Напишите ответ для {name_display}:</b>\n\n"
                 f"Следующее сообщение, которое вы напишете в этот бот, будет отправлено пользователю.",
                 parse_mode="HTML",
@@ -543,14 +543,14 @@ async def on_fb_cancel_reply(callback: CallbackQuery, state: FSMContext):
                     callback_data=f"fb_block:{child_bot_id}:{target_user_id}:{owner_id}",
                 )],
             ])
-            await callback.message.edit_text(
+            await safe_edit_text(callback, 
                 f"ℹ️ <b>У вас новое сообщение от {name_display}!</b>\n"
                 f"💬 Свайпните сообщение для ответа.",
                 parse_mode="HTML",
                 reply_markup=restore_kb,
             )
         else:
-            await callback.message.edit_text("❌ Ответ отменён.")
+            await safe_edit_text(callback, "❌ Ответ отменён.")
     except Exception:
         pass
     await callback.answer()
@@ -800,7 +800,7 @@ async def on_fbr_more(callback: CallbackQuery, state: FSMContext):
             callback_data=f"fbr_cancel:{child_bot_id}:{target_user_id}:{owner_id_fb}",
         )
     ]])
-    await callback.message.edit_text(
+    await safe_edit_text(callback, 
         f"✉️ <b>Напишите ответ для {name_display}:</b>\n\n"
         "Следующее сообщение, которое вы напишете сюда, будет отправлено пользователю.\n"
         "Для отмены — нажмите кнопку ниже или /cancel",
@@ -842,7 +842,7 @@ async def on_fbr_cancel(callback: CallbackQuery, state: FSMContext):
         )
     ]])
     try:
-        await callback.message.edit_text(
+        await safe_edit_text(callback, 
             f"✅ Ответ успешно отправлен пользователю <b>{ndisplay}</b>.",
             parse_mode="HTML",
             reply_markup=more_kb,

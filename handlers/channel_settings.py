@@ -20,7 +20,7 @@ from aiogram.fsm.state import State, StatesGroup
 
 import db.pool as db
 from services.security import sanitize, decrypt_token
-from utils.nav import navigate
+from utils.nav import navigate, safe_edit_text
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -335,7 +335,7 @@ async def on_req_confirm(callback: CallbackQuery, bot: Bot, state: FSMContext, p
     
     await state.clear()
     
-    await callback.message.edit_text(f"⏳ Обрабатывается {sel_c} заявок...")
+    await safe_edit_text(callback, f"⏳ Обрабатывается {sel_c} заявок...")
     
     if scope == "ch":
         chat_ids = [target_id]
@@ -951,7 +951,7 @@ async def on_ch_msg_btns(callback: CallbackQuery, state: FSMContext, platform_us
     await state.set_state(SettingsFSM.waiting_for_msg_buttons)
     await state.update_data(chat_id=int(chat_id_str), owner_id=platform_user["user_id"],
                              msg_type=msg_type, scope="ch", editor_prompt_mid=callback.message.message_id)
-    await callback.message.edit_text(
+    await safe_edit_text(callback, 
         "📎 Отправьте <b>кнопки</b>, которые будут добавлены к сообщению.\n\n"
         "🔗 <u><b>URL-кнопки</b></u>\n\n"
         "<b>Одна кнопка в ряду:</b>\n"
@@ -1334,7 +1334,7 @@ async def on_reactions_set(callback: CallbackQuery, platform_user: dict | None):
     )
     current = list(ch["reaction_emojis"] or []) if ch else []
     tariff = platform_user["tariff"]
-    await callback.message.edit_text(
+    await safe_edit_text(callback, 
         "😄 <b>Реакции</b>\n\nВыберите эмодзи для авто-реакций на сообщения:",
         reply_markup=kb_reactions(current, chat_id, tariff),
     )
@@ -1512,7 +1512,7 @@ async def _show_limits(callback: CallbackQuery, chat_id: int, owner_id: int):
         return
     lk = dict(ch)
     try:
-        await callback.message.edit_text(
+        await safe_edit_text(callback, 
             "🔄 <b>Лимит</b>\n\n"
             "<i>Установите лимит на количество вступлений в течении определённого времени.</i>\n\n"
             "ⓘ При <u>превышении лимита</u>, бот пришлёт уведомление.",
@@ -1552,7 +1552,7 @@ async def on_filter_limits_back(callback: CallbackQuery, platform_user: dict | N
     no_photo = "🔵" if lk.get("filter_no_photo")   else "⚪"
     limits_label  = "🚫 Лимиты"
     lang_label    = "🏁 Фильтр по языкам"
-    await callback.message.edit_text(
+    await safe_edit_text(callback, 
         "🛡 <b>Защита</b>\n\nФильтры площадки.",
         parse_mode="HTML",
         reply_markup=kb_protection(lk, []),
@@ -1660,7 +1660,7 @@ async def on_lang_filters(callback: CallbackQuery, platform_user: dict | None):
         )])
     buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"channel_by_chat:{chat_id}")])
 
-    await callback.message.edit_text(
+    await safe_edit_text(callback, 
         "🌍 <b>Языковые фильтры</b>\n\n"
         "🚫 — заблокирован (бот отклоняет заявки с этим языком)\n"
         "🌍 — разрешён",
@@ -1736,7 +1736,7 @@ async def on_ch_stats(callback: CallbackQuery, platform_user: dict | None):
         "SELECT COUNT(*) FROM blacklist WHERE owner_id=$1 AND child_bot_id IS NULL", owner_id,
     )
 
-    await callback.message.edit_text(
+    await safe_edit_text(callback, 
         "📊 <b>Статистика площадки</b>\n\n"
         f"👥 <b>Участники</b>\n"
         f"├ Всего в базе: {total:,}\n"
@@ -1792,7 +1792,7 @@ async def on_ch_settings(callback: CallbackQuery, platform_user: dict | None):
 
     toggle_text = "🟢 Активна" if ch["is_active"] else "🔴 Выключена"
 
-    await callback.message.edit_text(
+    await safe_edit_text(callback, 
         f"⚙️ <b>Управление площадкой</b>\n\n"
         f"📢 {ch['chat_title']}\n"
         f"🤖 Бот: @{ch['bot_username'] or '—'}\n"
@@ -1818,7 +1818,7 @@ async def on_ch_tz(callback: CallbackQuery, platform_user: dict | None):
         for label, tz in TIMEZONES
     ]
     buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"ch_settings:{ch_id}")])
-    await callback.message.edit_text(
+    await safe_edit_text(callback, 
         "🕐 <b>Выберите часовой пояс</b>",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
     )
@@ -1839,7 +1839,7 @@ async def on_ch_tz_set(callback: CallbackQuery, platform_user: dict | None):
     await callback.answer(f"✅ Часовой пояс: {tz}")
     # Вернуться в управление
     fake_cb_data = f"ch_settings:{ch_id}"
-    await callback.message.edit_text(
+    await safe_edit_text(callback, 
         "✅ Часовой пояс обновлён.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="◀️ Назад", callback_data=f"ch_settings:{ch_id}")],
@@ -1923,7 +1923,7 @@ async def _show_bs_requests(callback: CallbackQuery, platform_user: dict, child_
     ) or 0
     auto_label  = "✅ Автопринятие: ВКЛ 🟢" if auto else "☑️ Автопринятие: ВЫКЛ 🔴"
     delay_label = f"⏰ Отложенное: {_delay_label(delay)}"
-    await callback.message.edit_text(
+    await safe_edit_text(callback, 
         "✅ <b>Обработка заявок</b> (все площадки)\n\n"
         f"🔍 Заявок в очереди: <b>{pending}</b>\n\n"
         "💡 <i>Настройки применяются ко всем каналам бота.</i>",
@@ -2158,7 +2158,7 @@ async def on_bs_messages(callback: CallbackQuery, platform_user: dict | None):
         callback_data=f"ch_messages:{ch['chat_id']}",
     )] for ch in chats]
     buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"bot_settings:{child_bot_id}")])
-    await callback.message.edit_text(
+    await safe_edit_text(callback, 
         "💬 <b>Сообщения</b>\n\nВыберите площадку:",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
     )
@@ -2178,7 +2178,7 @@ async def on_bs_welcome(callback: CallbackQuery, state: FSMContext, platform_use
     current = f"\n\nТекущий текст:\n<i>{ch['welcome_text'][:200]}</i>" if ch and ch.get("welcome_text") else ""
     await state.set_state(SettingsFSM.waiting_for_welcome_text)
     await state.update_data(child_bot_id=child_bot_id, owner_id=owner_id, mode="bot")
-    await callback.message.edit_text(
+    await safe_edit_text(callback, 
         f"👋 <b>Приветствие</b>{current}\n\n"
         "Отправьте новый текст — он применится ко всем площадкам бота.\n"
         "Переменные: <code>{name}</code>, <code>{channel}</code>",
@@ -2218,7 +2218,7 @@ async def on_bs_farewell(callback: CallbackQuery, state: FSMContext, platform_us
         return
     await state.set_state(SettingsFSM.waiting_for_farewell_text)
     await state.update_data(child_bot_id=child_bot_id, owner_id=owner_id, mode="bot")
-    await callback.message.edit_text(
+    await safe_edit_text(callback, 
         "👋 <b>Прощание</b>\n\nПрименяется ко всем площадкам бота.\n"
         "Переменные: <code>{name}</code>, <code>{channel}</code>",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
@@ -2259,7 +2259,7 @@ async def _show_bs_protection(callback: CallbackQuery, platform_user: dict, chil
     rtl      = "🔵" if ch.get("filter_rtl")        else "⚪"
     hiero    = "🔵" if ch.get("filter_hieroglyph")  else "⚪"
     no_photo = "🔵" if ch.get("filter_no_photo")    else "⚪"
-    await callback.message.edit_text(
+    await safe_edit_text(callback, 
         "🛡 <b>Защита</b> (все площадки)\n\nФильтры применяются ко всем каналам бота.",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
@@ -2303,7 +2303,7 @@ async def _show_bs_limits(callback: CallbackQuery, child_bot_id: int, owner_id: 
         await callback.answer("Нет активных площадок", show_alert=True)
         return
     lk = dict(ch)
-    await callback.message.edit_text(
+    await safe_edit_text(callback, 
         "🔄 <b>Лимит</b>\n\n"
         "<i>Установите лимит на количество вступлений в течении определённого времени.</i>\n\n"
         "ⓘ При <u>превышении лимита</u>, бот пришлёт уведомление.",
@@ -2489,7 +2489,7 @@ async def on_bs_lang_filters(callback: CallbackQuery, platform_user: dict | None
         "SELECT language_code FROM language_filters WHERE owner_id=$1 AND chat_id=$2::bigint",
         owner_id, chat_id)
     blocked_codes = {r["language_code"] for r in blocked}
-    await callback.message.edit_text(
+    await safe_edit_text(callback, 
         "🏁Фильтр по языкам\n\n"
         "🔵— Отклонять заявки\n"
         "⚪️— Принимать заявки\n\n"
@@ -2562,7 +2562,7 @@ async def on_bs_settings(callback: CallbackQuery, platform_user: dict | None):
     if not platform_user:
         return
     child_bot_id = int(callback.data.split(":")[1])
-    await callback.message.edit_text(
+    await safe_edit_text(callback, 
         "⚙️ <b>Управление</b>\n\nВыберите действие ⬇️",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🗄 База",          callback_data=f"bs_base:{child_bot_id}")],
@@ -2612,7 +2612,7 @@ async def on_bs_base(callback: CallbackQuery, platform_user: dict | None):
 
     bl_status = "Включён 🟢" if bl_enabled else "Выключен 🔴"
 
-    await callback.message.edit_text(
+    await safe_edit_text(callback, 
         "≡ <b>База</b>\n\n"
         f"🤖 Бот: @{bot_username}\n"
         f"👥 Пользователей в базе: {total:,}\n"
@@ -2649,7 +2649,7 @@ async def on_bs_base_edit(callback: CallbackQuery, state: FSMContext,
         child_bot_id, owner_id,
     ) or 0
 
-    await callback.message.edit_text(
+    await safe_edit_text(callback, 
         "⚙️ <b>Управление подписчиками</b>\n\n"
         f"<blockquote>В базе сейчас: <b>{total:,}</b> пользователей.</blockquote>\n\n"
         "Здесь вы можете найти пользователя вашей группы/канала для просмотра его карточки, откуда можно:\n\n"
@@ -2675,7 +2675,7 @@ async def on_bs_base_del(callback: CallbackQuery, state: FSMContext,
     child_bot_id = int(callback.data.split(":")[1])
     await state.update_data(child_bot_id=child_bot_id, prompt_msg_id=callback.message.message_id)
     await state.set_state(SettingsFSM.bs_base_waiting_del)
-    await callback.message.edit_text(
+    await safe_edit_text(callback, 
         "🔎 <b>Поиск подписчика</b>\n\n"
         "Отправьте <b>@username</b>, <b>Telegram ID</b> или просто перешлите любое сообщение пользователя, чью карточку вы хотите открыть.\n\n"
         "<b>Пример:</b>\n"
@@ -3015,7 +3015,7 @@ async def _show_user_card(message: Message | CallbackQuery, state: FSMContext, c
     if isinstance(message, Message):
         await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons), parse_mode="HTML")
     else:
-        await message.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons), parse_mode="HTML")
+        await safe_edit_text(message, text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons), parse_mode="HTML")
 
 
 # ── Действия из Карточки Подписчика ──────────────────────────
@@ -3030,7 +3030,7 @@ async def on_bs_um_pm(callback: CallbackQuery, state: FSMContext, platform_user:
         pm_uid=int(uid_str)
     )
     await state.set_state(SettingsFSM.bs_um_waiting_pm)
-    sent_msg = await callback.message.edit_text(
+    sent_msg = await safe_edit_text(callback, 
         "📝 <b>Отправка сообщения</b>\n\n"
         "Напишите текст, который бот отправит этому пользователю в личные сообщения.\n"
         "<i>Поддерживается форматирование и эмодзи.</i>",
@@ -3206,7 +3206,7 @@ async def on_bs_um_promote(callback: CallbackQuery, state: FSMContext, platform_
             
         buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"bs_um_card:{child_bot_id}:{uid}")])
         
-        await callback.message.edit_text(
+        await safe_edit_text(callback, 
             "🛡 <b>Выбор площадки</b>\n\n"
             "Выберите площадку, на которой нужно выдать права администратора:",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
@@ -3274,7 +3274,7 @@ async def _render_admin_menu(callback: CallbackQuery, perms: dict, child_bot_id:
         [InlineKeyboardButton(text="Применить и Выдать права 🛡", callback_data="bs_adm_apply")],
         [InlineKeyboardButton(text="◀️ Назад", callback_data=f"bs_um_card:{child_bot_id}:{uid}")]
     ]
-    await callback.message.edit_text(
+    await safe_edit_text(callback, 
         "🛡 <b>Выдача прав администратора</b>\n"
         f"📍 <i>{chat_title}</i>\n\n"
         "Отметьте нужные права для этого пользователя:",
@@ -3476,7 +3476,7 @@ async def on_bs_blacklist(callback: CallbackQuery, platform_user: dict | None):
         "SELECT COUNT(*) FROM blacklist WHERE owner_id=$1 AND child_bot_id=$2", owner_id, child_bot_id,
     ) or 0
 
-    await callback.message.edit_text(
+    await safe_edit_text(callback, 
         "⛔️ <b>ЧС пользователей</b>\n\n"
         f"🔢 Записей в базе ЧС: {count:,}",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
@@ -3503,7 +3503,7 @@ async def on_bs_sync(callback: CallbackQuery, bot: Bot,
     owner_id = platform_user["user_id"]
 
     await callback.answer("⏳ Синхронизация...")
-    await callback.message.edit_text(
+    await safe_edit_text(callback, 
         "🔄 <b>Синхронизация участников...</b>\n\n"
         "⏳ Загружаю данные из Telegram, подождите.",
         parse_mode="HTML",
@@ -3515,7 +3515,7 @@ async def on_bs_sync(callback: CallbackQuery, bot: Bot,
         child_bot_id, owner_id,
     )
     if not bot_row:
-        await callback.message.edit_text(
+        await safe_edit_text(callback, 
             "❌ Бот не найден.",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="◀️ Назад", callback_data=f"bs_base:{child_bot_id}")]
@@ -3640,7 +3640,7 @@ async def on_bs_sync(callback: CallbackQuery, bot: Bot,
     ) or 0
 
     detail = "\n".join(chat_results) if chat_results else "Нет площадок"
-    await callback.message.edit_text(
+    await safe_edit_text(callback, 
         "✅ <b>Синхронизация завершена!</b>\n\n"
         f"{detail}\n\n"
         f"📊 Итого: +{added_total} добавлено, "
@@ -3673,7 +3673,7 @@ async def on_bs_bl_export(callback: CallbackQuery, platform_user: dict | None):
         ) or 0
 
         if total == 0:
-            await callback.message.edit_text(
+            await safe_edit_text(callback, 
                 "📤 <b>Экспорт базы ЧС</b>\n\n"
                 "⚠️ База ЧС пуста. Нечего экспортировать.",
                 parse_mode="HTML",
@@ -3682,7 +3682,7 @@ async def on_bs_bl_export(callback: CallbackQuery, platform_user: dict | None):
                 ]),
             )
         else:
-            await callback.message.edit_text(
+            await safe_edit_text(callback, 
                 "📤 <b>Экспорт базы ЧС</b>\n\n"
                 "<blockquote>Выгрузите базу для резервной копии или переноса "
                 "в другой бот/сервис.\n\n"
@@ -3699,7 +3699,7 @@ async def on_bs_bl_export(callback: CallbackQuery, platform_user: dict | None):
             )
     except Exception as e:
         logger.error(f"bs_bl_export error: {e}")
-        await callback.message.edit_text(
+        await safe_edit_text(callback, 
             "❌ <b>Ошибка при загрузке данных.</b>\n\nПопробуйте позже.",
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
@@ -3768,7 +3768,7 @@ async def on_bs_bl_export_csv(callback: CallbackQuery, bot: Bot, platform_user: 
     except Exception as e:
         logger.error(f"Blacklist CSV export error: {e}")
         try:
-            await callback.message.edit_text(
+            await safe_edit_text(callback, 
                 "❌ Ошибка при отправке файла. Попробуйте позже.",
                 reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                     [InlineKeyboardButton(text="◀️ Назад", callback_data=f"bs_blacklist:{child_bot_id}")],
@@ -3779,7 +3779,7 @@ async def on_bs_bl_export_csv(callback: CallbackQuery, bot: Bot, platform_user: 
         return
 
     try:
-        await callback.message.edit_text(
+        await safe_edit_text(callback, 
             "🛡 <b>Экспорт базы ЧС</b>\n\n"
             f"✅ Файл <code>{filename}</code> отправлен.\n"
             f"Записей: <b>{len(rows):,}</b>",
@@ -3841,7 +3841,7 @@ async def on_bs_bl_export_txt(callback: CallbackQuery, bot: Bot, platform_user: 
     except Exception as e:
         logger.error(f"Blacklist TXT export error: {e}")
         try:
-            await callback.message.edit_text(
+            await safe_edit_text(callback, 
                 "❌ Ошибка при отправке файла. Попробуйте позже.",
                 reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                     [InlineKeyboardButton(text="◀️ Назад", callback_data=f"bs_blacklist:{child_bot_id}")],
@@ -3852,7 +3852,7 @@ async def on_bs_bl_export_txt(callback: CallbackQuery, bot: Bot, platform_user: 
         return
 
     try:
-        await callback.message.edit_text(
+        await safe_edit_text(callback, 
             "🛡 <b>Экспорт базы ЧС</b>\n\n"
             f"✅ Файл <code>{filename}</code> отправлен.\n"
             f"Записей: <b>{len(lines):,}</b>",
@@ -3912,7 +3912,7 @@ async def on_bs_bl_upload(callback: CallbackQuery, state: FSMContext,
     child_bot_id = callback.data.split(":")[1]
     await state.update_data(child_bot_id=child_bot_id, bs_bl_mode="add")
     await state.set_state(SettingsFSM.bs_bl_waiting_add_file)
-    await callback.message.edit_text(
+    await safe_edit_text(callback, 
         "📂 <b>Загрузить базу ЧС</b>\n\n"
         "Отправьте файл <b>TXT</b> или <b>CSV</b> с @username или Telegram ID.\n\n"
         "📋 Формат строки:\n"
@@ -3976,7 +3976,7 @@ async def on_bs_bl_ban_all(callback: CallbackQuery, bot: Bot,
             owner_id, chat_id, user_ids,
         )
 
-    await callback.message.edit_text(
+    await safe_edit_text(callback, 
         "✅ <b>Готово!</b>\n\n"
         f"🚫 Забанено: <b>{banned}</b> из {len(violators)}",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
@@ -4046,7 +4046,7 @@ async def _show_bs_bl_manage(callback: CallbackQuery, platform_user: dict,
     ) or 0
 
     toggle_text = "✅ ЧС: Включён 🟢" if enabled else "☑️ ЧС: Выключен 🔴"
-    await callback.message.edit_text(
+    await safe_edit_text(callback, 
         "⚙️ <b>Управление базой ЧС</b>\n\n"
         f"📊 Записей в базе: {count:,}\n\n"
         "Включите ЧС, чтобы бот автоматически проверял\n"
@@ -4121,7 +4121,7 @@ async def on_bs_bl_add_file(callback: CallbackQuery, state: FSMContext,
         prompt_msg_id=callback.message.message_id
     )
     await state.set_state(SettingsFSM.bs_bl_waiting_add_file)
-    await callback.message.edit_text(
+    await safe_edit_text(callback, 
         "➕ <b>Добавить в ЧС</b>\n\n"
         "Отправьте файл <b>TXT</b> или <b>CSV</b>.\n"
         "Каждая строка — один пользователь: @username или Telegram ID.\n\n"
@@ -4146,7 +4146,7 @@ async def on_bs_bl_del_file(callback: CallbackQuery, state: FSMContext,
         prompt_msg_id=callback.message.message_id
     )
     await state.set_state(SettingsFSM.bs_bl_waiting_del_file)
-    await callback.message.edit_text(
+    await safe_edit_text(callback, 
         "➖ <b>Удалить из ЧС</b>\n\n"
         "Отправьте файл <b>TXT</b> или <b>CSV</b> с пользователями,\n"
         "которых нужно <b>убрать</b> из чёрного списка.\n\n"
@@ -4168,7 +4168,7 @@ async def on_bs_bl_clear(callback: CallbackQuery, platform_user: dict | None):
         "SELECT COUNT(*) FROM blacklist WHERE owner_id=$1 AND child_bot_id=$2",
         platform_user["user_id"], int(child_bot_id),
     ) or 0
-    await callback.message.edit_text(
+    await safe_edit_text(callback, 
         f"⚠️ <b>Действительно очистить базу ЧС?</b>\n\n"
         f"Вы собираетесь удалить <b>{count:,}</b> записей из чёрного списка.\n\n"
         f"<blockquote>ℹ️ При подтверждении все пользователи из этой базы будут "
@@ -4208,7 +4208,7 @@ async def on_bs_bl_clear_do(callback: CallbackQuery, platform_user: dict | None)
     if records:
         asyncio.create_task(sweep_unban_records(owner_id, [dict(r) for r in records], child_bot_id=int(child_bot_id)))
 
-    await callback.message.edit_text(
+    await safe_edit_text(callback, 
         f"⏳ <b>Процесс запущен!</b>\n\n"
         f"Процесс очистки черного списка запущен. База ЧС будет в скором времени полностью очищена.\n"
         f"Это может занять некоторое время в зависимости от размера базы.",
@@ -4260,7 +4260,7 @@ async def on_bs_base_export_menu(callback: CallbackQuery, platform_user: dict | 
         child_bot_id, owner_id,
     ) or 0
 
-    await callback.message.edit_text(
+    await safe_edit_text(callback, 
         "🗄 <b>Экспорт базы</b>\n\n"
         "<blockquote>Здесь хранятся все пользователи, которые "
         "взаимодействовали с каналами и группами вашего бота.\n\n"
@@ -4317,7 +4317,7 @@ async def on_bs_base_export(callback: CallbackQuery, bot: Bot, platform_user: di
 
     if not rows:
         try:
-            await callback.message.edit_text(
+            await safe_edit_text(callback, 
                 "🗄 <b>База пользователей</b>\n\n"
                 "⚠️ Нет пользователей для выгрузки по выбранному фильтру.",
                 reply_markup=InlineKeyboardMarkup(inline_keyboard=[
@@ -4379,7 +4379,7 @@ async def on_bs_base_export(callback: CallbackQuery, bot: Bot, platform_user: di
     except Exception as e:
         logger.error(f"CSV export error: {e}")
         try:
-            await callback.message.edit_text(
+            await safe_edit_text(callback, 
                 "❌ Ошибка при отправке файла. Попробуйте позже.",
                 reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                     [InlineKeyboardButton(text="◀️ Назад", callback_data=f"bs_base:{child_bot_id}")],
@@ -4390,7 +4390,7 @@ async def on_bs_base_export(callback: CallbackQuery, bot: Bot, platform_user: di
         return
 
     try:
-        await callback.message.edit_text(
+        await safe_edit_text(callback, 
             "🗄 <b>База пользователей</b>\n\n"
             f"✅ Файл <code>{filename}</code> отправлен.\n"
             f"Записей: <b>{len(rows):,}</b>",
@@ -4557,7 +4557,7 @@ async def on_bs_timezone(callback: CallbackQuery, platform_user: dict | None,
         except Exception:
             time_str = "--:--"
 
-    await callback.message.edit_text(
+    await safe_edit_text(callback, 
         "🌙 <b>Часовой пояс</b>\n\n"
         f"<blockquote>ℹ Сейчас установлен часовой пояс: {current_tz}.</blockquote>\n"
         f"<blockquote>🕐 Текущее время: {time_str}</blockquote>\n\n"
@@ -4598,7 +4598,7 @@ async def on_bs_tz_change(callback: CallbackQuery, platform_user: dict | None):
         callback_data=f"bs_timezone:{child_bot_id}",
     )])
 
-    await callback.message.edit_text(
+    await safe_edit_text(callback, 
         f"🌙 <b>Часовой пояс:</b> {current_tz}\n\n"
         "<blockquote>ℹ Для смены часового пояса выберите текущее время "
         "для вашего региона.</blockquote>\n\n"
@@ -4655,7 +4655,7 @@ async def _bs_channel_picker(callback: CallbackQuery, platform_user: dict,
         callback_data=f"{section}:{ch['chat_id']}:{child_bot_id}",
     )] for ch in chats]
     buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"bot_settings:{child_bot_id}")])
-    await callback.message.edit_text(
+    await safe_edit_text(callback, 
         f"{title}\n\nВыберите площадку:",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
     await callback.answer()
@@ -4687,7 +4687,7 @@ async def on_bs_mailing(callback: CallbackQuery, platform_user: dict | None):
     if mid is not None:
         await _delete_draft_echo(callback.bot, mid)
 
-    await callback.message.edit_text(
+    await safe_edit_text(callback, 
         "📨 <b>Рассылка</b>\n\nВыберите действие ⬇️",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="➕ Создать рассылку",
@@ -4772,7 +4772,7 @@ async def _show_bs_team(callback: CallbackQuery, bot: Bot,
             lines.append(f"  • {uname} — {role_label}")
         member_lines = "\n\n👥 <b>Участники команды:</b>\n" + "\n".join(lines)
 
-    await callback.message.edit_text(
+    await safe_edit_text(callback, 
         "<blockquote>"
         "👥 Вы можете добавить админов для совместного управления ботом.\n\n"
         "🔄 Ссылки необходимо обновлять после использования."
@@ -4863,7 +4863,7 @@ async def on_bs_team_members(callback: CallbackQuery, platform_user: dict | None
         text="◀️ Назад", callback_data=f"bs_team:{child_bot_id}",
     )])
 
-    await callback.message.edit_text(
+    await safe_edit_text(callback, 
         "👥 <b>Участники команды</b>\n\nНажмите на участника чтобы удалить его:",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
     )

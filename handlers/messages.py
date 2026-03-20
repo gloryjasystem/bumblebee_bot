@@ -15,7 +15,7 @@ from aiogram.fsm.state import State, StatesGroup
 
 import db.pool as db
 from services.security import sanitize
-from utils.nav import navigate
+from utils.nav import navigate, safe_edit_text
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -620,7 +620,7 @@ async def on_ch_cap_anim_menu(call: CallbackQuery, state: FSMContext, platform_u
     else:
         # No animation yet, just edit the existing text
         kb.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"ch_cap_anim_back:{chat_id}")])
-        menu_msg = await call.message.edit_text(
+        menu_msg = await safe_edit_text(call, 
             text,
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=kb),
@@ -674,7 +674,7 @@ async def on_ch_cap_anim_change(call: CallbackQuery, state: FSMContext, platform
         [InlineKeyboardButton(text="❌ Отмена", callback_data=f"ch_cap_anim_menu:{chat_id}")]
     ])
     
-    await call.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+    await safe_edit_text(call, text, parse_mode="HTML", reply_markup=kb)
     await state.set_state(MessagesFSM.waiting_captcha_anim_msg)
     await call.answer()
 
@@ -782,7 +782,7 @@ async def on_ch_captcha_text(callback: CallbackQuery, state: FSMContext, platfor
     await state.set_state(MessagesFSM.waiting_for_captcha_text)
     await state.update_data(chat_id=chat_id, owner_id=platform_user["user_id"],
                             editor_prompt_mid=callback.message.message_id)
-    await callback.message.edit_text(
+    await safe_edit_text(callback, 
         f"Пришлите сообщение для <u>{ctype_label} капчи</u>.\n\n"
         "<b>Переменные:</b>\n"
         "├ Имя: <code>{name}</code>\n"
@@ -846,7 +846,7 @@ async def on_ch_captcha_btns(callback: CallbackQuery, state: FSMContext, platfor
     await state.set_state(MessagesFSM.waiting_for_captcha_buttons)
     await state.update_data(chat_id=chat_id, owner_id=platform_user["user_id"],
                             editor_prompt_mid=callback.message.message_id)
-    await callback.message.edit_text(
+    await safe_edit_text(callback, 
         f"{ctype_label} капча:\n\n"
         "⸬ <b>Текст кнопок</b>\n\n"
         "<blockquote><u>Цвет:</u>\n\n"
@@ -933,7 +933,7 @@ async def _show_autoreply(callback: CallbackQuery, chat_id: int, owner_id: int):
     )])
     buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"ch_messages:{chat_id}")])
 
-    await callback.message.edit_text(
+    await safe_edit_text(callback, 
         "<blockquote>Вы можете установить <b>автоматические ответы</b> бота на "
         "любой текст или команду от пользователей.</blockquote>\n\n"
         "Выберите действие ⬇️",
@@ -1124,7 +1124,7 @@ async def on_ch_ar_toggle_global(
         # Текста нет — FSM-ввод
         await state.set_state(MessagesFSM.waiting_for_general_reply_text)
         await state.update_data(chat_id=chat_id, owner_id=owner_id, prompt_mid=callback.message.message_id)
-        await callback.message.edit_text(
+        await safe_edit_text(callback, 
             "<blockquote>⟲ Пришлите сообщение, которое будет "
             "использоваться для автоматического ответа.</blockquote>\n\n"
             "<b>Переменные:</b>\n"
@@ -1211,7 +1211,7 @@ async def on_ch_ar_edit_global(
 
     await state.set_state(MessagesFSM.waiting_for_general_reply_text)
     await state.update_data(chat_id=chat_id, owner_id=owner_id, prompt_mid=callback.message.message_id)
-    await callback.message.edit_text(
+    await safe_edit_text(callback, 
         "✏️ <b>Редактирование общего ответа</b>\n\n"
         "<blockquote>⟲ Пришлите сообщение, которое будет "
         "использоваться для автоматического ответа.</blockquote>\n\n"
@@ -1307,7 +1307,7 @@ async def on_ch_ar_btns_global(
 
     await state.set_state(MessagesFSM.waiting_for_general_reply_buttons)
     await state.update_data(chat_id=chat_id, owner_id=owner_id, prompt_mid=callback.message.message_id)
-    await callback.message.edit_text(
+    await safe_edit_text(callback, 
         "📎 Отправьте <b>кнопки</b>, которые будут добавлены к сообщению.\n\n"
         "🔗 <u><b>URL-кнопки</b></u>\n\n"
         "<b>Одна кнопка в ряду:</b>\n"
@@ -1433,7 +1433,7 @@ async def on_ch_ar_add(callback: CallbackQuery, state: FSMContext, platform_user
     chat_id = int(callback.data.split(":")[1])
     await state.set_state(MessagesFSM.waiting_for_autoreply_kw)
     await state.update_data(chat_id=chat_id, owner_id=platform_user["user_id"], prompt_mid=callback.message.message_id)
-    await callback.message.edit_text(
+    await safe_edit_text(callback, 
         "Отправьте триггер.\n\n"
         "<blockquote>① Триггер — это сообщение для вызова автоматического ответа.</blockquote>\n\n"
         "<b>Пример:</b>\n"
@@ -1739,7 +1739,7 @@ async def on_ch_ar_kw_edit(
 
     await state.set_state(MessagesFSM.waiting_for_autoreply_text)
     await state.update_data(chat_id=chat_id, owner_id=owner_id, keyword=keyword, ar_id=ar_id, prompt_mid=callback.message.message_id)
-    await callback.message.edit_text(
+    await safe_edit_text(callback, 
         f"✏️ <b>Редактирование ответа</b>\n\nТриггер: <code>{keyword}</code>\n\n"
         "<blockquote>⟲ Пришлите новое сообщение для автоматического ответа.</blockquote>\n\n"
         "<b>Переменные:</b>\n"
@@ -1868,7 +1868,7 @@ async def on_ch_ar_kw_btns(
 
     await state.set_state(MessagesFSM.waiting_for_autoreply_buttons)
     await state.update_data(chat_id=chat_id, owner_id=owner_id, ar_id=ar_id, prompt_mid=callback.message.message_id)
-    await callback.message.edit_text(
+    await safe_edit_text(callback, 
         "📎 Отправьте <b>кнопки</b>, которые будут добавлены к сообщению.\n\n"
         "🔗 <u><b>URL-кнопки</b></u>\n\n"
         "<b>Одна кнопка в ряду:</b>\n"

@@ -20,7 +20,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
 import db.pool as db
-from utils.nav import navigate
+from utils.nav import navigate, safe_edit_text
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -215,7 +215,7 @@ async def on_link_type(callback: CallbackQuery, state: FSMContext):
     await state.set_state(LinkFSM.waiting_for_name)
 
     # Редактируем текущее сообщение и сохраняем его message_id как prompt
-    edited = await callback.message.edit_text(
+    edited = await safe_edit_text(callback, 
         "🔗 <b>Создание ссылки</b>\n\nОтправьте название ссылки:\n"
         "(Например: «Реклама Google» или «Инфлюенсер Иван»)",
         parse_mode="HTML",
@@ -317,7 +317,7 @@ async def on_link_limit(event, state: FSMContext, bot: Bot):
     ])
 
     if isinstance(event, CallbackQuery):
-        await event.message.edit_text(budget_text, parse_mode="HTML", reply_markup=budget_kb)
+        await safe_edit_text(event, budget_text, parse_mode="HTML", reply_markup=budget_kb)
         await event.answer()
     else:
         if prompt_msg_id and prompt_chat_id:
@@ -391,7 +391,7 @@ async def on_link_budget(event, state: FSMContext, bot: Bot):
     # Функция для финального ответа — всегда редактируем prompt
     async def _edit_final(text: str, kb=None):
         if isinstance(event, CallbackQuery):
-            await event.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+            await safe_edit_text(event, text, parse_mode="HTML", reply_markup=kb)
             await event.answer()
         elif prompt_msg_id and prompt_chat_id:
             try:

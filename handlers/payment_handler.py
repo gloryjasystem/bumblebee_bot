@@ -8,6 +8,7 @@ from aiogram.types import (
 )
 from config import settings
 import db.pool as db
+from utils.nav import safe_edit_text
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -115,7 +116,7 @@ async def on_tariffs(callback: CallbackQuery, platform_user: dict | None):
 
     buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data="menu:main")])
 
-    await callback.message.edit_text(
+    await safe_edit_text(callback, 
         f"💎 <b>Тарифы Bumblebee Bot</b>\n\n"
         f"Текущий: {TARIFF_LABELS.get(tariff, tariff)}{until}\n\n"
         f"Выберите тариф для подробной информации 👇",
@@ -141,7 +142,7 @@ async def on_tariff_detail(callback: CallbackQuery, platform_user: dict | None):
     month_price = p.get(f"{tariff_key}_month", 0)
     year_price  = p.get(f"{tariff_key}_year", 0)
 
-    await callback.message.edit_text(
+    await safe_edit_text(callback, 
         info["desc"],
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(
@@ -225,7 +226,7 @@ async def on_tariff_activate(callback: CallbackQuery, platform_user: dict | None
             platform_user["user_id"],
         )
         await callback.answer("✅ Trial 10 дней Про активирован!")
-        await callback.message.edit_text(
+        await safe_edit_text(callback, 
             "🎁 <b>Trial активирован!</b>\n\n"
             "Тариф ⭐ Про активен на 10 дней.\n"
             "Используй все функции Pro и оцени бота!\n\n"

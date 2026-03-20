@@ -605,7 +605,18 @@ async def on_ga_bl(callback: CallbackQuery):
         [InlineKeyboardButton(text="◀️ Назад", callback_data=f"ga_main:{owner_id}")]
     ]
 
-    await callback.message.edit_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+    if callback.message.text:
+        try:
+            await callback.message.edit_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+        except Exception:
+            pass
+    else:
+        try:
+            await callback.message.delete()
+        except:
+            pass
+        await callback.message.answer(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+
     await callback.answer()
 
 

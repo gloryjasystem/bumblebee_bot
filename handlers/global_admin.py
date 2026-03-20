@@ -410,38 +410,147 @@ async def cmd_admins(message: Message):
     await message.answer("\n".join(lines), parse_mode="HTML")
 
 
-async def _build_global_stats(owner_id: int, conn) -> str:
-    # 1. Считаем глобальную аудиторию (уникальные user_id во всех ботах владельца)
-    total_users = await conn.fetchval("""
-        SELECT COUNT(DISTINCT bu.user_id) FROM bot_users bu
-        JOIN bot_chats bc ON bu.chat_id = bc.chat_id
-        WHERE bc.owner_id = $1 AND bc.is_active=true AND bu.user_id IS NOT NULL
-    """, owner_id) or 0
-    
-    alive_users = await conn.fetchval("""
-        SELECT COUNT(DISTINCT bu.user_id) FROM bot_users bu
-        JOIN bot_chats bc ON bu.chat_id = bc.chat_id
-        WHERE bc.owner_id = $1 AND bc.is_active=true AND bu.is_active=true AND bu.user_id IS NOT NULL
-    """, owner_id) or 0
-    
-    dead_users = total_users - alive_users
-    
-    # 2. Боты и площадки
-    total_bots = await conn.fetchval("SELECT COUNT(*) FROM child_bots WHERE owner_id=$1", owner_id) or 0
+
+async def _build_analytics_text(owner_id: int, conn) -> str:
+    from datetime import datetime, timezone
+
+    # ── СЕТЬ БОТОВ ──────────────────────────────────────────
+    total_bots  = await conn.fetchval("SELECT COUNT(*) FROM child_bots WHERE owner_id=$1", owner_id) or 0
     total_chats = await conn.fetchval("SELECT COUNT(*) FROM bot_chats WHERE owner_id=$1 AND is_active=true", owner_id) or 0
-    
-    # 3. База ЧС
-    blacklist_count = await conn.fetchval("SELECT COUNT(*) FROM blacklist WHERE owner_id=$1", owner_id) or 0
+    total_owners = await conn.fetchval("SELECT COUNT(*) FROM platform_users") or 0
+
+    # ── АУДИТОРИЯ BUMBLEBEE BOT (platform_users) ────────────
+    all_pu       = await conn.fetchval("SELECT COUNT(*) FROM platform_users") or 0
+    active_today = await conn.fetchval(
+        "SELECT COUNT(*) FROM platform_users WHERE created_at >= now() - interval '1 day'"
+    ) or 0
+    new_today    = await conn.fetchval(
+        "SELECT COUNT(*) FROM platform_users WHERE date_trunc('day', created_at AT TIME ZONE 'UTC') = current_date"
+    ) or 0
+    new_yesterday = await conn.fetchval(
+        "SELECT COUNT(*) FROM platform_users WHERE date_trunc('day', created_at AT TIME ZONE 'UTC') = current_date - 1"
+    ) or 0
+    new_week     = await conn.fetchval(
+        "SELECT COUNT(*) FROM platform_users WHERE created_at >= now() - interval '7 days'"
+    ) or 0
+
+    # ── СЕГМЕНТАЦИЯ ─────────────────────────────────────────
+    seg_rows = await conn.fetch("SELECT tariff, COUNT(*) as cnt FROM platform_users GROUP BY tariff")
+    seg = {r['tariff']: r['cnt'] for r in seg_rows}
+    leads   = seg.get('free', 0) + seg.get(None, 0)
+    clients = seg.get('start', 0) + seg.get('pro', 0) + seg.get('business', 0)
+    quals   = seg.get('pro', 0) + seg.get('business', 0)
+    banned_global = await conn.fetchval(
+        "SELECT COUNT(*) FROM blacklist WHERE owner_id=$1 AND child_bot_id IS NULL", owner_id
+    ) or 0
+
+    # ── ФИНАНСЫ (NOWPayments) ────────────────────────────────
+    fin = await conn.fetch(
+        "SELECT status, COUNT(*) as cnt, COALESCE(SUM(amount_usd),0) as total FROM payments GROUP BY status"
+    )
+    fin_map = {r['status']: (r['cnt'], float(r['total'])) for r in fin}
+    pending_cnt, pending_sum   = fin_map.get('pending', (0, 0.0))
+    paid_cnt,    paid_sum      = fin_map.get('paid',    (0, 0.0))
+    failed_cnt,  _             = fin_map.get('failed',  (0, 0.0))
+    expired_cnt, _             = fin_map.get('expired', (0, 0.0))
+    cancelled_cnt = failed_cnt + expired_cnt
+
+    total_attempts = paid_cnt + cancelled_cnt + pending_cnt
+    conversion = round(paid_cnt / total_attempts * 100, 1) if total_attempts > 0 else 0.0
 
     return (
-        "📊 <b>Глобальная Сетевая Статистика</b>\n\n"
-        f"🤖 Подключено ботов: <b>{total_bots}</b>\n"
-        f"📍 Активных каналов/групп: <b>{total_chats}</b>\n\n"
-        f"👥 Уникальная аудитория: <b>{total_users:,}</b>\n"
-        f" ├ 🟢 Живые: {alive_users:,}\n"
-        f" └ 🔴 Мёртвые: {dead_users:,}\n\n"
-        f"🚫 В глобальном ЧС: <b>{blacklist_count}</b>"
+        "📊 <b>Аналитика BotCloud</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        "🤖 <b>СЕТЬ БОТОВ</b>\n"
+        f"🗄️  Подключено ботов:  <b>{total_bots}</b>\n"
+        f"📡  Активных каналов/групп:  <b>{total_chats}</b>\n"
+        f"👤  Владельцев ботов:  <b>{total_owners}</b>\n\n"
+        "🐝 <b>АУДИТОРИЯ BUMBLEBEE BOT</b>\n"
+        f"📊  Всего пользователей:  <b>{all_pu:,}</b>\n"
+        f"🟢  Активных сегодня:  <b>{active_today:,}</b>\n"
+        f"🆕  Новых сегодня:  <b>{new_today}</b>   │   Вчера:  <b>{new_yesterday}</b>\n"
+        f"📅  За неделю:  <b>{new_week}</b>\n\n"
+        "📦 <b>СЕГМЕНТАЦИЯ</b>\n"
+        f"💡  Лиды (free):  <b>{leads:,}</b>\n"
+        f"✅  Клиенты (платные):  <b>{clients:,}</b>\n"
+        f"🏆  Квалы (pro+business):  <b>{quals:,}</b>\n"
+        f"🚫  Забаненных в платформе:  <b>{banned_global}</b>\n\n"
+        "💳 <b>ФИНАНСЫ (NOWPayments)</b>\n"
+        f"⏳  В ожидании:  <b>{pending_cnt}</b>  •  <b>${pending_sum:,.2f}</b>\n"
+        f"✅  Оплачено:  <b>{paid_cnt}</b>  •  <b>${paid_sum:,.2f}</b>\n"
+        f"❌  Отмены/Просроченных:  <b>{cancelled_cnt}</b>\n"
+        f"📈  Конверсия:  <b>{conversion}%</b>\n"
+        f"💰  Общий доход:  <b>${paid_sum:,.2f}</b>"
     )
+
+
+async def _build_revenue_text(owner_id: int, period: str, conn) -> str:
+    period_labels = {
+        "today": ("📅 Сегодня", "date_trunc('day', paid_at AT TIME ZONE 'UTC') = current_date"),
+        "week":  ("📆 За неделю", "paid_at >= now() - interval '7 days'"),
+        "month": ("🗓 За месяц", "paid_at >= now() - interval '30 days'"),
+        "all":   ("🕰 За всё время", "paid_at IS NOT NULL"),
+    }
+    label, where_clause = period_labels.get(period, period_labels["all"])
+
+    rows = await conn.fetch(f"""
+        SELECT tariff, period, COUNT(*) as cnt, SUM(amount_usd) as total
+        FROM payments
+        WHERE status='paid' AND {where_clause}
+        GROUP BY tariff, period
+        ORDER BY SUM(amount_usd) DESC
+    """)
+
+    total_sum  = sum(float(r['total']) for r in rows)
+    total_cnt  = sum(r['cnt'] for r in rows)
+    avg_check  = round(total_sum / total_cnt, 2) if total_cnt > 0 else 0.0
+
+    tariff_icons = {"start": "🌱 Start", "pro": "⭐ Pro", "business": "💼 Business"}
+    period_icons = {"month": "/ месяц", "year": "/ год"}
+
+    breakdown = ""
+    for r in rows:
+        t_label = tariff_icons.get(r['tariff'], r['tariff'].capitalize())
+        p_label = period_icons.get(r['period'], r['period'])
+        breakdown += f"   {t_label} {p_label}  —  {r['cnt']} шт.  ${float(r['total']):,.2f}\n"
+
+    top_row = rows[0] if rows else None
+    top_label = ""
+    if top_row:
+        t = tariff_icons.get(top_row['tariff'], top_row['tariff'])
+        p = period_icons.get(top_row['period'], top_row['period'])
+        top_label = f"{t} {p}"
+
+    return (
+        f"💰 <b>Доходы — {label}</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"💵  Итого:  <b>${total_sum:,.2f}</b>  ({total_cnt} платежей)\n"
+        "────────────────────────────\n"
+        f"<b>📦 По тарифам:</b>\n"
+        f"{breakdown or '   Нет оплат за период\n'}"
+        "────────────────────────────\n"
+        f"📊  Средний чек:  <b>${avg_check:,.2f}</b>\n"
+        f"🏆  Топ-тариф:  <b>{top_label or '—'}</b>"
+    )
+
+
+def _revenue_period_kb(owner_id: int, current_period: str) -> InlineKeyboardMarkup:
+    all_periods = [
+        ("📅 Сегодня", "today"),
+        ("📆 Неделя",  "week"),
+        ("🗓 Месяц",   "month"),
+        ("🕰 Всё время", "all"),
+    ]
+    # Активная вкладка убирается из кнопок
+    tabs = [
+        InlineKeyboardButton(text=label, callback_data=f"ga_rev:{owner_id}:{p}")
+        for label, p in all_periods if p != current_period
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=[
+        tabs,
+        [InlineKeyboardButton(text="🔄 Обновить", callback_data=f"ga_rev:{owner_id}:{current_period}")],
+        [InlineKeyboardButton(text="◀️ Назад в Аналитику", callback_data=f"ga_stats:{owner_id}")],
+    ])
 
 
 @router.message(Command("stats"))
@@ -451,10 +560,8 @@ async def cmd_stats(message: Message):
         return await message.answer("❌ Нет доступа.")
     if role != 'owner':
         return await message.answer("❌ Нет прав. Эта команда доступна только Владельцу.")
-        
     async with get_pool().acquire() as conn:
-        text = await _build_global_stats(owner_id, conn)
-        
+        text = await _build_analytics_text(owner_id, conn)
     await message.answer(text, parse_mode="HTML")
 
 
@@ -463,82 +570,43 @@ async def on_ga_stats(callback: CallbackQuery):
     role, owner_id = await get_admin_context(callback.from_user.id, callback.from_user.username)
     if role != 'owner':
         return await callback.answer("❌ Нет прав", show_alert=True)
-        
+
     async with get_pool().acquire() as conn:
-        text = await _build_global_stats(owner_id, conn)
-        
-    kb = [
-        [
-            InlineKeyboardButton(text="💸 Платежи", callback_data=f"ga_rev:{owner_id}:all"),
-            InlineKeyboardButton(text="🏆 Топ ботов", callback_data=f"ga_top_bots:{owner_id}")
-        ],
+        text = await _build_analytics_text(owner_id, conn)
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💰 Доходы по периодам", callback_data=f"ga_rev:{owner_id}:week")],
+        [InlineKeyboardButton(text="🔄 Обновить", callback_data=f"ga_stats:{owner_id}")],
         [InlineKeyboardButton(text="◀️ Назад", callback_data=f"ga_main:{owner_id}")],
-    ]
-    
-    await callback.message.edit_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+    ])
+    try:
+        await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+    except Exception:
+        await callback.message.answer(text, parse_mode="HTML", reply_markup=kb)
     await callback.answer()
 
 
-@router.message(Command("revenue"))
 @router.callback_query(F.data.startswith("ga_rev:"))
-async def on_ga_revenue(event: Message | CallbackQuery):
-    role, owner_id = await get_admin_context(event.from_user.id, event.from_user.username)
-    if not role:
-        if isinstance(event, Message):
-            return await event.answer("❌ Нет прав.")
-        return await event.answer("❌ Нет прав", show_alert=True)
-    if role != 'owner':
-        if isinstance(event, Message):
-            return await event.answer("❌ Нет прав. Для владельца.")
-        return await event.answer("❌ Нет прав", show_alert=True)
-        
-    async with get_pool().acquire() as conn:
-        rows = await conn.fetch("SELECT tariff, amount_usd, status, created_at FROM payments WHERE user_id=$1 ORDER BY created_at DESC LIMIT 5", owner_id)
-        
-    text = "💸 <b>Ваши последние платежи по тарифам:</b>\n\n"
-    if not rows:
-        text += "Вы еще не совершали оплат."
-    else:
-        for r in rows:
-            icon = "✅" if r['status'] == 'paid' else "⏳"
-            text += f"{icon} <b>{r['tariff'].upper()}</b> — ${r['amount_usd']} (<i>{r['created_at'].strftime('%d.%m.%Y')}</i>)\n"
-            
-    if isinstance(event, Message):
-        await event.answer(text, parse_mode="HTML")
-    else:
-        kb = [[InlineKeyboardButton(text="◀️ Назад в Статистику", callback_data=f"ga_stats:{owner_id}")]]
-        await event.message.edit_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
-        await event.answer()
+async def on_ga_revenue(callback: CallbackQuery):
+    parts = callback.data.split(":")
+    owner_id = int(parts[1])
+    period   = parts[2] if len(parts) > 2 else "all"
 
-
-@router.callback_query(F.data.startswith("ga_top_bots:"))
-async def on_ga_top_bots(callback: CallbackQuery):
-    role, owner_id = await get_admin_context(callback.from_user.id, callback.from_user.username)
+    role, _ = await get_admin_context(callback.from_user.id, callback.from_user.username)
     if role != 'owner':
         return await callback.answer("❌ Нет прав", show_alert=True)
-        
+
     async with get_pool().acquire() as conn:
-        rows = await conn.fetch("""
-            SELECT bc.chat_title, bc.chat_type, COUNT(bu.user_id) as users_count
-            FROM bot_chats bc
-            LEFT JOIN bot_users bu ON bu.chat_id = bc.chat_id AND bu.is_active = true
-            WHERE bc.owner_id = $1 AND bc.is_active = true
-            GROUP BY bc.id, bc.chat_title, bc.chat_type
-            ORDER BY users_count DESC
-            LIMIT 15
-        """, owner_id)
-        
-    text = "🏆 <b>Топ площадок (По активной аудитории)</b>\n\n"
-    if not rows:
-        text += "Нет активных площадок."
-    else:
-        for idx, r in enumerate(rows, 1):
-            icon = "📢" if r['chat_type'] == 'channel' else "👥"
-            text += f"{idx}. {icon} <b>{r['chat_title']}</b> — {r['users_count']} чел.\n"
-            
-    kb = [[InlineKeyboardButton(text="◀️ Назад в Статистику", callback_data=f"ga_stats:{owner_id}")]]
-    await callback.message.edit_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+        text = await _build_revenue_text(owner_id, period, conn)
+
+    kb = _revenue_period_kb(owner_id, period)
+    try:
+        await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+    except Exception:
+        await callback.message.answer(text, parse_mode="HTML", reply_markup=kb)
     await callback.answer()
+
+
 
 
 async def _kick_from_all_chats(admin_id: int, target_user_id: int):

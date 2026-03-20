@@ -1663,9 +1663,25 @@ async def on_ga_discount_select(callback: CallbackQuery):
     if percent == 0:
         await set_discount(0)
         await callback.answer("Скидка отключена", show_alert=True)
-        # return to the discounts menu
-        callback.data = f"ga_discounts:{owner_id}"
-        return await on_ga_discounts(callback)
+        await callback.message.delete()
+        
+        status_text = "Текущее значение: 0%"
+        text = (
+            "🏷 <b>Скидка на подписку</b>\n\n"
+            f"{status_text}\n\n"
+            "Выбери готовое значение кнопкой."
+        )
+        kb = [
+            [
+                InlineKeyboardButton(text="0%", callback_data=f"ga_discount:{owner_id}:0"),
+                InlineKeyboardButton(text="10%", callback_data=f"ga_discount:{owner_id}:10"),
+                InlineKeyboardButton(text="20%", callback_data=f"ga_discount:{owner_id}:20"),
+                InlineKeyboardButton(text="30%", callback_data=f"ga_discount:{owner_id}:30")
+            ],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"ga_main:{owner_id}")]
+        ]
+        await callback.message.answer(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+        return
 
     text = f"На сколько времени включить скидку <b>{percent}%</b>?"
     kb = [
@@ -1699,5 +1715,26 @@ async def on_ga_discount_save(callback: CallbackQuery):
     await set_discount(percent, days)
     await callback.answer(f"✅ Скидка {percent}% включена на {days} дней!", show_alert=True)
     
-    callback.data = f"ga_discounts:{owner_id}"
-    await on_ga_discounts(callback)
+    await callback.message.delete()
+    
+    percent_now, until = await get_active_discount()
+    if percent_now > 0 and until:
+        status_text = f"Текущее значение: {percent_now}%\n(до {until.strftime('%d.%m.%Y %H:%M')})"
+    else:
+        status_text = "Текущее значение: 0%"
+
+    text = (
+        "🏷 <b>Скидка на подписку</b>\n\n"
+        f"{status_text}\n\n"
+        "Выбери готовое значение кнопкой."
+    )
+    kb = [
+        [
+            InlineKeyboardButton(text="0%", callback_data=f"ga_discount:{owner_id}:0"),
+            InlineKeyboardButton(text="10%", callback_data=f"ga_discount:{owner_id}:10"),
+            InlineKeyboardButton(text="20%", callback_data=f"ga_discount:{owner_id}:20"),
+            InlineKeyboardButton(text="30%", callback_data=f"ga_discount:{owner_id}:30")
+        ],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"ga_main:{owner_id}")]
+    ]
+    await callback.message.answer(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))

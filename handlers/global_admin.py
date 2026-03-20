@@ -555,24 +555,41 @@ async def on_ga_bl(callback: CallbackQuery):
     admin_id = callback.from_user.id
 
     async with get_pool().acquire() as conn:
-        # ЧС считается глобально по owner_id (владельцу платформы)
-        bl_count = await conn.fetchval("SELECT COUNT(*) FROM blacklist WHERE owner_id=$1", owner_id) or 0
-        pu_row = await conn.fetchrow(
-            "SELECT blacklist_active, COALESCE(blocked_count, 0) AS blocked_count FROM platform_users WHERE user_id=$1",
-            owner_id
-        )
-        bl_active = pu_row['blacklist_active'] if pu_row else True
-        if bl_active is None:
-            bl_active = True
-        total_blocked = pu_row['blocked_count'] if pu_row else 0
-        # Отображаем боты из выборки текущего администратора
+        # 1. Получаем список выбранных ботов (с их id и статистикой блокировок)
         selected_bots = await conn.fetch("""
-            SELECT cb.bot_username
+            SELECT cb.id, cb.bot_username, cb.blocked_count
             FROM ga_selected_bots gsb
             JOIN child_bots cb ON cb.id = gsb.child_bot_id
             WHERE gsb.admin_id = $1
             ORDER BY gsb.selected_at ASC
         """, admin_id)
+        selected_bot_ids = [r['id'] for r in selected_bots]
+
+        # 2. Вытаскиваем глобальный статус активности ЧС платформы
+        pu_row = await conn.fetchrow(
+            "SELECT blacklist_active FROM platform_users WHERE user_id=$1", owner_id
+        )
+        bl_active = pu_row['blacklist_active'] if pu_row and pu_row['blacklist_active'] is not None else True
+
+        # 3. Подсчитываем статистику строго для выбранных ботов + глобальный ЧС платформы
+        if selected_bot_ids:
+            # Уникальные записи базы (как при экспорте CSV)
+            bl_count = await conn.fetchval("""
+                SELECT COUNT(*) FROM (
+                    SELECT DISTINCT ON (COALESCE(user_id::text, lower(username))) user_id
+                    FROM blacklist
+                    WHERE child_bot_id = ANY($1::int[]) OR (owner_id = $2 AND child_bot_id IS NULL)
+                ) t
+            """, selected_bot_ids, owner_id) or 0
+            
+            # Суммируем количество заблокированных именно этими ботами
+            total_blocked = sum((r['blocked_count'] or 0) for r in selected_bots)
+        else:
+            # Если боты не выбраны — показываем только глобальный размер базы платформы (child_bot_id IS NULL)
+            bl_count = await conn.fetchval(
+                "SELECT COUNT(*) FROM blacklist WHERE owner_id=$1 AND child_bot_id IS NULL", owner_id
+            ) or 0
+            total_blocked = 0
 
     bots_list = ("\n".join(f"• @{r['bot_username']}" for r in selected_bots)
                  if selected_bots else

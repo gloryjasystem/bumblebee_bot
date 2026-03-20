@@ -418,13 +418,13 @@ async def on_bs_bl_text(message: Message, state: FSMContext, platform_user: dict
 # ЧС бот-уровень: обработка загружаемых файлов (add / del)
 # ══════════════════════════════════════════════════════════════
 
-@router.message(F.document, StateFilter(
+@router.message(F.document | F.text, StateFilter(
     "SettingsFSM:bs_bl_waiting_add_file",
     "SettingsFSM:bs_bl_waiting_del_file",
 ))
 async def on_bs_bl_file(message: Message, bot: Bot, state: FSMContext,
                         platform_user: dict | None):
-    """Обрабатывает TXT/CSV файлы в состояниях bs_bl_waiting_add_file / bs_bl_waiting_del_file."""
+    """Обрабатывает текстовый ввод ИЛИ TXT/CSV файлы в состояниях управления ЧС."""
     if not platform_user:
         return
 
@@ -436,9 +436,15 @@ async def on_bs_bl_file(message: Message, bot: Bot, state: FSMContext,
     ):
         return  # не наше состояние → другой обработчик
 
-    doc = message.document
-    if not doc.file_name.lower().endswith((".txt", ".csv")):
-        await message.answer("❌ Поддерживаются только файлы TXT и CSV.")
+    if message.document:
+        doc = message.document
+        if not doc.file_name.lower().endswith((".txt", ".csv")):
+            await message.answer("❌ Поддерживаются только файлы TXT и CSV.")
+            return
+        file_name = doc.file_name
+    elif message.text:
+        file_name = "manual_input.txt"
+    else:
         return
 
     data = await state.get_data()
@@ -461,11 +467,14 @@ async def on_bs_bl_file(message: Message, bot: Bot, state: FSMContext,
     except Exception:
         pass
 
-    file_obj = await bot.get_file(doc.file_id)
-    content_io = await bot.download_file(file_obj.file_path)
-    content_bytes = content_io.read()
+    if message.document:
+        file_obj = await bot.get_file(doc.file_id)
+        content_io = await bot.download_file(file_obj.file_path)
+        content_bytes = content_io.read()
+    else:
+        content_bytes = message.text.encode("utf-8")
 
-    ok, error = validate_bl_file(content_bytes, doc.file_name)
+    ok, error = validate_bl_file(content_bytes, file_name)
     if not ok:
         await message.answer(f"❌ {error}")
         return
@@ -477,7 +486,7 @@ async def on_bs_bl_file(message: Message, bot: Bot, state: FSMContext,
         # Защита #1: сразу освобождаем Telegram-соединение, всё тяжёлое — в фон
         async def _import_and_sweep():
             try:
-                stats = await import_file(owner_id, content_bytes, doc.file_name, child_bot_id=child_bot_id)
+                stats = await import_file(owner_id, content_bytes, file_name, child_bot_id=child_bot_id)
                 try:
                     await wait_msg.edit_text(
                         "✅ <b>Файл обработан</b>\n\n"

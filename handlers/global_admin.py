@@ -343,21 +343,16 @@ async def _show_platform_user_card(message_or_cb, admin_owner_id: int, row):
         f"{blocked_mark}{note_text}"
     )
     kb = [
-        [InlineKeyboardButton(text="🤖 Боты и каналы",              callback_data=f"ga_pu_bots:{uid}:{admin_owner_id}")],
-        [InlineKeyboardButton(text="📤 Экспорт базы пользователей", callback_data=f"ga_pu_exp_users:{uid}:{admin_owner_id}")],
-        [InlineKeyboardButton(text="📤 Экспорт базы ЧС",            callback_data=f"ga_pu_exp_bl:{uid}:{admin_owner_id}")],
-        [InlineKeyboardButton(text="📢 Написать сообщение",         callback_data=f"ga_pu_pm:{uid}:{admin_owner_id}")],
-        [InlineKeyboardButton(text="💎 Изменить тариф",             callback_data=f"ga_pu_tariff:{uid}:{admin_owner_id}")],
-        [InlineKeyboardButton(text="📅 Продлить подписку",          callback_data=f"ga_pu_extend:{uid}:{admin_owner_id}")],
-        [InlineKeyboardButton(text="⏰ Установить срок истечения",   callback_data=f"ga_pu_expire:{uid}:{admin_owner_id}")],
+        [InlineKeyboardButton(text="🤖 Боты и каналы",        callback_data=f"ga_pu_bots:{uid}:{admin_owner_id}")],
+        [InlineKeyboardButton(text="📢 Написать сообщение",   callback_data=f"ga_pu_pm:{uid}:{admin_owner_id}")],
+        [InlineKeyboardButton(text="💎 Управление тарифом",   callback_data=f"ga_pu_tariff:{uid}:{admin_owner_id}")],
+        [InlineKeyboardButton(text="📈 История покупок",      callback_data=f"ga_pu_history:{uid}:{admin_owner_id}")],
         [InlineKeyboardButton(
             text="✅ Разблокировать" if is_blocked else "🚫 Заблокировать",
             callback_data=f"ga_pu_block:{uid}:{admin_owner_id}"
         )],
-        [InlineKeyboardButton(text="🤖 Выключить всех ботов",       callback_data=f"ga_pu_disbots:{uid}:{admin_owner_id}")],
-        [InlineKeyboardButton(text="🗑 Удалить аккаунт",            callback_data=f"ga_pu_delete:{uid}:{admin_owner_id}")],
-        [InlineKeyboardButton(text="📝 Добавить заметку",           callback_data=f"ga_pu_note:{uid}:{admin_owner_id}")],
-        [InlineKeyboardButton(text="◀️ Назад к поиску",             callback_data=f"ga_manage_users:{admin_owner_id}")],
+        [InlineKeyboardButton(text="📝 Добавить заметку",     callback_data=f"ga_pu_note:{uid}:{admin_owner_id}")],
+        [InlineKeyboardButton(text="◀️ Назад к поиску",       callback_data=f"ga_manage_users:{admin_owner_id}")],
     ]
     markup = InlineKeyboardMarkup(inline_keyboard=kb)
     if isinstance(message_or_cb, Message):
@@ -530,12 +525,286 @@ async def on_ga_pu_note_input(message: Message, state: FSMContext):
     )
 
 
-# Stub handlers for features in development
-for _pfx in ("ga_pu_bots", "ga_pu_exp_users", "ga_pu_exp_bl",
-             "ga_pu_tariff", "ga_pu_extend", "ga_pu_expire", "ga_pu_disbots"):
-    @router.callback_query(F.data.startswith(f"{_pfx}:"))
-    async def _stub_handler(cb: CallbackQuery, _p=_pfx):
-        await cb.answer("⏳ Раздел в разработке", show_alert=True)
+# ═══ Боты и каналы ═══════════════════════════════════════════════════════════
+
+@router.callback_query(F.data.startswith("ga_pu_bots:"))
+async def on_ga_pu_bots(callback: CallbackQuery):
+    parts = callback.data.split(":")
+    target_uid, admin_owner_id = int(parts[1]), int(parts[2])
+    async with get_pool().acquire() as conn:
+        bots = await conn.fetch(
+            "SELECT id, bot_username, bot_name FROM child_bots WHERE owner_id=$1 ORDER BY created_at",
+            target_uid
+        )
+        pu = await conn.fetchrow("SELECT username, first_name FROM platform_users WHERE user_id=$1", target_uid)
+    uname = f"@{pu['username']}" if pu and pu.get('username') else str(target_uid)
+    if not bots:
+        return await callback.message.edit_text(
+            f"🤖 <b>Боты {uname}</b>\n\nУ пользователя нет подключённых ботов.",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="◀️ Назад к карточке", callback_data=f"ga_pu_card:{target_uid}:{admin_owner_id}")]
+            ])
+        )
+    async with get_pool().acquire() as conn:
+        chat_counts = {}
+        for b in bots:
+            cnt = await conn.fetchval("SELECT COUNT(*) FROM bot_chats WHERE child_bot_id=$1", b['id']) or 0
+            chat_counts[b['id']] = cnt
+    lines = []
+    kb = []
+    for b in bots:
+        cnt = chat_counts[b['id']]
+        label = f"@{b['bot_username']}  ·  {cnt} пл."
+        lines.append(f"• {label}")
+        kb.append([InlineKeyboardButton(text=f"🤖 @{b['bot_username']} ({cnt} пл.)",
+                                        callback_data=f"ga_pu_bot_detail:{b['id']}:{target_uid}:{admin_owner_id}")])
+    kb.append([InlineKeyboardButton(text="◀️ Назад к карточке", callback_data=f"ga_pu_card:{target_uid}:{admin_owner_id}")])
+    await callback.message.edit_text(
+        f"🤖 <b>Боты {uname}</b>\n──────────────────────────",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("ga_pu_bot_detail:"))
+async def on_ga_pu_bot_detail(callback: CallbackQuery):
+    parts = callback.data.split(":")
+    bot_id, target_uid, admin_owner_id = int(parts[1]), int(parts[2]), int(parts[3])
+    async with get_pool().acquire() as conn:
+        bot_row = await conn.fetchrow("SELECT bot_username FROM child_bots WHERE id=$1", bot_id)
+        chats = await conn.fetch(
+            "SELECT bc.id, bc.chat_title, bc.chat_type, bc.is_active, "
+            "COUNT(bu.user_id) FILTER (WHERE bu.is_active=true) AS subs "
+            "FROM bot_chats bc "
+            "LEFT JOIN bot_users bu ON bu.chat_id=bc.chat_id AND bu.owner_id=bc.owner_id "
+            "WHERE bc.child_bot_id=$1 GROUP BY bc.id ORDER BY bc.added_at",
+            bot_id
+        )
+    bname = f"@{bot_row['bot_username']}" if bot_row else str(bot_id)
+    kb = []
+    for ch in chats:
+        status = "✅" if ch['is_active'] else "❌"
+        ctype = "📡" if ch['chat_type'] == 'channel' else "👥"
+        subs = ch['subs'] or 0
+        title = (ch['chat_title'] or 'Без названия')[:28]
+        action_text = "⏸ Выкл" if ch['is_active'] else "▶️ Вкл"
+        kb.append([
+            InlineKeyboardButton(
+                text=f"{status} {ctype} {title}  ·  👥 {subs:,}",
+                callback_data=f"ga_pu_noop"
+            )
+        ])
+        kb.append([
+            InlineKeyboardButton(text=action_text, callback_data=f"ga_pu_chat_toggle:{ch['id']}:{bot_id}:{target_uid}:{admin_owner_id}"),
+            InlineKeyboardButton(text="🗑 Удалить",  callback_data=f"ga_pu_chat_del:{ch['id']}:{bot_id}:{target_uid}:{admin_owner_id}"),
+        ])
+    kb.append([InlineKeyboardButton(text="🗑 Удалить бот целиком", callback_data=f"ga_pu_bot_del:{bot_id}:{target_uid}:{admin_owner_id}")])
+    kb.append([InlineKeyboardButton(text="◀️ Назад к ботам",       callback_data=f"ga_pu_bots:{target_uid}:{admin_owner_id}")])
+    total_subs = sum(ch['subs'] or 0 for ch in chats)
+    await callback.message.edit_text(
+        f"📡 <b>Площадки {bname}</b>\n"
+        f"──────────────────────────\n"
+        f"Всего площадок: {len(chats)}  ·  Подписчиков: {total_subs:,}",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("ga_pu_noop"))
+async def on_ga_pu_noop(callback: CallbackQuery):
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("ga_pu_chat_toggle:"))
+async def on_ga_pu_chat_toggle(callback: CallbackQuery):
+    parts = callback.data.split(":")
+    chat_row_id, bot_id, target_uid, admin_owner_id = int(parts[1]), int(parts[2]), int(parts[3]), int(parts[4])
+    async with get_pool().acquire() as conn:
+        current = await conn.fetchval("SELECT is_active FROM bot_chats WHERE id=$1", chat_row_id)
+        await conn.execute("UPDATE bot_chats SET is_active=$1 WHERE id=$2", not current, chat_row_id)
+    await callback.answer("✅ Площадка выключена" if current else "✅ Площадка включена")
+    # refresh the page
+    fake_cb = callback
+    fake_cb.data = f"ga_pu_bot_detail:{bot_id}:{target_uid}:{admin_owner_id}"
+    await on_ga_pu_bot_detail(fake_cb)
+
+
+@router.callback_query(F.data.startswith("ga_pu_chat_del:"))
+async def on_ga_pu_chat_del(callback: CallbackQuery):
+    parts = callback.data.split(":")
+    chat_row_id, bot_id, target_uid, admin_owner_id = int(parts[1]), int(parts[2]), int(parts[3]), int(parts[4])
+    async with get_pool().acquire() as conn:
+        await conn.execute("DELETE FROM bot_chats WHERE id=$1", chat_row_id)
+    await callback.answer("🗑 Площадка удалена")
+    fake_cb = callback
+    fake_cb.data = f"ga_pu_bot_detail:{bot_id}:{target_uid}:{admin_owner_id}"
+    await on_ga_pu_bot_detail(fake_cb)
+
+
+@router.callback_query(F.data.startswith("ga_pu_bot_del:"))
+async def on_ga_pu_bot_del(callback: CallbackQuery):
+    parts = callback.data.split(":")
+    bot_id, target_uid, admin_owner_id = int(parts[1]), int(parts[2]), int(parts[3])
+    async with get_pool().acquire() as conn:
+        await conn.execute("DELETE FROM child_bots WHERE id=$1", bot_id)
+    await callback.answer("🗑 Бот удалён")
+    fake_cb = callback
+    fake_cb.data = f"ga_pu_bots:{target_uid}:{admin_owner_id}"
+    await on_ga_pu_bots(fake_cb)
+
+
+# ═══ Управление тарифом ═══════════════════════════════════════════════════════
+
+TARIFFS = ["free", "start", "pro", "business"]
+TARIFF_LABELS = {"free": "Free", "start": "Start", "pro": "Pro", "business": "Business"}
+DURATIONS = [("1m", "1 месяц", 1), ("1y", "1 год", 12), ("forever", "♾ Навсегда", 0)]
+
+
+@router.callback_query(F.data.startswith("ga_pu_tariff:"))
+async def on_ga_pu_tariff(callback: CallbackQuery):
+    parts = callback.data.split(":")
+    target_uid, admin_owner_id = int(parts[1]), int(parts[2])
+    async with get_pool().acquire() as conn:
+        row = await conn.fetchrow("SELECT tariff, tariff_until FROM platform_users WHERE user_id=$1", target_uid)
+        pu = await conn.fetchrow("SELECT username FROM platform_users WHERE user_id=$1", target_uid)
+    cur_tariff = (row["tariff"] or "free").lower() if row else "free"
+    cur_until = row["tariff_until"].strftime("%d.%m.%Y") if row and row.get("tariff_until") else None
+    uname = f"@{pu['username']}" if pu and pu.get('username') else str(target_uid)
+    tariff_line = f"📎 <b>Текущий тариф:</b> {TARIFF_LABELS.get(cur_tariff, cur_tariff.title())}"
+    if cur_tariff != "free" and cur_until:
+        tariff_line += f"\n📅 <b>Действует до:</b> {cur_until}"
+    kb = []
+    row_btns = []
+    for t in TARIFFS:
+        if t == cur_tariff:
+            continue
+        row_btns.append(InlineKeyboardButton(text=TARIFF_LABELS[t], callback_data=f"ga_pu_tariff_pick:{t}:{target_uid}:{admin_owner_id}"))
+    for i in range(0, len(row_btns), 2):
+        kb.append(row_btns[i:i+2])
+    kb.append([InlineKeyboardButton(text="◀️ Назад к карточке", callback_data=f"ga_pu_card:{target_uid}:{admin_owner_id}")])
+    await callback.message.edit_text(
+        f"💎 <b>Управление тарифом</b> {uname}\n\n{tariff_line}\n\nСмените тариф:",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("ga_pu_tariff_pick:"))
+async def on_ga_pu_tariff_pick(callback: CallbackQuery):
+    parts = callback.data.split(":")
+    new_tariff, target_uid, admin_owner_id = parts[1], int(parts[2]), int(parts[3])
+    label = TARIFF_LABELS.get(new_tariff, new_tariff.title())
+    kb = []
+    for dur_key, dur_label, _ in DURATIONS:
+        kb.append([InlineKeyboardButton(
+            text=dur_label,
+            callback_data=f"ga_pu_tariff_dur:{new_tariff}:{dur_key}:{target_uid}:{admin_owner_id}"
+        )])
+    kb.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"ga_pu_tariff:{target_uid}:{admin_owner_id}")])
+    await callback.message.edit_text(
+        f"💎 <b>Тариф: {label}</b>\n\nВыберите срок:",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("ga_pu_tariff_dur:"))
+async def on_ga_pu_tariff_dur(callback: CallbackQuery):
+    from datetime import datetime, timezone, timedelta
+    parts = callback.data.split(":")
+    new_tariff, dur_key, target_uid, admin_owner_id = parts[1], parts[2], int(parts[3]), int(parts[4])
+    label = TARIFF_LABELS.get(new_tariff, new_tariff.title())
+    dur_label = next((d[1] for d in DURATIONS if d[0] == dur_key), dur_key)
+    if dur_key == "forever":
+        until_str = "Бессрочно"
+    elif dur_key == "1m":
+        until = datetime.now(timezone.utc) + timedelta(days=30)
+        until_str = until.strftime("%d.%m.%Y")
+    else:  # 1y
+        until = datetime.now(timezone.utc) + timedelta(days=365)
+        until_str = until.strftime("%d.%m.%Y")
+    async with get_pool().acquire() as conn:
+        pu = await conn.fetchrow("SELECT username FROM platform_users WHERE user_id=$1", target_uid)
+    uname = f"@{pu['username']}" if pu and pu.get('username') else str(target_uid)
+    await callback.message.edit_text(
+        f"✅ <b>Подтвердите смену тарифа</b>\n\n"
+        f"👤 {uname}\n"
+        f"💎 {label}  •  {dur_label}\n"
+        f"📅 Будет действовать до: <b>{until_str}</b>",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Да, применить", callback_data=f"ga_pu_tariff_apply:{new_tariff}:{dur_key}:{target_uid}:{admin_owner_id}")],
+            [InlineKeyboardButton(text="❌ Отмена",        callback_data=f"ga_pu_tariff:{target_uid}:{admin_owner_id}")],
+        ])
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("ga_pu_tariff_apply:"))
+async def on_ga_pu_tariff_apply(callback: CallbackQuery):
+    from datetime import datetime, timezone, timedelta
+    parts = callback.data.split(":")
+    new_tariff, dur_key, target_uid, admin_owner_id = parts[1], parts[2], int(parts[3]), int(parts[4])
+    if dur_key == "forever":
+        new_until = None
+    elif dur_key == "1m":
+        new_until = datetime.now(timezone.utc) + timedelta(days=30)
+    else:
+        new_until = datetime.now(timezone.utc) + timedelta(days=365)
+    async with get_pool().acquire() as conn:
+        await conn.execute(
+            "UPDATE platform_users SET tariff=$1, tariff_until=$2 WHERE user_id=$3",
+            new_tariff, new_until, target_uid
+        )
+    await callback.answer("✅ Тариф обновлён", show_alert=True)
+    # Go back to tariff screen refreshed
+    fake_cb = callback
+    fake_cb.data = f"ga_pu_tariff:{target_uid}:{admin_owner_id}"
+    await on_ga_pu_tariff(fake_cb)
+
+
+# ═══ История покупок ══════════════════════════════════════════════════════════
+
+@router.callback_query(F.data.startswith("ga_pu_history:"))
+async def on_ga_pu_history(callback: CallbackQuery):
+    parts = callback.data.split(":")
+    target_uid, admin_owner_id = int(parts[1]), int(parts[2])
+    async with get_pool().acquire() as conn:
+        pu = await conn.fetchrow("SELECT username FROM platform_users WHERE user_id=$1", target_uid)
+        try:
+            payments = await conn.fetch(
+                "SELECT tariff, period, created_at, paid_at, status FROM payments "
+                "WHERE user_id=$1 ORDER BY created_at DESC LIMIT 20",
+                target_uid
+            )
+        except Exception:
+            payments = []
+    uname = f"@{pu['username']}" if pu and pu.get('username') else str(target_uid)
+    if not payments:
+        text = f"📈 <b>История тарифов {uname}</b>\n\nИстория покупок пуста."
+    else:
+        lines = [f"📈 <b>История тарифов {uname}</b>\n"]
+        for idx, p in enumerate(payments, 1):
+            tariff_name = TARIFF_LABELS.get((p.get('tariff') or 'free').lower(), p.get('tariff', '?'))
+            period = p.get('period') or '?'
+            bought = p['paid_at'].strftime('%d.%m.%Y') if p.get('paid_at') else (
+                p['created_at'].strftime('%d.%m.%Y') if p.get('created_at') else '?')
+            status = "✅" if p.get('status') == 'paid' else "⏳"
+            lines.append(f"#{idx}  {status} <b>{tariff_name}</b> · {period}\n    📅 {bought}")
+        lines.append(f"\n<b>Всего записей: {len(payments)}</b>")
+        text = "\n".join(lines)
+    await callback.message.edit_text(
+        text, parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="◀️ Назад к карточке", callback_data=f"ga_pu_card:{target_uid}:{admin_owner_id}")]
+        ])
+    )
+    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("ga_team:"))

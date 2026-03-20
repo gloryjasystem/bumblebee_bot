@@ -1298,99 +1298,154 @@ async def _build_network_text(owner_id: int, conn) -> str:
     total_chats  = await conn.fetchval("SELECT COUNT(*) FROM bot_chats WHERE owner_id=$1 AND is_active=true", owner_id) or 0
     total_owners = await conn.fetchval("SELECT COUNT(*) FROM platform_users") or 0
 
-    lines = (
-        f"{_FRAME_LINE}🗄️  Подключено ботов:  <b>{total_bots}</b>\n"
-        f"{_FRAME_LINE}📡  Активных каналов/групп:  <b>{total_chats}</b>\n"
-        f"{_FRAME_LINE}👤  Владельцев ботов:  <b>{total_owners}</b>\n"
-    )
     return (
         "📊 <b>Аналитика BotCloud</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
         "🤖 <b>СЕТЬ БОТОВ</b>\n"
-        f"{_FRAME_TOP}{lines}{_FRAME_BOTTOM}"
+        f"🗄️  Подключено ботов:  <b>{total_bots}</b>\n"
+        f"📡  Активных каналов/групп:  <b>{total_chats}</b>\n"
+        f"👤  Владельцев ботов:  <b>{total_owners}</b>"
     )
 
 
 # ── Аудитория ───────────────────────────────────────────────────────────────
 
-async def _build_audience_text(period: str, conn) -> str:
+async def _build_audience_text(period: str, conn, owner_id: int = 0) -> str:
     label = _period_label(period)
     where = _period_where(period, "created_at")
     cond  = f"WHERE {where}" if where else ""
 
+    # Общая статистика
     total_all  = await conn.fetchval("SELECT COUNT(*) FROM platform_users") or 0
     new_period = await conn.fetchval(f"SELECT COUNT(*) FROM platform_users {cond}") or 0
-    paid_period = await conn.fetchval(
-        f"SELECT COUNT(*) FROM platform_users {cond} {'AND' if cond else 'WHERE'} tariff != 'free'"
-        if cond else
-        "SELECT COUNT(*) FROM platform_users WHERE tariff != 'free'"
-    ) or 0
-    free_period = new_period - paid_period
+    paid_total = await conn.fetchval("SELECT COUNT(*) FROM platform_users WHERE tariff != 'free'") or 0
+    free_total = total_all - paid_total
 
-    lines = (
-        f"{_FRAME_LINE}📊  Всего пользователей (всего):  <b>{total_all:,}</b>\n"
-        f"{_FRAME_LINE}🆕  Новых {label.lower()}:  <b>{new_period:,}</b>\n"
-        f"{_FRAME_LINE}✅  Платных (из новых):  <b>{paid_period:,}</b>\n"
-        f"{_FRAME_LINE}💡  Бесплатных (из новых):  <b>{free_period:,}</b>\n"
-    )
-    return (
-        f"🐝 <b>АУДИТОРИЯ BUMBLEBEE BOT</b>  —  <b>{label}</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"{_FRAME_TOP}{lines}{_FRAME_BOTTOM}"
-    )
-
-
-# ── Сегментация ─────────────────────────────────────────────────────────────
-
-async def _build_segment_text(period: str, owner_id: int, conn) -> str:
-    label = _period_label(period)
-    where = _period_where(period, "created_at")
-    base  = f"WHERE {where}" if where else ""
-    and_  = "AND" if base else "WHERE"
-
+    # Сегментация по тарифам (всегда по всем данным)
     seg_rows = await conn.fetch(
-        f"SELECT COALESCE(tariff,'free') as t, COUNT(*) as cnt FROM platform_users {base} GROUP BY tariff"
+        "SELECT COALESCE(tariff,'free') as t, COUNT(*) as cnt FROM platform_users GROUP BY tariff"
     )
     seg = {r['t']: r['cnt'] for r in seg_rows}
-
     leads   = seg.get('free', 0)
     start_c = seg.get('start', 0)
     pro_c   = seg.get('pro', 0)
     biz_c   = seg.get('business', 0)
     clients = start_c + pro_c + biz_c
-    quals   = pro_c + biz_c
 
-    banned = await conn.fetchval(
-        f"SELECT COUNT(*) FROM blacklist WHERE owner_id=$1 AND child_bot_id IS NULL"
-        + (f" AND {_period_where(period, 'added_at')}" if where else ""),
-        owner_id
-    ) or 0
+    banned = 0
+    if owner_id:
+        banned = await conn.fetchval(
+            "SELECT COUNT(*) FROM blacklist WHERE owner_id=$1 AND child_bot_id IS NULL", owner_id
+        ) or 0
 
-    period_note = f"  <i>(новых {label.lower()})</i>" if period != "all" else ""
-    lines = (
-        f"{_FRAME_LINE}💡  Лиды (free):  <b>{leads:,}</b>{period_note}\n"
-        f"{_FRAME_LINE}✅  Клиенты (start):  <b>{start_c:,}</b>{period_note}\n"
-        f"{_FRAME_LINE}🏆  Квалы (pro+business):  <b>{quals:,}</b>{period_note}\n"
-        f"{_FRAME_LINE}💼  Всего платных:  <b>{clients:,}</b>{period_note}\n"
-        f"{_FRAME_LINE}🚫  Новых в ЧС:  <b>{banned}</b>{period_note}\n"
-    )
+    sep = "─" * 8
     return (
-        f"📦 <b>СЕГМЕНТАЦИЯ</b>  —  <b>{label}</b>\n"
+        f"👥 <b>АУДИТОРИЯ</b>  —  <b>{label}</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"{_FRAME_TOP}{lines}{_FRAME_BOTTOM}"
+        f"{sep} Общая статистика {sep}\n"
+        f"👤  Всего:  <b>{total_all:,}</b>    🆕  Новых {label.lower()}:  <b>{new_period:,}</b>\n"
+        f"✅  Платных:  <b>{paid_total:,}</b>    💡  Бесплатных:  <b>{free_total:,}</b>\n\n"
+        f"{sep} Сегменты по тарифам {sep}\n"
+        f"💡  Free:  <b>{leads:,}</b>\n"
+        f"🌱  Start:  <b>{start_c:,}</b>\n"
+        f"⭐  Pro:  <b>{pro_c:,}</b>\n"
+        f"💼  Business:  <b>{biz_c:,}</b>\n\n"
+        f"💰  Всего платных:  <b>{clients:,}</b>" +
+        (f"\n🚫  В ЧС (платформа):  <b>{banned}</b>" if owner_id else "")
     )
 
 
-# ── Финансы ─────────────────────────────────────────────────────────────────
+async def _build_segment_text(period: str, owner_id: int, conn) -> str:
+    """Backward compat: redirects to merged audience function."""
+    return await _build_audience_text(period, conn, owner_id)
 
-async def _build_finance_text(period: str, conn) -> str:
+
+async def _build_finance_text(period: str, conn, owner_id: int = 0) -> str:
     label   = _period_label(period)
-    # Paid: use paid_at; Pending/Failed/Expired: use created_at
     w_paid    = _period_where(period, "paid_at")
     w_created = _period_where(period, "created_at")
-
     paid_cond    = f"AND {w_paid}"    if w_paid    else ""
     created_cond = f"AND {w_created}" if w_created else ""
+
+    # ——— Платежи ———
+    paid_row = await conn.fetchrow(
+        f"SELECT COUNT(*) as cnt, COALESCE(SUM(amount_usd),0) as total FROM payments WHERE status='paid' {paid_cond}"
+    )
+    pending_row = await conn.fetchrow(
+        f"SELECT COUNT(*) as cnt, COALESCE(SUM(amount_usd),0) as total FROM payments WHERE status='pending' AND created_at >= NOW() - INTERVAL '1 hour' {created_cond}"
+    )
+    expired_pending_cnt = await conn.fetchval(
+        f"SELECT COUNT(*) FROM payments WHERE status='pending' AND created_at < NOW() - INTERVAL '1 hour' {created_cond}"
+    ) or 0
+    failed_cnt = await conn.fetchval(
+        f"SELECT COUNT(*) FROM payments WHERE status='failed' {created_cond}"
+    ) or 0
+    expired_cnt = await conn.fetchval(
+        f"SELECT COUNT(*) FROM payments WHERE status='expired' {created_cond}"
+    ) or 0
+
+    paid_cnt    = paid_row['cnt']
+    paid_sum    = float(paid_row['total'])
+    pending_cnt = pending_row['cnt']
+    pending_sum = float(pending_row['total'])
+    cancelled   = failed_cnt + expired_cnt + expired_pending_cnt
+    attempts    = paid_cnt + cancelled + pending_cnt
+    conversion  = round(paid_cnt / attempts * 100, 1) if attempts > 0 else 0.0
+
+    # ——— Доходы по тарифам ———
+    rows = await conn.fetch(f"""
+        SELECT tariff, period, COUNT(*) as cnt, SUM(amount_usd) as total,
+               SUM(CASE WHEN applied_discount > 0 THEN 1 ELSE 0 END) as discount_cnt,
+               SUM(CASE WHEN applied_discount > 0 THEN amount_usd ELSE 0 END) as discount_total
+        FROM payments
+        WHERE status='paid' {paid_cond}
+        GROUP BY tariff, period
+        ORDER BY SUM(amount_usd) DESC
+    """)
+
+    total_sum      = sum(float(r['total']) for r in rows)
+    total_cnt_r    = sum(r['cnt'] for r in rows)
+    total_disc_sum = sum(float(r['discount_total']) for r in rows)
+    total_disc_cnt = sum(r['discount_cnt'] for r in rows)
+    avg_check = round(total_sum / total_cnt_r, 2) if total_cnt_r > 0 else 0.0
+
+    tariff_icons = {"start": "🌱 Start", "pro": "⭐ Pro", "business": "💼 Business"}
+    period_icons = {"month": "/ мес.", "year": "/ год"}
+    top_row   = rows[0] if rows else None
+    top_label = f"{tariff_icons.get(top_row['tariff'], top_row['tariff'])} {period_icons.get(top_row['period'], top_row['period'])}" if top_row else '—'
+
+    breakdown = ""
+    for r in rows:
+        t_l = tariff_icons.get(r['tariff'], r['tariff'].capitalize())
+        p_l = period_icons.get(r['period'], r['period'])
+        breakdown += f"🔹 {t_l} {p_l}  —  {r['cnt']} шт.  ${float(r['total']):,.2f}\n"
+        if r['discount_cnt'] > 0:
+            breakdown += f"   └ 🏷 По акциям: {r['discount_cnt']} шт. (${float(r['discount_total']):,.2f})\n"
+
+    sep = "─" * 8
+    disc_line = f"🏷  Скидок:  <b>${total_disc_sum:,.2f}</b>  ({total_disc_cnt} шт.)\n" if total_disc_cnt > 0 else ""
+
+    return (
+        f"💰 <b>ФИНАНСЫ</b>  —  <b>{label}</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"{sep} Платежи {sep}\n"
+        f"⏳  В ожидании:  <b>{pending_cnt}</b>  •  <b>${pending_sum:,.2f}</b>\n"
+        f"✅  Оплачено:  <b>{paid_cnt}</b>  •  <b>${paid_sum:,.2f}</b>\n"
+        f"❌  Отмены/Просрочено:  <b>{cancelled}</b>\n"
+        f"📈  Конверсия:  <b>{conversion}%</b>\n\n"
+        f"{sep} Доходы {sep}\n"
+        f"💵  Итого:  <b>${total_sum:,.2f}</b>  ({total_cnt_r} платежей)\n"
+        f"📊  Средний чек:  <b>${avg_check:,.2f}</b>\n"
+        f"🏆  Топ-тариф:  <b>{top_label}</b>\n"
+        f"{disc_line}\n"
+        f"{sep} По тарифам {sep}\n"
+        f"{breakdown or 'Нет оплат за период\n'}"
+    )
+
+
+async def _build_revenue_text(owner_id: int, period: str, conn) -> str:
+    """Backward compat: calls merged finance."""
+    return await _build_finance_text(period, conn, owner_id)
 
     paid_row = await conn.fetchrow(
         f"SELECT COUNT(*) as cnt, COALESCE(SUM(amount_usd),0) as total FROM payments WHERE status='paid' {paid_cond}"
@@ -1416,79 +1471,7 @@ async def _build_finance_text(period: str, conn) -> str:
     attempts    = paid_cnt + cancelled + pending_cnt
     conversion  = round(paid_cnt / attempts * 100, 1) if attempts > 0 else 0.0
 
-    lines = (
-        f"{_FRAME_LINE}⏳  В ожидании:  <b>{pending_cnt}</b>  •  <b>${pending_sum:,.2f}</b>\n"
-        f"{_FRAME_LINE}✅  Оплачено:  <b>{paid_cnt}</b>  •  <b>${paid_sum:,.2f}</b>\n"
-        f"{_FRAME_LINE}❌  Отмены/Просрочено:  <b>{cancelled}</b>\n"
-        f"{_FRAME_LINE}📈  Конверсия:  <b>{conversion}%</b>\n"
-        f"{_FRAME_LINE}💰  Доход {label.lower()}:  <b>${paid_sum:,.2f}</b>\n"
-    )
-    return (
-        f"💳 <b>ФИНАНСЫ (NOWPayments)</b>  —  <b>{label}</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"{_FRAME_TOP}{lines}{_FRAME_BOTTOM}"
-    )
 
-
-# ── Revenue (Доходы) builder stays the same but updated kb ──────────────────
-
-async def _build_revenue_text(owner_id: int, period: str, conn) -> str:
-    label    = _period_label(period)
-    w_paid   = _period_where(period, "paid_at")
-    paid_cond = f"AND {w_paid}" if w_paid else ""
-
-    rows = await conn.fetch(f"""
-        SELECT tariff, period, COUNT(*) as cnt, SUM(amount_usd) as total,
-               SUM(CASE WHEN applied_discount > 0 THEN 1 ELSE 0 END) as discount_cnt,
-               SUM(CASE WHEN applied_discount > 0 THEN amount_usd ELSE 0 END) as discount_total
-        FROM payments
-        WHERE status='paid' {paid_cond}
-        GROUP BY tariff, period
-        ORDER BY SUM(amount_usd) DESC
-    """)
-
-    total_sum = sum(float(r['total']) for r in rows)
-    total_cnt = sum(r['cnt'] for r in rows)
-    total_disc_sum = sum(float(r['discount_total']) for r in rows)
-    total_disc_cnt = sum(r['discount_cnt'] for r in rows)
-    avg_check = round(total_sum / total_cnt, 2) if total_cnt > 0 else 0.0
-
-    tariff_icons = {"start": "🌱 Start", "pro": "⭐ Pro", "business": "💼 Business"}
-    period_icons = {"month": "/ месяц", "year": "/ год"}
-
-    breakdown = ""
-    for r in rows:
-        t_label = tariff_icons.get(r['tariff'], r['tariff'].capitalize())
-        p_label = period_icons.get(r['period'], r['period'])
-        breakdown += f"{_FRAME_LINE}{t_label} {p_label}  —  {r['cnt']} шт.  ${float(r['total']):,.2f}\n"
-        if r['discount_cnt'] > 0:
-            breakdown += f"{_FRAME_LINE}  └ 🏷 По акциям: {r['discount_cnt']} шт. (${float(r['discount_total']):,.2f})\n"
-
-    top_row = rows[0] if rows else None
-    top_label = ""
-    if top_row:
-        t = tariff_icons.get(top_row['tariff'], top_row['tariff'])
-        p = period_icons.get(top_row['period'], top_row['period'])
-        top_label = f"{t} {p}"
-
-    discount_line = ""
-    if total_disc_cnt > 0:
-        discount_line = f"{_FRAME_LINE}🏷  Скидок:  <b>${total_disc_sum:,.2f}</b>  ({total_disc_cnt} шт.)\n"
-
-    lines = (
-        f"{_FRAME_LINE}💵  Итого:  <b>${total_sum:,.2f}</b>  ({total_cnt} платежей)\n"
-        f"{discount_line}"
-        f"{_FRAME_LINE}📊  Средний чек:  <b>${avg_check:,.2f}</b>\n"
-        f"{_FRAME_LINE}🏆  Топ-тариф:  <b>{top_label or '—'}</b>\n"
-        "│\n"
-        f"{_FRAME_LINE}<b>По тарифам:</b>\n"
-        f"{breakdown or _FRAME_LINE + 'Нет оплат за период\n'}"
-    )
-    return (
-        f"💰 <b>ДОХОДЫ</b>  —  <b>{label}</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"{_FRAME_TOP}{lines}{_FRAME_BOTTOM}"
-    )
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1517,14 +1500,8 @@ async def on_ga_stats(callback: CallbackQuery):
         text = await _build_network_text(owner_id, conn)
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="🐝 Аудитория",   callback_data=f"ga_audience:{owner_id}:all"),
-            InlineKeyboardButton(text="📦 Сегментация", callback_data=f"ga_segment:{owner_id}:all"),
-        ],
-        [
-            InlineKeyboardButton(text="💳 Финансы",     callback_data=f"ga_finance:{owner_id}:all"),
-            InlineKeyboardButton(text="💰 Доходы",      callback_data=f"ga_rev:{owner_id}:all"),
-        ],
+        [InlineKeyboardButton(text="👥 Аудитория", callback_data=f"ga_audience:{owner_id}:all")],
+        [InlineKeyboardButton(text="💰 Финансы",   callback_data=f"ga_finance:{owner_id}:all")],
         [InlineKeyboardButton(text="🔄 Обновить", callback_data=f"ga_stats:{owner_id}")],
         [InlineKeyboardButton(text="◀️ Назад",    callback_data=f"ga_main:{owner_id}")],
     ])
@@ -1544,7 +1521,7 @@ async def on_ga_audience(callback: CallbackQuery):
     if role != 'owner':
         return await callback.answer("❌ Нет прав", show_alert=True)
     async with get_pool().acquire() as conn:
-        text = await _build_audience_text(period, conn)
+        text = await _build_audience_text(period, conn, owner_id)
     kb = _period_tabs_kb(owner_id, "audience", period)
     try:
         await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
@@ -1580,7 +1557,7 @@ async def on_ga_finance(callback: CallbackQuery):
     if role != 'owner':
         return await callback.answer("❌ Нет прав", show_alert=True)
     async with get_pool().acquire() as conn:
-        text = await _build_finance_text(period, conn)
+        text = await _build_finance_text(period, conn, owner_id)
     kb = _period_tabs_kb(owner_id, "finance", period)
     try:
         await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
@@ -1589,22 +1566,17 @@ async def on_ga_finance(callback: CallbackQuery):
     await callback.answer()
 
 
+# ga_segment and ga_rev redirect to merged handlers
+@router.callback_query(F.data.startswith("ga_segment:"))
+async def on_ga_segment(callback: CallbackQuery):
+    callback.data = callback.data.replace("ga_segment:", "ga_audience:")
+    await on_ga_audience(callback)
+
+
 @router.callback_query(F.data.startswith("ga_rev:"))
 async def on_ga_revenue(callback: CallbackQuery):
-    parts    = callback.data.split(":")
-    owner_id = int(parts[1])
-    period   = parts[2] if len(parts) > 2 else "all"
-    role, _  = await get_admin_context(callback.from_user.id, callback.from_user.username)
-    if role != 'owner':
-        return await callback.answer("❌ Нет прав", show_alert=True)
-    async with get_pool().acquire() as conn:
-        text = await _build_revenue_text(owner_id, period, conn)
-    kb = _period_tabs_kb(owner_id, "rev", period)
-    try:
-        await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
-    except Exception:
-        await callback.message.answer(text, parse_mode="HTML", reply_markup=kb)
-    await callback.answer()
+    callback.data = callback.data.replace("ga_rev:", "ga_finance:")
+    await on_ga_finance(callback)
 
 
 

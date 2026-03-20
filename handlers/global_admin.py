@@ -18,6 +18,7 @@ class BroadcastFSM(StatesGroup):
 
 class StaffFSM(StatesGroup):
     waiting_remove_input = State()
+    waiting_add_input    = State()
 
 
 # ══════════════════════════════════════════════════════════
@@ -256,19 +257,110 @@ async def on_ga_team(callback: CallbackQuery):
 
 
 @router.callback_query(F.data.startswith("ga_team_howto:"))
-async def on_ga_team_howto(callback: CallbackQuery):
+async def on_ga_team_howto(callback: CallbackQuery, state: FSMContext):
     owner_id = int(callback.data.split(":")[1])
+    role, _ = await get_admin_context(callback.from_user.id, callback.from_user.username)
+    if role != 'owner':
+        return await callback.answer("❌ Только для Владельца", show_alert=True)
+    await state.set_state(StaffFSM.waiting_add_input)
+    await state.update_data(owner_id=owner_id)
     text = (
-        "ℹ️ <b>Как добавить администратора:</b>\n\n"
-        "Отправьте команду: <code>/addadmin 123456789</code>\n"
-        "где <code>123456789</code> — Telegram ID страницы / сотрудника.\n\n"
-        "Узнать свой ID можно через <a href='https://t.me/userinfobot'>@userinfobot</a>\n\n"
-        "Удалить админа: <code>/removeadmin 123456789</code>"
+        "➕ <b>Добавить администратора</b>\n\n"
+        "Введите <b>@username</b> или <b>Telegram ID</b> сотрудника:\n\n"
+        "<code>@username</code>  или  <code>123456789</code>\n\n"
+        "<i>ID можно узнать через </i><a href='https://t.me/userinfobot'>@userinfobot</a>"
     )
-    kb = [[InlineKeyboardButton(text="◀️ Назад", callback_data=f"ga_team:{owner_id}")]]
-    await callback.message.edit_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb),
+    kb = [[InlineKeyboardButton(text="🚫 Отмена", callback_data=f"ga_team:{owner_id}")]]
+    await callback.message.edit_text(text, parse_mode="HTML",
+                                     reply_markup=InlineKeyboardMarkup(inline_keyboard=kb),
                                      disable_web_page_preview=True)
     await callback.answer()
+
+
+@router.message(StaffFSM.waiting_add_input)
+async def on_ga_team_add_input(message: Message, state: FSMContext):
+    role, _ = await get_admin_context(message.from_user.id, message.from_user.username)
+    if role != 'owner':
+        return
+    data = await state.get_data()
+    owner_id = data.get("owner_id")
+    await state.clear()
+
+    raw = (message.text or "").strip()
+    try:
+        await message.delete()
+    except Exception:
+        pass
+
+    target_id = None
+    target_username = None
+
+    if raw.lstrip("-").isdigit():
+        target_id = int(raw)
+    elif raw.startswith("@"):
+        target_username = raw.lstrip("@")
+    else:
+        return await message.answer(
+            "❌ Неверный формат. Введите @username или числовой ID.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="◀️ Назад", callback_data=f"ga_team:{owner_id}")]
+            ])
+        )
+
+    import asyncpg
+    async with get_pool().acquire() as conn:
+        # Если ввели username — ищем ID в platform_users
+        if not target_id and target_username:
+            row = await conn.fetchrow(
+                "SELECT user_id FROM platform_users WHERE lower(username)=lower($1) LIMIT 1",
+                target_username
+            )
+            if row:
+                target_id = row["user_id"]
+
+        display_name = f"@{target_username}" if target_username else f"<code>{target_id}</code>"
+
+        if not target_id:
+            return await message.answer(
+                f"⚠️ Пользователь {display_name} не найден в базе. Убедитесь, что он хоть раз запускал вашего бота, или используйте Telegram ID.",
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="◀️ Назад", callback_data=f"ga_team:{owner_id}")]
+                ])
+            )
+
+        try:
+            await conn.execute(
+                "INSERT INTO global_admins (owner_id, admin_id, admin_username) VALUES ($1, $2, $3)",
+                owner_id, target_id, target_username
+            )
+            await conn.execute("""
+                INSERT INTO audit_log (owner_id, user_id, action, details)
+                VALUES ($1, $2, 'add_admin', $3)
+            """, owner_id, message.from_user.id,
+                json.dumps({"added_admin_id": target_id, "username": target_username}))
+
+            tag = f"@{target_username}" if target_username else ""
+            id_str = f"<code>{target_id}</code>"
+            label = f"{tag} ({id_str})" if tag else id_str
+            await message.answer(
+                f"✅ <b>Сотрудник добавлен!</b>\n\n"
+                f"👤 {label}\n"
+                f"🔑 <b>Роль:</b> Администратор\n"
+                f"✅ Теперь он видит ЧС, базу аудитории и запускает рассылки.",
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="◀️ К сотрудникам", callback_data=f"ga_team:{owner_id}")]
+                ])
+            )
+        except asyncpg.UniqueViolationError:
+            await message.answer(
+                f"⚠️ {display_name} уже является администратором.",
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="◀️ Назад", callback_data=f"ga_team:{owner_id}")]
+                ])
+            )
 
 
 @router.callback_query(F.data.startswith("ga_team_remove:"))

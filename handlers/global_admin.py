@@ -774,34 +774,67 @@ async def on_ga_pu_tariff_apply(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("ga_pu_history:"))
 async def on_ga_pu_history(callback: CallbackQuery):
+    from datetime import timedelta
     parts = callback.data.split(":")
     target_uid, admin_owner_id = int(parts[1]), int(parts[2])
     async with get_pool().acquire() as conn:
-        pu = await conn.fetchrow("SELECT username FROM platform_users WHERE user_id=$1", target_uid)
+        pu = await conn.fetchrow(
+            "SELECT username, tariff, tariff_until FROM platform_users WHERE user_id=$1", target_uid
+        )
         try:
             payments = await conn.fetch(
-                "SELECT tariff, period, created_at, paid_at, status FROM payments "
-                "WHERE user_id=$1 ORDER BY created_at DESC LIMIT 20",
+                "SELECT tariff, period, paid_at FROM payments "
+                "WHERE user_id=$1 AND status='paid' ORDER BY paid_at DESC LIMIT 20",
                 target_uid
             )
         except Exception:
             payments = []
+
     uname = f"@{pu['username']}" if pu and pu.get('username') else str(target_uid)
-    if not payments:
-        text = f"📈 <b>История тарифов {uname}</b>\n\nИстория покупок пуста."
+    cur_tariff = (pu['tariff'] or 'free').lower() if pu else 'free'
+    cur_until = pu['tariff_until'] if pu else None
+
+    # Текущий тариф блок
+    if cur_tariff == 'free':
+        cur_block = "🆓  <b>Free</b> (бесплатный)"
     else:
-        lines = [f"📈 <b>История тарифов {uname}</b>\n"]
+        tname = TARIFF_LABELS.get(cur_tariff, cur_tariff.title())
+        until_str = cur_until.strftime('%d.%m.%Y') if cur_until else 'Бессрочно'
+        cur_block = (
+            f"💎  <b>{tname}</b>\n"
+            f"⏰  Окончание:  <b>{until_str}</b>"
+        )
+
+    sep = "─" * 8
+    lines = [
+        f"📈 <b>История тарифов {uname}</b>\n",
+        f"{sep} Текущий тариф {sep}",
+        cur_block,
+    ]
+
+    if not payments:
+        lines.append(f"\n{sep} Оплаченные {sep}\nИстория покупок пуста.")
+    else:
+        lines.append(f"\n{sep} Оплаченные {sep}")
         for idx, p in enumerate(payments, 1):
-            tariff_name = TARIFF_LABELS.get((p.get('tariff') or 'free').lower(), p.get('tariff', '?'))
-            period = p.get('period') or '?'
-            bought = p['paid_at'].strftime('%d.%m.%Y') if p.get('paid_at') else (
-                p['created_at'].strftime('%d.%m.%Y') if p.get('created_at') else '?')
-            status = "✅" if p.get('status') == 'paid' else "⏳"
-            lines.append(f"#{idx}  {status} <b>{tariff_name}</b> · {period}\n    📅 {bought}")
-        lines.append(f"\n<b>Всего записей: {len(payments)}</b>")
-        text = "\n".join(lines)
+            tname = TARIFF_LABELS.get((p['tariff'] or 'free').lower(), p.get('tariff', '?'))
+            period = p.get('period') or 'month'
+            paid = p['paid_at']
+            if paid:
+                start_str = paid.strftime('%d.%m.%Y')
+                delta = timedelta(days=365) if period == 'year' else timedelta(days=30)
+                end_str = (paid + delta).strftime('%d.%m.%Y')
+            else:
+                start_str = end_str = '?'
+            lines.append(
+                f"#{idx}  💎 <b>{tname}</b>  •  {period}\n"
+                f"    📅 Оплачен:  {start_str}\n"
+                f"    ⏰ До:  {end_str}"
+            )
+        lines.append(f"\n<b>Всего оплат: {len(payments)}</b>")
+
     await callback.message.edit_text(
-        text, parse_mode="HTML",
+        "\n".join(lines), parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="◀️ Назад к карточке", callback_data=f"ga_pu_card:{target_uid}:{admin_owner_id}")]
         ])

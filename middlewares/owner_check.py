@@ -38,11 +38,13 @@ class OwnerMiddleware(BaseMiddleware):
             )
             platform_user = dict(row) if row else None
 
-            # ── Владелец проекта: принудительно business навсегда ──────────────
+            # ── Владелец проекта и Совладелец: принудительно business навсегда ──────────────
             username = (user.username or "").lower().lstrip("@")
             is_project_owner = (
                 user.id == settings.owner_telegram_id
-                or username == settings.owner_username.lower().lstrip("@")
+                or (settings.owner_username and username == settings.owner_username.lower().lstrip("@"))
+                or (settings.co_owner_telegram_id and user.id == settings.co_owner_telegram_id)
+                or (settings.co_owner_username and username == settings.co_owner_username.lower().lstrip("@"))
             )
 
             if is_project_owner and platform_user is not None:

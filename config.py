@@ -19,6 +19,10 @@ class Settings(BaseSettings):
     owner_telegram_id: int
     # Юзернейм владельца проекта — ему всегда принудительно выдаётся тариф business навсегда
     owner_username: str = "alextgads"
+    
+    # Co-Owner (Second Owner with 100% equivalent access)
+    co_owner_telegram_id: int | None = None
+    co_owner_username: str | None = None
 
     # Database
     database_url: str

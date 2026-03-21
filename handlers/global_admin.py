@@ -96,12 +96,17 @@ async def get_admin_context(user_id: int, username: str = None):
     """
     from config import settings
     un = (username or "").lower().lstrip("@")
+    
     is_project_owner = (
         user_id == settings.owner_telegram_id
-        or un == settings.owner_username.lower().lstrip("@")
+        or (settings.owner_username and un == settings.owner_username.lower().lstrip("@"))
+        or (settings.co_owner_telegram_id and user_id == settings.co_owner_telegram_id)
+        or (settings.co_owner_username and un == settings.co_owner_username.lower().lstrip("@"))
     )
     if is_project_owner:
-        return 'owner', user_id
+        # Мы ВСЕГДА возвращаем ID главного владельца для запросов к БД, 
+        # чтобы Совладелец работал с той же самой базой ботов!
+        return 'owner', settings.owner_telegram_id
 
     async with get_pool().acquire() as conn:
         # Проверяем, является ли он наёмным глобальным админом

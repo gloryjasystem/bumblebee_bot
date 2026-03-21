@@ -156,11 +156,13 @@ async def on_language_select(callback: CallbackQuery, platform_user: dict | None
         callback.from_user.id,
     )
 
-    # Владелец проекта — сразу business навсегда, без trial
+    # Владелец проекта и Совладелец — сразу business навсегда, без trial
     username = (callback.from_user.username or "").lower().lstrip("@")
     is_project_owner = (
         callback.from_user.id == settings.owner_telegram_id
-        or username == settings.owner_username.lower().lstrip("@")
+        or (settings.owner_username and username == settings.owner_username.lower().lstrip("@"))
+        or (settings.co_owner_telegram_id and callback.from_user.id == settings.co_owner_telegram_id)
+        or (settings.co_owner_username and username == settings.co_owner_username.lower().lstrip("@"))
     )
 
     if is_project_owner:

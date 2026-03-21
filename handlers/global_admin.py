@@ -1701,7 +1701,10 @@ async def on_ga_bl(callback: CallbackQuery):
             pass
         await callback.message.answer(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
 
-    await callback.answer()
+    try:
+        await callback.answer()
+    except Exception:
+        pass  # already answered by toggle handler
 
 
 @router.callback_query(F.data.startswith("ga_bl_master:"))
@@ -1729,7 +1732,7 @@ async def on_ga_bl_master_toggle(callback: CallbackQuery):
 
     alert = ("✅ ЧС включён — защита активна, записи блокируют вход" if new_val
             else "⛔ ЧС выключен — пользователи из ЧС могут войти")
-    await callback.answer(alert, show_alert=True)
+    await callback.answer()   # тихо, без попапа
     callback.data = f"ga_bl:{owner_id}"
     await on_ga_bl(callback)
 

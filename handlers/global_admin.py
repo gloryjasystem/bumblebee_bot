@@ -1747,67 +1747,47 @@ class GlobalBlacklistFSM(StatesGroup):
 async def _sweep_single_bot(owner_id: int, child_bot_id: int, turn_on: bool, admin_id: int, bot: Bot):
     """
     Целевой рейд при добавлении/удалении одного бота из глобальной выборки.
-    Банит (turn_on=True) или разбанит (turn_on=False) всех пользователей
-    из глобального ЧС платформы исключительно в каналах этого конкретного бота.
+    Работает полностью в фоне — никаких сообщений администратору.
     """
     from services.security import decrypt_token
     import asyncio
 
-    action_text = "блокировка" if turn_on else "разблокировка"
     try:
-        msg = await bot.send_message(
-            chat_id=admin_id,
-            text=f"⏳ <b>Авто-синхронизация бота</b>\n\nНачат рейд ({action_text}) по каналам добавленного бота...",
-            parse_mode="HTML"
-        )
+        async with get_pool().acquire() as conn:
+            chats = await conn.fetch("""
+                SELECT bc.chat_id, cb.token_encrypted
+                FROM bot_chats bc
+                JOIN child_bots cb ON cb.id = bc.child_bot_id
+                WHERE bc.child_bot_id = $1 AND bc.owner_id = $2 AND bc.is_active = true
+            """, child_bot_id, owner_id)
+
+            users = await conn.fetch(
+                "SELECT user_id FROM blacklist WHERE owner_id=$1 AND child_bot_id IS NULL AND user_id IS NOT NULL",
+                owner_id
+            )
+
+        if not chats or not users:
+            return
+
+        for user_row in users:
+            uid = user_row["user_id"]
+            for chat_row in chats:
+                token = decrypt_token(chat_row["token_encrypted"])
+                if not token:
+                    continue
+                temp_bot = Bot(token=token)
+                try:
+                    if turn_on:
+                        await temp_bot.ban_chat_member(chat_id=chat_row["chat_id"], user_id=uid)
+                    else:
+                        await temp_bot.unban_chat_member(chat_id=chat_row["chat_id"], user_id=uid)
+                except Exception:
+                    pass
+                finally:
+                    await temp_bot.session.close()
+                await asyncio.sleep(0.05)
     except Exception:
-        return
-
-    async with get_pool().acquire() as conn:
-        # Только каналы этого конкретного бота
-        chats = await conn.fetch("""
-            SELECT bc.chat_id, cb.token_encrypted
-            FROM bot_chats bc
-            JOIN child_bots cb ON cb.id = bc.child_bot_id
-            WHERE bc.child_bot_id = $1 AND bc.owner_id = $2 AND bc.is_active = true
-        """, child_bot_id, owner_id)
-
-        # Только записи глобального ЧС платформы (child_bot_id IS NULL)
-        users = await conn.fetch(
-            "SELECT user_id FROM blacklist WHERE owner_id=$1 AND child_bot_id IS NULL AND user_id IS NOT NULL",
-            owner_id
-        )
-
-    if not chats or not users:
-        await msg.edit_text("ℹ️ Нет данных для синхронизации (нет каналов или ЧС пуст).")
-        return
-
-    success_count = 0
-    for user_row in users:
-        uid = user_row["user_id"]
-        for chat_row in chats:
-            token = decrypt_token(chat_row["token_encrypted"])
-            if not token:
-                continue
-            temp_bot = Bot(token=token)
-            try:
-                if turn_on:
-                    await temp_bot.ban_chat_member(chat_id=chat_row["chat_id"], user_id=uid)
-                else:
-                    await temp_bot.unban_chat_member(chat_id=chat_row["chat_id"], user_id=uid)
-                success_count += 1
-            except Exception:
-                pass
-            finally:
-                await temp_bot.session.close()
-            await asyncio.sleep(0.05)
-
-    finish_text = "заблокированы" if turn_on else "разблокированы"
-    await msg.edit_text(
-        f"✅ <b>Авто-синхронизация завершена!</b>\n\n"
-        f"{success_count} операций выполнено. Пользователи из Глобального ЧС {finish_text} в {len(chats)} канал(ах) бота.",
-        parse_mode="HTML"
-    )
+        pass
 
 
 async def mass_sync_blacklist(owner_id: int, turn_on: bool, admin_id: int, bot: Bot):

@@ -1735,7 +1735,6 @@ async def on_ga_bl_master_toggle(callback: CallbackQuery):
         pass
     
     # Сразу обновляем экран, передав управление в on_ga_bl
-    callback.data = f"ga_bl:{owner_id}"
     await on_ga_bl(callback)
 
 

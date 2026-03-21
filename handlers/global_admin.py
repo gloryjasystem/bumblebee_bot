@@ -2352,8 +2352,8 @@ async def _show_bots_network_page(callback: CallbackQuery, owner_id: int, page: 
 
     kb = [
         [
-            InlineKeyboardButton(text="🔍 По названию",  callback_data=f"ga_bots_search:{admin_id}"),
-            InlineKeyboardButton(text="🔍 По владельцу", callback_data=f"ga_bots_owner_search:{admin_id}"),
+            InlineKeyboardButton(text="🔍 По названию",  callback_data=f"ga_bots_search:{owner_id}"),
+            InlineKeyboardButton(text="🔍 По владельцу", callback_data=f"ga_bots_owner_search:{owner_id}"),
         ]
     ]
 
@@ -2362,20 +2362,20 @@ async def _show_bots_network_page(callback: CallbackQuery, owner_id: int, page: 
         owner_tag = f" (@{bot_row['owner_username']})" if bot_row['owner_username'] else ""
         kb.append([InlineKeyboardButton(
             text=f"{icon} @{bot_row['bot_username']}{owner_tag}",
-            callback_data=f"ga_bot_sel:{admin_id}:{bot_row['id']}:{page}"
+            callback_data=f"ga_bot_sel:{owner_id}:{bot_row['id']}:{page}"
         )])
 
     # Пагинация
     if total_pages > 1:
         nav = []
         if page > 0:
-            nav.append(InlineKeyboardButton(text="◀️", callback_data=f"ga_bots:{admin_id}:{page - 1}"))
+            nav.append(InlineKeyboardButton(text="◀️", callback_data=f"ga_bots:{owner_id}:{page - 1}"))
         nav.append(InlineKeyboardButton(text=f"{page + 1} / {total_pages}", callback_data="ga_bots_noop"))
         if page < total_pages - 1:
-            nav.append(InlineKeyboardButton(text="▶️", callback_data=f"ga_bots:{admin_id}:{page + 1}"))
+            nav.append(InlineKeyboardButton(text="▶️", callback_data=f"ga_bots:{owner_id}:{page + 1}"))
         kb.append(nav)
 
-    kb.append([InlineKeyboardButton(text="◀️ Назад в Панель", callback_data=f"ga_main:{admin_id}")])
+    kb.append([InlineKeyboardButton(text="◀️ Назад в Панель", callback_data=f"ga_main:{owner_id}")])
 
     await callback.message.edit_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
 

@@ -154,7 +154,7 @@ async def _show_admin_panel(message_or_cb, role: str, owner_id: int, admin_id: i
             """, selected_bot_ids, owner_id) or 0
             
             total_kicks = await conn.fetchval("""
-                SELECT SUM(cb.blocked_count)
+                SELECT SUM(cb.global_blocked_count)
                 FROM ga_selected_bots gsb
                 JOIN child_bots cb ON cb.id = gsb.child_bot_id
                 WHERE gsb.owner_id=$1
@@ -197,8 +197,8 @@ async def _show_admin_panel(message_or_cb, role: str, owner_id: int, admin_id: i
         
         blocks.append(
             "<b>🛡 БЕЗОПАСНОСТЬ И СЕТЬ</b>\n"
-            f"├ 🚫 <b>В чёрном списке:</b> {bl_count:,}\n"
-            f"├ 🛑 <b>Заблокировано (всего):</b> {total_kicks:,}\n"
+            f"├ 🚫 <b>Глобальный ЧС:</b> {bl_count:,}\n"
+            f"├ 🛑 <b>Отражено Глобальным ЧС:</b> {total_kicks:,}\n"
             f"└ 🧑‍💼 <b>Моя команда:</b> {admin_count}"
         )
         blocks.append(
@@ -209,8 +209,8 @@ async def _show_admin_panel(message_or_cb, role: str, owner_id: int, admin_id: i
     else:
         blocks.append(
             "<b>🛡 БЕЗОПАСНОСТЬ</b>\n"
-            f"├ 🚫 <b>В чёрном списке:</b> {bl_count:,}\n"
-            f"└ 🛑 <b>Заблокировано (всего):</b> {total_kicks:,}"
+            f"├ 🚫 <b>Глобальный ЧС:</b> {bl_count:,}\n"
+            f"└ 🛑 <b>Отражено Глобальным ЧС:</b> {total_kicks:,}"
         )
 
     header = "\n\n".join(blocks)

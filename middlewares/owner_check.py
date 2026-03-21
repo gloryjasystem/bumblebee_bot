@@ -47,17 +47,30 @@ class OwnerMiddleware(BaseMiddleware):
                 or (settings.co_owner_username and username == settings.co_owner_username.lower().lstrip("@"))
             )
 
-            if is_project_owner and platform_user is not None:
-                # Обновляем БД, если тариф не business или стоит дата истечения
-                if platform_user.get("tariff") != "business" or platform_user.get("tariff_until") is not None:
-                    await db.execute(
-                        """
-                        UPDATE platform_users
-                        SET tariff = 'business', tariff_until = NULL
-                        WHERE user_id = $1
-                        """,
-                        user.id,
-                    )
+            if is_project_owner:
+                # Гарантируем, что Главный Владелец существует в базе (чтобы не падали foreign keys!):
+                # Если, например, Совладелец нажал /admin до того, как Главный Владелец нажал /start
+                await db.execute(
+                    """
+                    INSERT INTO platform_users (user_id, username, first_name, tariff)
+                    VALUES ($1, $2, 'Owner', 'business')
+                    ON CONFLICT (user_id) DO UPDATE SET tariff = 'business', tariff_until = NULL
+                    """,
+                    settings.owner_telegram_id, 
+                    settings.owner_username.lower().lstrip("@") if settings.owner_username else None
+                )
+
+                if platform_user is not None:
+                    # Обновляем БД, если тариф не business или стоит дата истечения
+                    if platform_user.get("tariff") != "business" or platform_user.get("tariff_until") is not None:
+                        await db.execute(
+                            """
+                            UPDATE platform_users
+                            SET tariff = 'business', tariff_until = NULL
+                            WHERE user_id = $1
+                            """,
+                            user.id,
+                        )
                 # Всегда передаём актуальный тариф в data (даже если БД ещё не синхронизирована)
                 platform_user.update({"tariff": "business", "tariff_until": None})
 

@@ -1945,29 +1945,29 @@ async def _show_ga_users(message_or_cb, admin_id: int, owner_id: int):
             SELECT COUNT(DISTINCT bu.user_id) FROM bot_users bu
             JOIN bot_chats bc ON bu.chat_id = bc.chat_id
             JOIN child_bots cb ON cb.id = bc.child_bot_id
-            JOIN ga_selected_bots gsb ON gsb.child_bot_id = cb.id AND gsb.admin_id = $1
+            JOIN ga_selected_bots gsb ON gsb.child_bot_id = cb.id AND gsb.owner_id = $1
             WHERE bc.is_active=true AND bu.user_id IS NOT NULL
-        """, admin_id) or 0
+        """, owner_id) or 0
 
         alive_users = await conn.fetchval("""
             SELECT COUNT(DISTINCT bu.user_id) FROM bot_users bu
             JOIN bot_chats bc ON bu.chat_id = bc.chat_id
             JOIN child_bots cb ON cb.id = bc.child_bot_id
-            JOIN ga_selected_bots gsb ON gsb.child_bot_id = cb.id AND gsb.admin_id = $1
+            JOIN ga_selected_bots gsb ON gsb.child_bot_id = cb.id AND gsb.owner_id = $1
             WHERE bc.is_active=true AND bu.is_active=true AND bu.user_id IS NOT NULL
-        """, admin_id) or 0
+        """, owner_id) or 0
 
         net_bots = await conn.fetchval(
-            "SELECT COUNT(*) FROM ga_selected_bots WHERE admin_id=$1", admin_id
+            "SELECT COUNT(*) FROM ga_selected_bots WHERE owner_id=$1", owner_id
         ) or 0
 
         selected_bots = await conn.fetch("""
             SELECT cb.bot_username
             FROM ga_selected_bots gsb
             JOIN child_bots cb ON cb.id = gsb.child_bot_id
-            WHERE gsb.admin_id = $1
+            WHERE gsb.owner_id = $1
             ORDER BY gsb.selected_at ASC
-        """, admin_id)
+        """, owner_id)
         bots_line = ("\n".join(f"• @{r['bot_username']}" for r in selected_bots)
                      if selected_bots else
                      "❎ Выборка пуста")
@@ -2007,22 +2007,21 @@ async def on_ga_users(callback: CallbackQuery):
     await callback.answer()
 
 
-async def _export_users_csv(bot: Bot, chat_id: int, admin_id: int, export_type: str, msg_to_delete: Message = None):
-    """Export audience from bots selected by admin_id in ga_selected_bots."""
+async def _export_users_csv(bot: Bot, chat_id: int, owner_id: int, export_type: str, msg_to_delete: Message = None):
+    """Export audience from bots selected by owner_id in ga_selected_bots."""
     if export_type == "blocked":
         query = """
             SELECT user_id, reason AS first_name, username, false AS is_active, added_at AS joined_at
             FROM blacklist WHERE owner_id = $1
         """
-        # For blocked list we use owner_id. admin_id IS the owner here.
         async with get_pool().acquire() as conn:
-            rows = await conn.fetch(query, admin_id)
+            rows = await conn.fetch(query, owner_id)
     elif export_type == "admins":
         query = "SELECT admin_id AS user_id, admin_username AS first_name, NULL AS username, true AS is_active, added_at AS joined_at FROM global_admins WHERE owner_id = $1"
         async with get_pool().acquire() as conn:
-            rows = await conn.fetch(query, admin_id)
+            rows = await conn.fetch(query, owner_id)
     else:
-        # Cross-user audience export: only from bots in ga_selected_bots for this admin
+        # Cross-user audience export: only from bots in ga_selected_bots for this owner
         base_query = """
             SELECT DISTINCT ON (bu.user_id)
                    bu.user_id, bu.first_name, bu.username, bu.is_active, bu.joined_at
@@ -2044,7 +2043,7 @@ async def _export_users_csv(bot: Bot, chat_id: int, admin_id: int, export_type: 
             pass
 
     if not rows:
-        kb = [[InlineKeyboardButton(text="◀️ Назад в Меню", callback_data=f"ga_dl_bck:{admin_id}")]]
+        kb = [[InlineKeyboardButton(text="◀️ Назад в Меню", callback_data=f"ga_dl_bck:{owner_id}")]]
         return await bot.send_message(chat_id, "⚠️ База пуста по заданным критериям.", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
         
     fd, path = tempfile.mkstemp(suffix=".csv")
@@ -2062,7 +2061,7 @@ async def _export_users_csv(bot: Bot, chat_id: int, admin_id: int, export_type: 
             
     doc = FSInputFile(path, filename=f"global_audience_{export_type}.csv")
     
-    kb = [[InlineKeyboardButton(text="◀️ Назад в Базу Аудитории", callback_data=f"ga_dl_bck:{admin_id}")]]
+    kb = [[InlineKeyboardButton(text="◀️ Назад в Базу Аудитории", callback_data=f"ga_dl_bck:{owner_id}")]]
     await bot.send_document(chat_id, document=doc, caption="✅ Ваш отчет скомпилирован и готов.", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
     
     try:
@@ -2084,7 +2083,7 @@ async def on_ga_export_users(callback: CallbackQuery):
         
     msg = await callback.message.edit_text("⏳ Идёт сбор глобальной базы и генерация CSV. Пожалуйста, подождите...")
     import asyncio
-    asyncio.create_task(_export_users_csv(callback.bot, callback.message.chat.id, callback.from_user.id, export_type, msg))
+    asyncio.create_task(_export_users_csv(callback.bot, callback.message.chat.id, owner_id, export_type, msg))
     await callback.answer()
 
 

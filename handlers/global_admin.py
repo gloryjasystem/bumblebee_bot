@@ -1062,12 +1062,27 @@ async def on_ga_team_remove_input(message: Message, state: FSMContext):
                                     ]))
 
     async with get_pool().acquire() as conn:
+        # Если ввели @username, сначала попытаемся получить его ID из платформы, 
+        # потому что старые админы могут не иметь сохраненного юзернейма в global_admins
+        if not target_id and target_username:
+            user_row = await conn.fetchrow(
+                "SELECT user_id FROM platform_users WHERE lower(username)=$1 LIMIT 1",
+                target_username
+            )
+            if user_row:
+                target_id = user_row["user_id"]
+
+        import asyncpg
+        
+        row = None
         if target_id:
             row = await conn.fetchrow(
                 "SELECT admin_id, admin_username FROM global_admins WHERE owner_id=$1 AND admin_id=$2",
                 owner_id, target_id
             )
-        else:
+        
+        # Резервный поиск по имени, если в базе он есть, но ID не был найден
+        if not row and target_username:
             row = await conn.fetchrow(
                 "SELECT admin_id, admin_username FROM global_admins WHERE owner_id=$1 AND lower(admin_username)=$2",
                 owner_id, target_username

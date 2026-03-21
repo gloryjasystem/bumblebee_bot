@@ -151,6 +151,7 @@ async def _show_admin_panel(message_or_cb, role: str, owner_id: int, admin_id: i
             ) or 0
 
         admin_count = await conn.fetchval("SELECT COUNT(*) FROM global_admins WHERE owner_id=$1", owner_id) or 0
+        total_kicks = await conn.fetchval("SELECT blocked_count FROM platform_users WHERE user_id=$1", owner_id) or 0
 
     status = "👑 ВЛАДЕЛЕЦ" if role == 'owner' else "👮‍♂️ АДМИН"
 
@@ -183,6 +184,7 @@ async def _show_admin_panel(message_or_cb, role: str, owner_id: int, admin_id: i
         blocks.append(
             "<b>🛡 БЕЗОПАСНОСТЬ И СЕТЬ</b>\n"
             f"├ 🚫 <b>В чёрном списке:</b> {bl_count:,}\n"
+            f"├ 🛑 <b>Заблокировано (всего):</b> {total_kicks:,}\n"
             f"└ 🧑‍💼 <b>Моя команда:</b> {admin_count}"
         )
         blocks.append(
@@ -193,7 +195,8 @@ async def _show_admin_panel(message_or_cb, role: str, owner_id: int, admin_id: i
     else:
         blocks.append(
             "<b>🛡 БЕЗОПАСНОСТЬ</b>\n"
-            f"└ 🚫 <b>В чёрном списке:</b> {bl_count:,}"
+            f"├ 🚫 <b>В чёрном списке:</b> {bl_count:,}\n"
+            f"└ 🛑 <b>Заблокировано (всего):</b> {total_kicks:,}"
         )
 
     header = "\n\n".join(blocks)

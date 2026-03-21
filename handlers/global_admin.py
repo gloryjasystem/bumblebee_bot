@@ -156,14 +156,14 @@ async def _show_admin_panel(message_or_cb, role: str, owner_id: int, admin_id: i
     
     base_text = (
         "🐝 <b>Bumblebee Bot</b>\n"
-        f"🎛 Панель управления  •  Вы: {status_emoji}\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"🎛 Панель управления  •  {status_emoji}\n"
+        "━━━━━━━━━━━━━━━━━━━━━\n\n"
         f"🤖 Ботов общей базы: <b>{net_bots}</b>\n\n"
-        f"👥 Общее количество пользователей: <b>{pu_total:,}</b>\n"
-        f"👨‍💻 Владельцы ботов: <b>{owners_count:,}</b>\n"
-        f"💎 Клиенты платформы: <b>{clients_count:,}</b>\n"
-        f"🔥 Активные создатели (2 и более ботов): <b>{active_creators:,}</b>\n\n"
-        f"🚫 Заблокировано в выбранных: <b>{bl_count:,}</b>"
+        f"👥 Всего пользователей: <b>{pu_total:,}</b>\n"
+        f"👨‍💻 Владельцев ботов: <b>{owners_count:,}</b>\n"
+        f"💎 Платные подписки: <b>{clients_count:,}</b>\n"
+        f"🔥 Создателей (2+ ботов): <b>{active_creators:,}</b>\n\n"
+        f"🚫 В чёрном списке: <b>{bl_count:,}</b>"
     )
 
     if role == 'owner':
@@ -181,9 +181,9 @@ async def _show_admin_panel(message_or_cb, role: str, owner_id: int, admin_id: i
         header = (
             f"{base_text}\n"
             f"🧑‍💼 Моя команда: <b>{admin_count}</b>\n\n"
-            f"📊 <b>Действующие тарифы Платформы</b>\n"
+            f"📊 <b>Статистика по тарифам</b>\n"
             f"📎 {tariff_str}\n"
-            f"✨ Новых за 7 дн.: <b>{pu_new7}</b>"
+            f"✨ Прирост (7 дней): <b>+{pu_new7}</b>"
         )
     else:
         header = base_text

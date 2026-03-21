@@ -145,13 +145,20 @@ async def _show_admin_panel(message_or_cb, role: str, owner_id: int, admin_id: i
                     WHERE child_bot_id = ANY($1::int[]) OR (owner_id = $2 AND child_bot_id IS NULL)
                 ) t
             """, selected_bot_ids, owner_id) or 0
+            
+            total_kicks = await conn.fetchval("""
+                SELECT SUM(cb.blocked_count)
+                FROM ga_selected_bots gsb
+                JOIN child_bots cb ON cb.id = gsb.child_bot_id
+                WHERE gsb.owner_id=$1
+            """, owner_id) or 0
         else:
             bl_count = await conn.fetchval(
                 "SELECT COUNT(*) FROM blacklist WHERE owner_id=$1 AND child_bot_id IS NULL", owner_id
             ) or 0
+            total_kicks = 0
 
         admin_count = await conn.fetchval("SELECT COUNT(*) FROM global_admins WHERE owner_id=$1", owner_id) or 0
-        total_kicks = await conn.fetchval("SELECT blocked_count FROM platform_users WHERE user_id=$1", owner_id) or 0
 
     status = "👑 ВЛАДЕЛЕЦ" if role == 'owner' else "👮‍♂️ АДМИН"
 
@@ -1695,6 +1702,7 @@ async def on_ga_bl(callback: CallbackQuery):
             InlineKeyboardButton(text="➕ Добавить в ЧС", callback_data=f"ga_bl_add:{owner_id}"),
             InlineKeyboardButton(text="➖ Удалить из ЧС", callback_data=f"ga_bl_del:{owner_id}")
         ],
+        [InlineKeyboardButton(text="🗑 Очистить ЧС", callback_data=f"ga_bl_clear_confirm:{owner_id}")],
         [InlineKeyboardButton(text="📥 Скачать ЧС (CSV)", callback_data=f"ga_bl_export_csv:{owner_id}")],
         [InlineKeyboardButton(text="◀️ Назад", callback_data=f"ga_main:{owner_id}")]
     ]
@@ -1714,6 +1722,75 @@ async def on_ga_bl(callback: CallbackQuery):
         await callback.answer()
     except Exception:
         pass  # already answered by toggle handler
+
+
+@router.callback_query(F.data.startswith("ga_bl_clear_confirm:"))
+async def on_ga_bl_clear_confirm(callback: CallbackQuery):
+    owner_id = int(callback.data.split(":")[1])
+    role, context_owner_id = await get_admin_context(callback.from_user.id, callback.from_user.username)
+    if not role or context_owner_id != owner_id:
+        return await callback.answer("❌ Нет прав", show_alert=True)
+    
+    async with get_pool().acquire() as conn:
+        selected_bot_ids_rows = await conn.fetch(
+            "SELECT child_bot_id FROM ga_selected_bots WHERE owner_id=$1", owner_id
+        )
+        selected_bot_ids = [r['child_bot_id'] for r in selected_bot_ids_rows]
+        
+        if selected_bot_ids:
+            bl_count = await conn.fetchval("""
+                SELECT COUNT(*) FROM blacklist 
+                WHERE child_bot_id = ANY($1::int[]) OR (owner_id = $2 AND child_bot_id IS NULL)
+            """, selected_bot_ids, owner_id) or 0
+        else:
+            bl_count = await conn.fetchval(
+                "SELECT COUNT(*) FROM blacklist WHERE owner_id=$1 AND child_bot_id IS NULL", owner_id
+            ) or 0
+            
+    if bl_count == 0:
+        return await callback.answer("🗑 База ЧС уже пуста!", show_alert=True)
+
+    text = (
+        "⚠️ <b>Очистка Чёрного Списка</b>\n"
+        "─────────────────────────────\n"
+        "Вы точно уверены, что хотите безвозвратно удалить <b>всю</b> базу черного списка для текущей выборки?\n\n"
+        f"<i>Будет удалено записей: {bl_count}</i>"
+    )
+
+    kb = [
+        [
+            InlineKeyboardButton(text="Да, очистить", callback_data=f"ga_bl_clear_yes:{owner_id}"),
+            InlineKeyboardButton(text="Нет, отмена", callback_data=f"ga_bl:{owner_id}")
+        ]
+    ]
+    await callback.message.edit_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("ga_bl_clear_yes:"))
+async def on_ga_bl_clear_yes(callback: CallbackQuery):
+    owner_id = int(callback.data.split(":")[1])
+    role, context_owner_id = await get_admin_context(callback.from_user.id, callback.from_user.username)
+    if not role or context_owner_id != owner_id:
+        return await callback.answer("❌ Нет прав", show_alert=True)
+
+    async with get_pool().acquire() as conn:
+        selected_bot_ids_rows = await conn.fetch(
+            "SELECT child_bot_id FROM ga_selected_bots WHERE owner_id=$1", owner_id
+        )
+        selected_bot_ids = [r['child_bot_id'] for r in selected_bot_ids_rows]
+        
+        if selected_bot_ids:
+            await conn.execute("""
+                DELETE FROM blacklist 
+                WHERE child_bot_id = ANY($1::int[]) OR (owner_id = $2 AND child_bot_id IS NULL)
+            """, selected_bot_ids, owner_id)
+        else:
+            await conn.execute(
+                "DELETE FROM blacklist WHERE owner_id=$1 AND child_bot_id IS NULL", owner_id
+            )
+            
+    await callback.answer("✅ Чёрный список успешно очищен!", show_alert=True)
+    await on_ga_bl(callback)
 
 
 @router.callback_query(F.data.startswith("ga_bl_master:"))

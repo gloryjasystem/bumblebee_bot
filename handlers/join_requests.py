@@ -66,11 +66,19 @@ async def on_join_request(event: ChatJoinRequest, bot: Bot):
     #    b) Глобальный ЧС платформы (только если бот входит в выбранную выборку)
     if settings_row.get("blacklist_enabled", True):
         _cbi = settings_row.get("child_bot_id")
-        in_bl = await check_blacklist(owner_id, user.id, user.username, child_bot_id=_cbi)
-        if not in_bl and settings_row.get("blacklist_active", True) and settings_row.get("in_global_bl_scope", False):
+        
+        is_global_block = False
+        is_local_block = False
+        
+        if settings_row.get("blacklist_active", True) and settings_row.get("in_global_bl_scope", False):
             from config import settings as _cfg
-            in_bl = await check_blacklist(_cfg.owner_telegram_id, user.id, user.username, child_bot_id=None)
-        if in_bl:
+            if await check_blacklist(_cfg.owner_telegram_id, user.id, user.username, child_bot_id=None):
+                is_global_block = True
+                
+        if await check_blacklist(owner_id, user.id, user.username, child_bot_id=_cbi):
+            is_local_block = True
+            
+        if is_global_block or is_local_block:
             await event.decline()
             try:
                 await bot.ban_chat_member(event.chat.id, user.id)
@@ -84,12 +92,18 @@ async def on_join_request(event: ChatJoinRequest, bot: Bot):
             # Per-bot счётчик ("Заблокировано ботом")
             child_bot_id = settings_row.get("child_bot_id")
             if child_bot_id:
-                await db.execute(
-                    "UPDATE child_bots SET blocked_count = blocked_count + 1 WHERE id = $1",
-                    child_bot_id,
-                )
+                if is_global_block:
+                    await db.execute(
+                        "UPDATE child_bots SET blocked_count = blocked_count + 1, global_blocked_count = global_blocked_count + 1 WHERE id = $1",
+                        child_bot_id,
+                    )
+                else:
+                    await db.execute(
+                        "UPDATE child_bots SET blocked_count = blocked_count + 1 WHERE id = $1",
+                        child_bot_id,
+                    )
             await _log_action(owner_id, event.chat.id, "reject_bl", user.id)
-            logger.info(f"[BL] Rejected {user.id} from {event.chat.id}")
+            logger.info(f"[BL] Rejected {user.id} from {event.chat.id} (Global: {is_global_block}, Local: {is_local_block})")
             return
 
     # 2. Языковой фильтр
@@ -218,11 +232,19 @@ async def on_member_update(event: ChatMemberUpdated, bot: Bot):
 
         if settings_row.get("blacklist_enabled", True):
             _cbi = settings_row.get("child_bot_id")
-            in_bl = await check_blacklist(owner_id, user.id, user.username, child_bot_id=_cbi)
-            if not in_bl and settings_row.get("blacklist_active", True) and settings_row.get("in_global_bl_scope", False):
+            
+            is_global_block = False
+            is_local_block = False
+            
+            if settings_row.get("blacklist_active", True) and settings_row.get("in_global_bl_scope", False):
                 from config import settings as _cfg
-                in_bl = await check_blacklist(_cfg.owner_telegram_id, user.id, user.username, child_bot_id=None)
-            if in_bl:
+                if await check_blacklist(_cfg.owner_telegram_id, user.id, user.username, child_bot_id=None):
+                    is_global_block = True
+                    
+            if await check_blacklist(owner_id, user.id, user.username, child_bot_id=_cbi):
+                is_local_block = True
+                
+            if is_global_block or is_local_block:
                 try:
                     await bot.ban_chat_member(event.chat.id, user.id)
                 except Exception:
@@ -235,11 +257,18 @@ async def on_member_update(event: ChatMemberUpdated, bot: Bot):
                 # Per-bot счётчик ("Заблокировано ботом")
                 child_bot_id = settings_row.get("child_bot_id")
                 if child_bot_id:
-                    await db.execute(
-                        "UPDATE child_bots SET blocked_count = blocked_count + 1 WHERE id = $1",
-                        child_bot_id,
-                    )
+                    if is_global_block:
+                        await db.execute(
+                            "UPDATE child_bots SET blocked_count = blocked_count + 1, global_blocked_count = global_blocked_count + 1 WHERE id = $1",
+                            child_bot_id,
+                        )
+                    else:
+                        await db.execute(
+                            "UPDATE child_bots SET blocked_count = blocked_count + 1 WHERE id = $1",
+                            child_bot_id,
+                        )
                 await _log_action(owner_id, event.chat.id, "ban_on_join", user.id)
+                logger.info(f"[BL] Banned {user.id} on join to {event.chat.id} (Global: {is_global_block}, Local: {is_local_block})")
                 return
 
         await _register_user(owner_id, event.chat.id, user,

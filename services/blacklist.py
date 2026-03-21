@@ -95,6 +95,23 @@ async def check_blacklist(owner_id: int, user_id: int, username: str | None, chi
         """,
         owner_id, user_id, username or "", child_bot_id,
     )
+
+    # Самовосстанавливающаяся база (Strict ID Resolution Policy)
+    # Если спамер был добавлен только по username (например, через CSV) и мы его поймали,
+    # мы гарантированно забираем его точный Телеграм ID навсегда:
+    if row is not None and username:
+        import asyncio
+        asyncio.create_task(db.execute(
+            """
+            UPDATE blacklist 
+            SET user_id = $2
+            WHERE owner_id = $1 
+              AND lower(username) = lower($3) 
+              AND user_id IS NULL
+            """,
+            owner_id, user_id, username
+        ))
+
     return row is not None
 
 

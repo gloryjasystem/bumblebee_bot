@@ -122,6 +122,11 @@ def create_app(bot: Bot, dp: Dispatcher) -> FastAPI:
                 "ALTER TABLE bot_chats   ADD COLUMN IF NOT EXISTS general_reply_media_top BOOLEAN DEFAULT true",
             ]:
                 await conn.execute(migration)
+
+            # Миграция статистики Глобального ЧС (Бесшовная изоляция)
+            await conn.execute("ALTER TABLE child_bots ADD COLUMN IF NOT EXISTS global_blocked_count INTEGER DEFAULT 0")
+            await conn.execute("UPDATE child_bots SET global_blocked_count = blocked_count WHERE global_blocked_count = 0 AND blocked_count > 0")
+
             # Таблица событий капчи
             await conn.execute("""
                 CREATE TABLE IF NOT EXISTS captcha_events (

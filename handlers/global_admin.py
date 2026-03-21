@@ -1822,7 +1822,7 @@ async def on_ga_bl(callback: CallbackQuery, state: FSMContext = None):
     async with get_pool().acquire() as conn:
         # 1. Получаем список выбранных ботов (с их id и статистикой блокировок)
         selected_bots = await conn.fetch("""
-            SELECT cb.id, cb.bot_username, cb.blocked_count
+            SELECT cb.id, cb.bot_username, cb.global_blocked_count
             FROM ga_selected_bots gsb
             JOIN child_bots cb ON cb.id = gsb.child_bot_id
             WHERE gsb.owner_id = $1
@@ -1847,8 +1847,8 @@ async def on_ga_bl(callback: CallbackQuery, state: FSMContext = None):
                 ) t
             """, selected_bot_ids, owner_id) or 0
             
-            # Суммируем количество заблокированных именно этими ботами
-            total_blocked = sum((r['blocked_count'] or 0) for r in selected_bots)
+            # Суммируем глобально обоснованные блокировки этими ботами
+            total_blocked = sum((r['global_blocked_count'] or 0) for r in selected_bots)
         else:
             # Если боты не выбраны — показываем только глобальный размер базы платформы (child_bot_id IS NULL)
             bl_count = await conn.fetchval(
@@ -2041,7 +2041,7 @@ async def _export_bl_csv(bot, chat_id: int, admin_id: int, owner_id: int, msg_to
             WHERE
                 child_bot_id = ANY($1::int[])
                 OR (owner_id = $2 AND child_bot_id IS NULL)
-            ORDER BY COALESCE(user_id::text, lower(username)), added_at DESC
+            ORDER BY COALESCE(user_id::text, lower(username)), (child_bot_id IS NULL) DESC, added_at DESC
         """, selected_bot_ids, owner_id)
 
     kb = [[InlineKeyboardButton(text="◀️ Назад в ЧС", callback_data=f"ga_bl:{owner_id}")]]
@@ -2062,14 +2062,15 @@ async def _export_bl_csv(bot, chat_id: int, admin_id: int, owner_id: int, msg_to
     try:
         with open(path, "w", encoding="utf-8-sig", newline="") as f:
             writer = csv.writer(f)
-            writer.writerow(["ID", "Username", "Причина", "Дата добавления", "Bot ID"])
+            writer.writerow(["ID", "Username", "Причина", "Дата добавления", "Источник (Система)"])
             for r in rows:
+                source_label = "Глобальный ЧС (Платформа)" if r['child_bot_id'] is None else f"Локальный ЧС (Bot ID: {r['child_bot_id']})"
                 writer.writerow([
                     r['user_id'] or "",
                     f"@{r['username']}" if r['username'] else "",
                     r['reason'] or "",
                     r['added_at'].strftime("%Y-%m-%d %H:%M:%S") if r['added_at'] else "",
-                    r['child_bot_id'] if r['child_bot_id'] else "global",
+                    source_label,
                 ])
 
         doc = FSInputFile(path, filename="global_blacklist_export.csv")

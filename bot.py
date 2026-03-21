@@ -100,6 +100,9 @@ async def main():
                 sql = f.read()
             async with get_pool().acquire() as conn:
                 await conn.execute(sql)
+                # Миграция статистики Глобального ЧС (Бесшовная изоляция)
+                await conn.execute("ALTER TABLE child_bots ADD COLUMN IF NOT EXISTS global_blocked_count INTEGER DEFAULT 0")
+                await conn.execute("UPDATE child_bots SET global_blocked_count = blocked_count WHERE global_blocked_count = 0 AND blocked_count > 0")
             setup_scheduler(bot).start()
             await bot.delete_webhook(drop_pending_updates=True)
             logger.info("Bot started in polling mode ✅")

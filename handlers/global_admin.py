@@ -139,20 +139,15 @@ async def _show_admin_panel(message_or_cb, role: str, owner_id: int, admin_id: i
         clients_count = await conn.fetchval("SELECT COUNT(*) FROM platform_users WHERE tariff != 'free'") or 0
         active_creators = await conn.fetchval("SELECT COUNT(*) FROM (SELECT owner_id FROM child_bots GROUP BY owner_id HAVING COUNT(*) >= 2) t") or 0
 
-        # Заблокировано — уникальные ЧС-записи из ВЫБРАННЫХ ботов (ga_selected_bots)
+        bl_count = await conn.fetchval(
+            "SELECT COUNT(*) FROM blacklist WHERE owner_id=$1 AND child_bot_id IS NULL", owner_id
+        ) or 0
+
         selected_bot_ids_rows = await conn.fetch(
             "SELECT child_bot_id FROM ga_selected_bots WHERE owner_id=$1", owner_id
         )
         selected_bot_ids = [r['child_bot_id'] for r in selected_bot_ids_rows]
         if selected_bot_ids:
-            bl_count = await conn.fetchval("""
-                SELECT COUNT(*) FROM (
-                    SELECT DISTINCT ON (COALESCE(user_id::text, lower(username))) user_id
-                    FROM blacklist
-                    WHERE child_bot_id = ANY($1::int[]) OR (owner_id = $2 AND child_bot_id IS NULL)
-                ) t
-            """, selected_bot_ids, owner_id) or 0
-            
             total_kicks = await conn.fetchval("""
                 SELECT SUM(cb.global_blocked_count)
                 FROM ga_selected_bots gsb
@@ -160,9 +155,6 @@ async def _show_admin_panel(message_or_cb, role: str, owner_id: int, admin_id: i
                 WHERE gsb.owner_id=$1
             """, owner_id) or 0
         else:
-            bl_count = await conn.fetchval(
-                "SELECT COUNT(*) FROM blacklist WHERE owner_id=$1 AND child_bot_id IS NULL", owner_id
-            ) or 0
             total_kicks = 0
 
         admin_count = await conn.fetchval("SELECT COUNT(*) FROM global_admins WHERE owner_id=$1", owner_id) or 0

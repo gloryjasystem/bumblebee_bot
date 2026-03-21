@@ -1926,10 +1926,10 @@ async def on_ga_bl(callback: CallbackQuery, state: FSMContext = None):
         f"{shield}\n\n"
         f"🗄 <b>База ЧС: {bl_count} записей</b>\n"
         f"├ Глобальный (наш): <b>{global_record_count}</b>\n"
-        f"└ ЧС пользователей: <b>{local_record_count}</b>\n\n"
+        f"└ ЧС владельцев ботов: <b>{local_record_count}</b>\n\n"
         f"🛡 <b>Нейтрализовано угроз: {total_blocked:,}</b>\n"
         f"├ Нашим глоб. ЧС: <b>{total_global_blocked:,}</b>\n"
-        f"└ ЧС пользов. ботов: <b>{total_local_blocked:,}</b>\n\n"
+        f"└ Личными ЧС владельцев: <b>{total_local_blocked:,}</b>\n\n"
         f"🤖 <b>Распространяется на ботов:</b>\n{bots_list}\n\n"
         "<i>Управлять ботами — '🗄️ Управление общей базой'</i>"
     )

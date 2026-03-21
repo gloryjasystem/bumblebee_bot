@@ -125,16 +125,12 @@ async def _show_admin_panel(message_or_cb, role: str, owner_id: int, admin_id: i
         admin_id = owner_id
 
     async with get_pool().acquire() as conn:
-        total_bots = await conn.fetchval("SELECT COUNT(*) FROM child_bots WHERE owner_id=$1", owner_id) or 0
-        net_bots   = await conn.fetchval("SELECT COUNT(*) FROM child_bots WHERE owner_id=$1 AND in_global_network=true", owner_id) or 0
+        net_bots = await conn.fetchval("SELECT COUNT(*) FROM child_bots WHERE owner_id=$1 AND in_global_network=true", owner_id) or 0
 
-        total_users = await conn.fetchval("""
-            SELECT COUNT(DISTINCT bu.user_id) FROM bot_users bu
-            JOIN bot_chats bc ON bu.chat_id = bc.chat_id
-            JOIN child_bots cb ON cb.id = bc.child_bot_id
-            WHERE bc.owner_id=$1 AND bc.is_active=true AND bu.user_id IS NOT NULL
-              AND cb.in_global_network=true
-        """, owner_id) or 0
+        pu_total = await conn.fetchval("SELECT COUNT(*) FROM platform_users") or 0
+        owners_count = await conn.fetchval("SELECT COUNT(DISTINCT owner_id) FROM child_bots") or 0
+        clients_count = await conn.fetchval("SELECT COUNT(*) FROM platform_users WHERE tariff != 'free'") or 0
+        active_creators = await conn.fetchval("SELECT COUNT(*) FROM (SELECT owner_id FROM child_bots GROUP BY owner_id HAVING COUNT(*) >= 2) t") or 0
 
         # Заблокировано — уникальные ЧС-записи из ВЫБРАННЫХ ботов (ga_selected_bots)
         selected_bot_ids_rows = await conn.fetch(
@@ -156,9 +152,22 @@ async def _show_admin_panel(message_or_cb, role: str, owner_id: int, admin_id: i
 
         admin_count = await conn.fetchval("SELECT COUNT(*) FROM global_admins WHERE owner_id=$1", owner_id) or 0
 
+    status_emoji = "👑 Владелец" if role == 'owner' else "👮‍♂️ Администратор"
+    
+    base_text = (
+        "🐝 <b>Bumblebee Bot</b>\n"
+        f"🎛 Панель управления  •  Вы: {status_emoji}\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"🤖 Ботов общей базы: <b>{net_bots}</b>\n\n"
+        f"👥 Общее количество пользователей: <b>{pu_total:,}</b>\n"
+        f"👨‍💻 Владельцы ботов: <b>{owners_count:,}</b>\n"
+        f"💎 Клиенты платформы: <b>{clients_count:,}</b>\n"
+        f"🔥 Активные создатели (2 и более ботов): <b>{active_creators:,}</b>\n\n"
+        f"🚫 Заблокировано в выбранных: <b>{bl_count:,}</b>"
+    )
+
     if role == 'owner':
         async with get_pool().acquire() as conn:
-            pu_total = await conn.fetchval("SELECT COUNT(*) FROM platform_users") or 0
             pu_new7 = await conn.fetchval(
                 "SELECT COUNT(*) FROM platform_users WHERE created_at >= NOW() - INTERVAL '7 days'"
             ) or 0
@@ -168,26 +177,16 @@ async def _show_admin_panel(message_or_cb, role: str, owner_id: int, admin_id: i
         tariff_str = "  \u2022  ".join(
             f"<b>{r['tariff'].title()}</b>\u202f{r['cnt']}" for r in tariff_rows
         ) if tariff_rows else "\u2014"
-        sep30 = "━" * 30
-        sep8  = "─" * 8
+        
         header = (
-            f"🐝 <b>Bumblebee Bot — Админ Панель</b>  •  👑 <b>Владелец</b>\n"
-            f"{sep30}\n\n"
-            f"🗄️  Активных ботов:  <b>{net_bots}</b> из <b>{total_bots}</b>\n"
-            f"👥  Аудитория (активных):  <b>{total_users:,}</b>\n\n"
-            f"🚫  Заблокировано в выбранных:  <b>{bl_count:,}</b>\n"
-            f"👥  Команда:  <b>{admin_count}</b>\n\n"
-            f"{sep8} 📊 Платформа {sep8}\n"
-            f"👤  Пользователей:  <b>{pu_total:,}</b>    ✨  Новых (7 дн.):  <b>{pu_new7}</b>\n"
-            f"📎  {tariff_str}"
+            f"{base_text}\n"
+            f"🧑‍💼 Моя команда: <b>{admin_count}</b>\n\n"
+            f"📊 <b>Действующие тарифы Платформы</b>\n"
+            f"📎 {tariff_str}\n"
+            f"✨ Новых за 7 дн.: <b>{pu_new7}</b>"
         )
     else:
-        header = (
-            "🐝 <b>Bumblebee Bot — Админ Панель</b>  •  👑 <b>Админ</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-            f"👥  Активная аудитория сети:  <b>{total_users:,}</b>\n"
-            f"🚫  Заблокировано в выбранных:  <b>{bl_count:,}</b>"
-        )
+        header = base_text
 
     kb = []
     if role == 'owner':

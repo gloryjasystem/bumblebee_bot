@@ -197,7 +197,7 @@ async def _show_admin_panel(message_or_cb, role: str, owner_id: int, admin_id: i
         
         blocks.append(
             "<b>🛡 БЕЗОПАСНОСТЬ И СЕТЬ</b>\n"
-            f"├ 🚫 <b>Глобальный ЧС:</b> {bl_count:,}\n"
+            f"├ 📂 <b>Записи глобального ЧС:</b> {bl_count:,}\n"
             f"├ 🛑 <b>Отражено Глобальным ЧС:</b> {total_kicks:,}\n"
             f"└ 🧑‍💼 <b>Моя команда:</b> {admin_count}"
         )
@@ -209,7 +209,7 @@ async def _show_admin_panel(message_or_cb, role: str, owner_id: int, admin_id: i
     else:
         blocks.append(
             "<b>🛡 БЕЗОПАСНОСТЬ</b>\n"
-            f"├ 🚫 <b>Глобальный ЧС:</b> {bl_count:,}\n"
+            f"├ 📂 <b>Записи глобального ЧС:</b> {bl_count:,}\n"
             f"└ 🛑 <b>Отражено Глобальным ЧС:</b> {total_kicks:,}"
         )
 

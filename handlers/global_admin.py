@@ -1959,28 +1959,32 @@ async def _show_ga_users(message_or_cb, admin_id: int, owner_id: int):
             WHERE bc.is_active=true AND bu.is_active=true AND bu.user_id IS NOT NULL
         """, admin_id) or 0
 
+        net_bots = await conn.fetchval(
+            "SELECT COUNT(*) FROM ga_selected_bots WHERE admin_id=$1", admin_id
+        ) or 0
+
         selected_bots = await conn.fetch("""
-            SELECT cb.bot_username 
+            SELECT cb.bot_username
             FROM ga_selected_bots gsb
             JOIN child_bots cb ON cb.id = gsb.child_bot_id
             WHERE gsb.admin_id = $1
             ORDER BY gsb.selected_at ASC
         """, admin_id)
-        
-        bots_list = ("\n".join(f"• @{r['bot_username']}" for r in selected_bots)
+        bots_line = ("\n".join(f"• @{r['bot_username']}" for r in selected_bots)
                      if selected_bots else
-                     "❎ Выборка пуста. Перейдите в '🗄️ Управление общей базой'")
+                     "❎ Выборка пуста")
 
         dead_users = total_users - alive_users
 
     text = (
         "👥 <b>Сводная База Аудитории</b>\n"
         "─────────────────────────────\n"
-        f"🤖 <b>Распространяется на ботов:</b>\n{bots_list}\n\n"
+        f"🗂️ Ботов в выборке: <b>{net_bots}</b>\n"
+        "Показываются пользователи только из ботов, отмеченных в 'Управление общей базой'.\n\n"
         f"👥 Уникальных пользователей: <b>{total_users:,}</b>\n"
         f" ├ 🟢 Живые: {alive_users:,}\n"
         f" └ 🔴 Мёртвые: {dead_users:,}\n\n"
-        "<i>Управлять ботами — '🗄️ Управление общей базой'</i>"
+        f"🤖 <b>Распространяется на ботов:</b>\n{bots_line}"
     )
 
     kb = [

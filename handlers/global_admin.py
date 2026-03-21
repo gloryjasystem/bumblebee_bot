@@ -1639,7 +1639,7 @@ async def _mass_kick_unban_list(owner_id: int, target_user_ids: list, turn_on: b
     
     async with get_pool().acquire() as conn:
         bots_chats = await conn.fetch("""
-            SELECT cb.token_encrypted, bc.chat_id
+            SELECT cb.id as child_bot_id, cb.token_encrypted, bc.chat_id
             FROM ga_selected_bots gsb
             JOIN child_bots cb ON cb.id = gsb.child_bot_id
             JOIN bot_chats bc ON bc.child_bot_id = cb.id
@@ -1649,22 +1649,51 @@ async def _mass_kick_unban_list(owner_id: int, target_user_ids: list, turn_on: b
     if not bots_chats:
         return
 
+    # Словари для счетчиков
+    total_kicked_platform = 0
+    kicked_per_bot = {}
+
     for chat_row in bots_chats:
         token = decrypt_token(chat_row['token_encrypted'])
         if not token: continue
         temp_bot = Bot(token=token)
+        cb_id = chat_row['child_bot_id']
+        chat_id = chat_row['chat_id']
         try:
             for target_id in target_user_ids:
                 try:
                     if turn_on:
-                        await temp_bot.ban_chat_member(chat_id=chat_row['chat_id'], user_id=target_id)
+                        await temp_bot.ban_chat_member(chat_id=chat_id, user_id=target_id)
+                        total_kicked_platform += 1
+                        kicked_per_bot[cb_id] = kicked_per_bot.get(cb_id, 0) + 1
+                        
+                        # Обновляем bot_users (помечаем как неактивного)
+                        async with get_pool().acquire() as conn:
+                            await conn.execute("""
+                                UPDATE bot_users SET is_active=false, left_at=now()
+                                WHERE owner_id=$1 AND chat_id=$2 AND user_id=$3
+                            """, owner_id, chat_id, target_id)
                     else:
-                        await temp_bot.unban_chat_member(chat_id=chat_row['chat_id'], user_id=target_id)
+                        await temp_bot.unban_chat_member(chat_id=chat_id, user_id=target_id)
+                        # Синхронизация: если юзера разбанили глобально, можно считать его снова `is_active=true`
+                        # Но пока не будем трогать, т.к. он сам должен зайти.
                 except Exception:
                     pass
                 await asyncio.sleep(0.05)
         finally:
             await temp_bot.session.close()
+
+    if total_kicked_platform > 0:
+        async with get_pool().acquire() as conn:
+            await conn.execute(
+                "UPDATE platform_users SET blocked_count = blocked_count + $1 WHERE user_id = $2",
+                total_kicked_platform, owner_id
+            )
+            for bot_id, cnt in kicked_per_bot.items():
+                await conn.execute(
+                    "UPDATE child_bots SET blocked_count = blocked_count + $1 WHERE id = $2",
+                    cnt, bot_id
+                )
 
 
 class GlobalBlacklistFSM(StatesGroup):

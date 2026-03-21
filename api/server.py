@@ -148,6 +148,52 @@ def create_app(bot: Bot, dp: Dispatcher) -> FastAPI:
                     UNIQUE (owner_id, target_user_id)
                 )
             """)
+            # ── Миграция ga_selected_bots: admin_id → owner_id (общая выборка) ──
+            try:
+                col_exists = await conn.fetchval(
+                    """
+                    SELECT EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_name='ga_selected_bots' AND column_name='admin_id'
+                    )
+                    """
+                )
+                if col_exists:
+                    # Конвертируем sub-admin записи → owner записи
+                    await conn.execute("""
+                        UPDATE ga_selected_bots gsb
+                        SET admin_id = ga.owner_id
+                        FROM global_admins ga
+                        WHERE gsb.admin_id = ga.admin_id
+                    """)
+                    # Удаляем дубликаты
+                    await conn.execute("""
+                        DELETE FROM ga_selected_bots a
+                        USING ga_selected_bots b
+                        WHERE a.ctid < b.ctid
+                          AND a.admin_id = b.admin_id
+                          AND a.child_bot_id = b.child_bot_id
+                    """)
+                    # Пересоздаём PK и переименовываем колонку
+                    await conn.execute(
+                        "ALTER TABLE ga_selected_bots DROP CONSTRAINT IF EXISTS ga_selected_bots_pkey"
+                    )
+                    await conn.execute(
+                        "ALTER TABLE ga_selected_bots RENAME COLUMN admin_id TO owner_id"
+                    )
+                    await conn.execute(
+                        "ALTER TABLE ga_selected_bots ADD PRIMARY KEY (owner_id, child_bot_id)"
+                    )
+                    await conn.execute("DROP INDEX IF EXISTS idx_ga_selected_bots_admin")
+                    await conn.execute(
+                        "CREATE INDEX IF NOT EXISTS idx_ga_selected_bots_owner "
+                        "ON ga_selected_bots(owner_id)"
+                    )
+                    logger.info("Migration ga_selected_bots: admin_id → owner_id ✅")
+                else:
+                    logger.info("Migration ga_selected_bots: already applied, skipping")
+            except Exception as _mig_err:
+                logger.warning(f"Migration ga_selected_bots non-fatal error: {_mig_err}")
 
         logger.info("DB schema applied")
 

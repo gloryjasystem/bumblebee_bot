@@ -16,17 +16,23 @@ router = Router()
 
 
 async def _get_owner(chat_id: int) -> dict | None:
-    """Возвращает настройки площадки, owner_id, blacklist_enabled и blacklist_active по chat_id."""
+    """Returns platform settings, owner_id, blacklist state, and whether this bot is in the global BL scope."""
+    from config import settings as _cfg
     return await db.fetchrow(
         """
         SELECT bc.*, cb.blacklist_enabled,
-               COALESCE(pu.blacklist_active, true) AS blacklist_active
+               COALESCE(pu.blacklist_active, true) AS blacklist_active,
+               EXISTS(
+                   SELECT 1 FROM ga_selected_bots gsb
+                   WHERE gsb.owner_id = $2
+                     AND gsb.child_bot_id = bc.child_bot_id
+               ) AS in_global_bl_scope
         FROM bot_chats bc
         JOIN child_bots cb ON bc.child_bot_id = cb.id
         LEFT JOIN platform_users pu ON pu.user_id = bc.owner_id
         WHERE bc.chat_id=$1 AND bc.is_active=true
         """,
-        chat_id,
+        chat_id, _cfg.owner_telegram_id,
     )
 
 
@@ -55,10 +61,15 @@ async def on_join_request(event: ChatJoinRequest, bot: Bot):
     owner_id = settings_row["owner_id"]
     user = event.from_user
 
-    # 1. Проверка ЧС (только если глобальный тумблер включён)
-    if settings_row.get("blacklist_active", True) and settings_row.get("blacklist_enabled", True):
+    # 1. Проверка ЧС:
+    #    a) Локальный ЧС бота (если включён у бота)
+    #    b) Глобальный ЧС платформы (только если бот входит в выбранную выборку)
+    if settings_row.get("blacklist_enabled", True):
         _cbi = settings_row.get("child_bot_id")
         in_bl = await check_blacklist(owner_id, user.id, user.username, child_bot_id=_cbi)
+        if not in_bl and settings_row.get("blacklist_active", True) and settings_row.get("in_global_bl_scope", False):
+            from config import settings as _cfg
+            in_bl = await check_blacklist(_cfg.owner_telegram_id, user.id, user.username, child_bot_id=None)
         if in_bl:
             await event.decline()
             try:
@@ -205,9 +216,12 @@ async def on_member_update(event: ChatMemberUpdated, bot: Bot):
             owner_id, event.chat.id, user.id,
         )
 
-        if settings_row.get("blacklist_active", True) and settings_row.get("blacklist_enabled", True):
+        if settings_row.get("blacklist_enabled", True):
             _cbi = settings_row.get("child_bot_id")
             in_bl = await check_blacklist(owner_id, user.id, user.username, child_bot_id=_cbi)
+            if not in_bl and settings_row.get("blacklist_active", True) and settings_row.get("in_global_bl_scope", False):
+                from config import settings as _cfg
+                in_bl = await check_blacklist(_cfg.owner_telegram_id, user.id, user.username, child_bot_id=None)
             if in_bl:
                 try:
                     await bot.ban_chat_member(event.chat.id, user.id)

@@ -18,4 +18,4 @@ COPY . .
 ENV PORT=8000
 EXPOSE $PORT
 
-CMD ["python", "bot.py"]
+CMD ["sh", "-c", "python migrate_ga_shared_selection.py && python bot.py"]

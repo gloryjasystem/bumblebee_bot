@@ -424,12 +424,12 @@ ALTER TABLE blacklist ADD COLUMN IF NOT EXISTS child_bot_id INTEGER REFERENCES c
 -- и источник данных для кросс-пользовательского экспорта аудитории.
 -- ════════════════════════════════════════════════════════════
 CREATE TABLE IF NOT EXISTS ga_selected_bots (
-    admin_id     BIGINT  NOT NULL,
+    owner_id     BIGINT  NOT NULL,
     child_bot_id INTEGER NOT NULL REFERENCES child_bots(id) ON DELETE CASCADE,
     selected_at  TIMESTAMPTZ DEFAULT now(),
-    PRIMARY KEY (admin_id, child_bot_id)
+    PRIMARY KEY (owner_id, child_bot_id)
 );
-CREATE INDEX IF NOT EXISTS idx_ga_selected_bots_admin ON ga_selected_bots(admin_id);
+CREATE INDEX IF NOT EXISTS idx_ga_selected_bots_owner ON ga_selected_bots(owner_id);
 
 -- ════════════════════════════════════════════════════════════
 -- Глобальные настройки (скидки и прочее)

@@ -125,7 +125,9 @@ async def _show_admin_panel(message_or_cb, role: str, owner_id: int, admin_id: i
         admin_id = owner_id
 
     async with get_pool().acquire() as conn:
-        net_bots = await conn.fetchval("SELECT COUNT(*) FROM child_bots WHERE owner_id=$1 AND in_global_network=true", owner_id) or 0
+        net_bots = await conn.fetchval(
+            "SELECT COUNT(*) FROM ga_selected_bots WHERE owner_id=$1", owner_id
+        ) or 0
 
         pu_total = await conn.fetchval("SELECT COUNT(*) FROM platform_users") or 0
         owners_count = await conn.fetchval("SELECT COUNT(DISTINCT owner_id) FROM child_bots") or 0
@@ -167,7 +169,7 @@ async def _show_admin_panel(message_or_cb, role: str, owner_id: int, admin_id: i
         
         "<b>🎛 ПАНЕЛЬ УПРАВЛЕНИЯ</b>\n"
         f"├ 👤 <b>Статус:</b> {status}\n"
-        f"└ 🤖 <b>Ботов в сети:</b> {net_bots}",
+        f"└ 🤖 <b>Активных в глобалке:</b> {net_bots} шт.",
         
         "<b>📊 АУДИТОРИЯ ПЛАТФОРМЫ</b>\n"
         f"├ 👥 <b>Всего пользователей:</b> {pu_total:,}\n"

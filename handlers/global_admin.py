@@ -174,7 +174,8 @@ async def _show_admin_panel(message_or_cb, role: str, owner_id: int, admin_id: i
         
         "<b>🎛 ПАНЕЛЬ УПРАВЛЕНИЯ</b>\n"
         f"├ 👤 <b>Статус:</b> {status}\n"
-        f"└ 🤖 <b>Активных в выборке:</b> {net_bots} шт.",
+        f"├ 🤖 <b>Активных в выборке:</b> {net_bots} шт.\n"
+        f"└ 🧑‍💼 <b>Моя команда:</b> {admin_count}",
         
         "<b>📊 АУДИТОРИЯ ПЛАТФОРМЫ</b>\n"
         f"├ 👥 <b>Всего пользователей:</b> {pu_total:,}\n"
@@ -196,10 +197,9 @@ async def _show_admin_panel(message_or_cb, role: str, owner_id: int, admin_id: i
         ) if tariff_rows else "—"
         
         blocks.append(
-            "<b>🛡 БЕЗОПАСНОСТЬ И СЕТЬ</b>\n"
+            "<b>🛡 БЕЗОПАСНОСТЬ</b>\n"
             f"├ 📂 <b>Записи глобального ЧС:</b> {bl_count:,}\n"
-            f"├ 🛑 <b>Отражено Глобальным ЧС:</b> {total_kicks:,}\n"
-            f"└ 🧑‍💼 <b>Моя команда:</b> {admin_count}"
+            f"└ 🛑 <b>Отражено Глобальным ЧС:</b> {total_kicks:,}"
         )
         blocks.append(
             "<b>💳 СТАТИСТИКА И ТАРИФЫ</b>\n"

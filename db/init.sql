@@ -424,12 +424,33 @@ ALTER TABLE blacklist ADD COLUMN IF NOT EXISTS child_bot_id INTEGER REFERENCES c
 -- и источник данных для кросс-пользовательского экспорта аудитории.
 -- ════════════════════════════════════════════════════════════
 CREATE TABLE IF NOT EXISTS ga_selected_bots (
-    owner_id     BIGINT  NOT NULL,
+    admin_id     BIGINT  NOT NULL,
     child_bot_id INTEGER NOT NULL REFERENCES child_bots(id) ON DELETE CASCADE,
     selected_at  TIMESTAMPTZ DEFAULT now(),
-    PRIMARY KEY (owner_id, child_bot_id)
+    PRIMARY KEY (admin_id, child_bot_id)
 );
-CREATE INDEX IF NOT EXISTS idx_ga_selected_bots_owner ON ga_selected_bots(owner_id);
+-- Safe index: works whether column is still admin_id (pre-migration) or already owner_id (post-migration)
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name='ga_selected_bots' AND column_name='owner_id'
+    ) THEN
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_indexes
+            WHERE tablename='ga_selected_bots' AND indexname='idx_ga_selected_bots_owner'
+        ) THEN
+            CREATE INDEX idx_ga_selected_bots_owner ON ga_selected_bots(owner_id);
+        END IF;
+    ELSE
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_indexes
+            WHERE tablename='ga_selected_bots' AND indexname='idx_ga_selected_bots_admin'
+        ) THEN
+            CREATE INDEX idx_ga_selected_bots_admin ON ga_selected_bots(admin_id);
+        END IF;
+    END IF;
+END $$;
 
 -- ════════════════════════════════════════════════════════════
 -- Глобальные настройки (скидки и прочее)

@@ -169,7 +169,7 @@ async def _show_admin_panel(message_or_cb, role: str, owner_id: int, admin_id: i
         
         "<b>🎛 ПАНЕЛЬ УПРАВЛЕНИЯ</b>\n"
         f"├ 👤 <b>Статус:</b> {status}\n"
-        f"└ 🤖 <b>Активных в глобалке:</b> {net_bots} шт.",
+        f"└ 🤖 <b>Активных в выборке:</b> {net_bots} шт.",
         
         "<b>📊 АУДИТОРИЯ ПЛАТФОРМЫ</b>\n"
         f"├ 👥 <b>Всего пользователей:</b> {pu_total:,}\n"

@@ -2138,110 +2138,133 @@ async def process_ga_bl_add(message: Message, state: FSMContext, bot: Bot):
     data = await state.get_data()
     owner_id = data.get("owner_id")
     
-    targets = []
+    import csv, io as _io
+
+    parsed_lines = []
+    file_io = None
     if message.text:
-        lines = [message.text.strip()]
+        parsed_lines = [message.text.strip()]
     elif message.document:
         if not message.document.file_name.lower().endswith(('.txt', '.csv')):
             return await message.answer("❌ Поддерживаются только форматы .txt и .csv")
-        
         status_msg = await message.answer("⏳ Читаю файл...")
-        import io
-        file_io = io.BytesIO()
+        file_io = _io.BytesIO()
         await bot.download(message.document, destination=file_io)
-        try:
-            content = file_io.getvalue().decode('utf-8-sig')
-        except:
-            return await status_msg.edit_text("❌ Ошибка кодировки файла. Пожалуйста, используйте UTF-8.")
-        lines = content.splitlines()
+        parsed_lines = None  # будет разобран ниже через csv.reader
         await status_msg.delete()
     else:
         return await message.answer("❌ Формат неверен. Отправьте текст или документ.")
-        
-    for line in lines:
-        clean = line.replace('"', '').replace(',', ' ').strip().split()
-        if not clean: continue
-        clean = clean[0]
-        
-        if clean.isdigit():
-            targets.append({'id': int(clean), 'username': None})
-        elif clean.startswith('@'):
-            targets.append({'id': None, 'username': clean[1:]})
-        elif len(clean) >= 3 and clean.isalnum():
-            targets.append({'id': None, 'username': clean})
+
+    targets = []
+    if parsed_lines is not None:
+        # Ручной ввод: одна строка = один пользователь
+        for line in parsed_lines:
+            clean = line.strip()
+            if not clean or clean.startswith('#'):
+                continue
+            if clean.lstrip('-').isdigit():
+                uid = int(clean)
+                if uid > 0:
+                    targets.append({'id': uid, 'username': None})
+            elif clean.startswith('@'):
+                targets.append({'id': None, 'username': clean[1:]})
+            elif len(clean) >= 3 and all(c.isalnum() or c == '_' for c in clean):
+                targets.append({'id': None, 'username': clean})
+    else:
+        # CSV/TXT документ: используем csv.reader для правильного парсинга
+        text_content = file_io.getvalue().decode('utf-8-sig') if hasattr(file_io, 'getvalue') else content
+        reader = csv.reader(_io.StringIO(text_content))
+        for row in reader:
+            if not row:
+                continue
+            # Берем первый непустой столбец (ID или @username)
+            cell = row[0].strip().strip('"')
+            if not cell or cell.startswith('#'):
+                continue
+            if cell.lstrip('-').isdigit():
+                uid = int(cell)
+                if uid > 0:
+                    targets.append({'id': uid, 'username': None})
+            elif cell.startswith('@'):
+                targets.append({'id': None, 'username': cell[1:]})
+            elif len(cell) >= 3 and all(c.isalnum() or c == '_' for c in cell):
+                targets.append({'id': None, 'username': cell})
 
     if not targets:
         return await message.answer("❌ В сообщении или файле не найдено ни одного правильного ID или юзернейма.")
 
     await state.clear()
-    status_msg = await message.answer("⏳ Анализ базы и добавление...")
-    
+    status_msg = await message.answer(f"⏳ Анализ базы и добавление ({len(targets):,} записей)...")
+
     target_ids_to_kick = []
     inserted_count = 0
     added_by = message.from_user.id
-    
+
     import asyncpg
     async with get_pool().acquire() as conn:
         for t in targets:
             if t['username'] and not t['id']:
                 row = await conn.fetchrow("""
-                    SELECT user_id FROM bot_users WHERE LOWER(username) = $1
+                    SELECT user_id FROM bot_users WHERE LOWER(username) = $1 AND user_id IS NOT NULL
                     UNION
-                    SELECT user_id FROM platform_users WHERE LOWER(username) = $1
+                    SELECT user_id FROM platform_users WHERE LOWER(username) = $1 AND user_id IS NOT NULL
                     LIMIT 1
                 """, t['username'].lower())
                 if row and row['user_id']:
                     t['id'] = row['user_id']
-            
-            if t['id']: target_ids_to_kick.append(t['id'])
-                    
+
+            if t['id']:
+                target_ids_to_kick.append(t['id'])
+
             try:
                 if t['id'] and t['username']:
-                    # Step 1: Пытаемся обновить (вылечить) старую запись с пустым ID
-                    res = await conn.execute("""
-                        UPDATE blacklist SET user_id = $1 
-                        WHERE owner_id = $2 AND child_bot_id IS NULL 
+                    # Лечим уже существующую запись без ID
+                    await conn.execute("""
+                        UPDATE blacklist SET user_id = $1
+                        WHERE owner_id = $2 AND child_bot_id IS NULL
                           AND lower(username) = $3 AND user_id IS NULL
                     """, t['id'], owner_id, t['username'].lower())
-                    
-                    # Если строка обновилась, значит она уже присутствовала в базе.
-                    # Но поскольку мы "пропатчили" её ID, мы всё равно отправляем её в рейд.
-                    
-                    # Step 2: Пытаемся вставить как новую (если её вообще не было)
-                    await conn.execute("""
+                    res = await conn.execute("""
                         INSERT INTO blacklist (owner_id, user_id, username, added_by, reason)
                         VALUES ($1, $2, $3, $4, 'Global Admin Block')
+                        ON CONFLICT DO NOTHING
                     """, owner_id, t['id'], t['username'], added_by)
-                    inserted_count += 1
-                    
                 elif t['id']:
-                    await conn.execute("""
+                    res = await conn.execute("""
                         INSERT INTO blacklist (owner_id, user_id, added_by, reason)
                         VALUES ($1, $2, $3, 'Global Admin Block')
+                        ON CONFLICT DO NOTHING
                     """, owner_id, t['id'], added_by)
-                    inserted_count += 1
                 else:
-                    await conn.execute("""
+                    res = await conn.execute("""
                         INSERT INTO blacklist (owner_id, username, added_by, reason)
                         VALUES ($1, $2, $3, 'Global Admin Block')
+                        ON CONFLICT DO NOTHING
                     """, owner_id, t['username'], added_by)
+                if res == "INSERT 0 1":
                     inserted_count += 1
-                
+
                 ident = t['id'] if t['id'] else f"@{t['username']}"
                 await conn.execute("""
                     INSERT INTO audit_log (owner_id, user_id, action, details)
                     VALUES ($1, $2, 'block', $3)
+                    ON CONFLICT DO NOTHING
                 """, owner_id, added_by, json.dumps({"info": f"Blocked user {ident} via FSM"}))
-            except asyncpg.UniqueViolationError:
+            except Exception:
                 pass
 
     kb = [[InlineKeyboardButton(text="◀️ Вернуться в Глобальный ЧС", callback_data=f"ga_bl:{owner_id}")]]
-    text_res = f"✅ <b>Операция завершена!</b>\n\nНовых уникальных записей добавлено: <b>{inserted_count}</b> / {len(targets)}"
+    text_res = (
+        f"✅ <b>Операция завершена!</b>\n\n"
+        f"📥 Обработано строк: <b>{len(targets):,}</b>\n"
+        f"✅ Добавлено новых: <b>{inserted_count:,}</b>\n"
+        f"⚠️ Уже было в базе: <b>{len(targets) - inserted_count:,}</b>"
+    )
     if target_ids_to_kick:
-        text_res += f"\n⏳ <i>Запущен фоновый рейд по всем выбранным проектам для {len(target_ids_to_kick)} пользователей...</i>"
+        text_res += f"\n\n⏳ <i>Запущен фоновый рейд по всем выбранным проектам для {len(target_ids_to_kick):,} пользователей...</i>"
         import asyncio
         asyncio.create_task(_mass_kick_unban_list(owner_id, target_ids_to_kick, turn_on=True))
-        
+
     await status_msg.edit_text(text_res, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
 
 @router.callback_query(F.data.startswith("ga_bl_del:"))

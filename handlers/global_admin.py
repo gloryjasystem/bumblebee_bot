@@ -171,7 +171,7 @@ async def _show_admin_panel(message_or_cb, role: str, owner_id: int, admin_id: i
         sep30 = "━" * 30
         sep8  = "─" * 8
         header = (
-            f"🐝 <b>Bumblebee Bot — Панель управления администратором</b>  •  👑 <b>Владелец</b>\n"
+            f"🐝 <b>Bumblebee Bot — Панель администрирования</b>  •  👑 <b>Владелец</b>\n"
             f"{sep30}\n\n"
             f"🗄️  Активных ботов:  <b>{net_bots}</b> из <b>{total_bots}</b>\n"
             f"👥  Аудитория (активных):  <b>{total_users:,}</b>\n\n"
@@ -183,7 +183,7 @@ async def _show_admin_panel(message_or_cb, role: str, owner_id: int, admin_id: i
         )
     else:
         header = (
-            "🐝 <b>Bumblebee Bot — Панель управления администратором</b>  •  👑 <b>Администратор</b>\n"
+            "🐝 <b>Bumblebee Bot — Панель администрирования</b>  •  👑 <b>Администратор</b>\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
             f"👥  Активная аудитория сети:  <b>{total_users:,}</b>\n"
             f"🚫  Заблокировано в выбранных:  <b>{bl_count:,}</b>"

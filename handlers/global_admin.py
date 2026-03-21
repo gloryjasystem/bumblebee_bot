@@ -152,12 +152,12 @@ async def _show_admin_panel(message_or_cb, role: str, owner_id: int, admin_id: i
 
         admin_count = await conn.fetchval("SELECT COUNT(*) FROM global_admins WHERE owner_id=$1", owner_id) or 0
 
-    status_emoji = "👑 Владелец" if role == 'owner' else "👮‍♂️ Администратор"
+    status_emoji = "👑 Владелец" if role == 'owner' else "👮‍♂️ Админ"
     
     base_text = (
         "🐝 <b>Bumblebee Bot</b>\n"
-        f"🎛 Панель управления  •  {status_emoji}\n"
-        "━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"🎛 Управление  •  {status_emoji}\n"
+        "──────────\n\n"
         f"🤖 Ботов общей базы: <b>{net_bots}</b>\n\n"
         f"👥 Всего пользователей: <b>{pu_total:,}</b>\n"
         f"👨‍💻 Владельцев ботов: <b>{owners_count:,}</b>\n"

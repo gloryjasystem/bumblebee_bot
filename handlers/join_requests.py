@@ -62,49 +62,50 @@ async def on_join_request(event: ChatJoinRequest, bot: Bot):
     user = event.from_user
 
     # 1. Проверка ЧС:
-    #    a) Локальный ЧС бота (если включён у бота)
-    #    b) Глобальный ЧС платформы (только если бот входит в выбранную выборку)
+    #    ГЛОБАЛЬНЫЙ ЧС платформы — работает ВСЕГДА, независимо от локального тумблера бота.
+    #    ЛОКАЛЬНЫЙ ЧС бота — только если у бота включён blacklist_enabled.
+    _cbi = settings_row.get("child_bot_id")
+    is_global_block = False
+    is_local_block = False
+
+    # Глобальный ЧС: проверяем всегда (если бот в выборке и мастер-тумблер включён)
+    if settings_row.get("blacklist_active", True) and settings_row.get("in_global_bl_scope", False):
+        from config import settings as _cfg
+        if await check_blacklist(_cfg.owner_telegram_id, user.id, user.username, child_bot_id=None):
+            is_global_block = True
+
+    # Локальный ЧС: проверяем только если тумблер бота включён
     if settings_row.get("blacklist_enabled", True):
-        _cbi = settings_row.get("child_bot_id")
-        
-        is_global_block = False
-        is_local_block = False
-        
-        if settings_row.get("blacklist_active", True) and settings_row.get("in_global_bl_scope", False):
-            from config import settings as _cfg
-            if await check_blacklist(_cfg.owner_telegram_id, user.id, user.username, child_bot_id=None):
-                is_global_block = True
-                
         if await check_blacklist(owner_id, user.id, user.username, child_bot_id=_cbi):
             is_local_block = True
-            
-        if is_global_block or is_local_block:
-            await event.decline()
-            try:
-                await bot.ban_chat_member(event.chat.id, user.id)
-            except Exception:
-                pass
-            # Счётчик заблокированных
-            await db.execute(
-                "UPDATE platform_users SET blocked_count = blocked_count + 1 WHERE user_id = $1",
-                owner_id,
-            )
-            # Per-bot счётчик ("Заблокировано ботом")
-            child_bot_id = settings_row.get("child_bot_id")
-            if child_bot_id:
-                if is_global_block:
-                    await db.execute(
-                        "UPDATE child_bots SET blocked_count = blocked_count + 1, global_blocked_count = global_blocked_count + 1 WHERE id = $1",
-                        child_bot_id,
-                    )
-                else:
-                    await db.execute(
-                        "UPDATE child_bots SET blocked_count = blocked_count + 1 WHERE id = $1",
-                        child_bot_id,
-                    )
-            await _log_action(owner_id, event.chat.id, "reject_bl", user.id)
-            logger.info(f"[BL] Rejected {user.id} from {event.chat.id} (Global: {is_global_block}, Local: {is_local_block})")
-            return
+
+    if is_global_block or is_local_block:
+        await event.decline()
+        try:
+            await bot.ban_chat_member(event.chat.id, user.id)
+        except Exception:
+            pass
+        # Счётчик заблокированных на платформе
+        await db.execute(
+            "UPDATE platform_users SET blocked_count = blocked_count + 1 WHERE user_id = $1",
+            owner_id,
+        )
+        # Per-bot счётчик
+        child_bot_id = settings_row.get("child_bot_id")
+        if child_bot_id:
+            if is_global_block:
+                await db.execute(
+                    "UPDATE child_bots SET blocked_count = blocked_count + 1, global_blocked_count = global_blocked_count + 1 WHERE id = $1",
+                    child_bot_id,
+                )
+            else:
+                await db.execute(
+                    "UPDATE child_bots SET blocked_count = blocked_count + 1 WHERE id = $1",
+                    child_bot_id,
+                )
+        await _log_action(owner_id, event.chat.id, "reject_bl", user.id)
+        logger.info(f"[BL] Rejected {user.id} from {event.chat.id} (Global: {is_global_block}, Local: {is_local_block})")
+        return
 
     # 2. Языковой фильтр
     # Нормализуем language_code: 'ru-RU' → 'ru', 'en-US' → 'en'
@@ -230,46 +231,46 @@ async def on_member_update(event: ChatMemberUpdated, bot: Bot):
             owner_id, event.chat.id, user.id,
         )
 
+        _cbi = settings_row.get("child_bot_id")
+        is_global_block = False
+        is_local_block = False
+
+        # Глобальный ЧС: проверяем всегда (если бот в выборке и мастер-тумблер включён)
+        if settings_row.get("blacklist_active", True) and settings_row.get("in_global_bl_scope", False):
+            from config import settings as _cfg
+            if await check_blacklist(_cfg.owner_telegram_id, user.id, user.username, child_bot_id=None):
+                is_global_block = True
+
+        # Локальный ЧС: проверяем только если тумблер бота включён
         if settings_row.get("blacklist_enabled", True):
-            _cbi = settings_row.get("child_bot_id")
-            
-            is_global_block = False
-            is_local_block = False
-            
-            if settings_row.get("blacklist_active", True) and settings_row.get("in_global_bl_scope", False):
-                from config import settings as _cfg
-                if await check_blacklist(_cfg.owner_telegram_id, user.id, user.username, child_bot_id=None):
-                    is_global_block = True
-                    
             if await check_blacklist(owner_id, user.id, user.username, child_bot_id=_cbi):
                 is_local_block = True
-                
-            if is_global_block or is_local_block:
-                try:
-                    await bot.ban_chat_member(event.chat.id, user.id)
-                except Exception:
-                    pass
-                # Счётчик заблокированных
-                await db.execute(
-                    "UPDATE platform_users SET blocked_count = blocked_count + 1 WHERE user_id = $1",
-                    owner_id,
-                )
-                # Per-bot счётчик ("Заблокировано ботом")
-                child_bot_id = settings_row.get("child_bot_id")
-                if child_bot_id:
-                    if is_global_block:
-                        await db.execute(
-                            "UPDATE child_bots SET blocked_count = blocked_count + 1, global_blocked_count = global_blocked_count + 1 WHERE id = $1",
-                            child_bot_id,
-                        )
-                    else:
-                        await db.execute(
-                            "UPDATE child_bots SET blocked_count = blocked_count + 1 WHERE id = $1",
-                            child_bot_id,
-                        )
-                await _log_action(owner_id, event.chat.id, "ban_on_join", user.id)
-                logger.info(f"[BL] Banned {user.id} on join to {event.chat.id} (Global: {is_global_block}, Local: {is_local_block})")
-                return
+
+        if is_global_block or is_local_block:
+            try:
+                await bot.ban_chat_member(event.chat.id, user.id)
+            except Exception:
+                pass
+            # Счётчик заблокированных
+            await db.execute(
+                "UPDATE platform_users SET blocked_count = blocked_count + 1 WHERE user_id = $1",
+                owner_id,
+            )
+            child_bot_id = settings_row.get("child_bot_id")
+            if child_bot_id:
+                if is_global_block:
+                    await db.execute(
+                        "UPDATE child_bots SET blocked_count = blocked_count + 1, global_blocked_count = global_blocked_count + 1 WHERE id = $1",
+                        child_bot_id,
+                    )
+                else:
+                    await db.execute(
+                        "UPDATE child_bots SET blocked_count = blocked_count + 1 WHERE id = $1",
+                        child_bot_id,
+                    )
+            await _log_action(owner_id, event.chat.id, "ban_on_join", user.id)
+            logger.info(f"[BL] Banned {user.id} on join to {event.chat.id} (Global: {is_global_block}, Local: {is_local_block})")
+            return
 
         await _register_user(owner_id, event.chat.id, user,
                              invite_link=event.invite_link)

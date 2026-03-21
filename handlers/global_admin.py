@@ -1899,16 +1899,24 @@ async def on_ga_bl(callback: CallbackQuery, state: FSMContext = None):
         [InlineKeyboardButton(text="◀️ Назад", callback_data=f"ga_main:{owner_id}")]
     ]
 
+    # Если текущее сообщение — документ (например, после загрузки CSV), edit_text недоступен.
+    # Проверяем тип и либо редактируем, либо шлём новое сообщение.
     try:
-        await callback.message.edit_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
-    except Exception as e:
-        import logging
-        logging.getLogger(__name__).error(f"Failed to edit message in on_ga_bl: {e}")
+        if callback.message.text or callback.message.caption:
+            await callback.message.edit_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+        else:
+            # Сообщение без текста (документ/фото) — удаляем и отправляем новое
+            try:
+                await callback.message.delete()
+            except Exception:
+                pass
+            await callback.message.answer(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+    except Exception:
+        # Если edit не удался (message too old, etc.) — просто шлём новое
         try:
-            await callback.message.delete()
-        except:
+            await callback.message.answer(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+        except Exception:
             pass
-        await callback.message.answer(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
 
     try:
         await callback.answer()

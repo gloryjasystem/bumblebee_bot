@@ -1632,10 +1632,109 @@ async def _kick_from_all_chats(owner_id: int, target_user_id: int):
     if kicked > 0:
         logger.info(f"[GA KICK] user={target_user_id} kicked from {kicked} chats by admin={admin_id}")
 
+async def _unkick_from_all_chats(owner_id: int, target_user_id: int):
+    """Снимает бан со всех активных площадок ботов в выборке для конкретного пользователя."""
+    from services.security import decrypt_token
+    async with get_pool().acquire() as conn:
+        bots_chats = await conn.fetch("""
+            SELECT cb.token_encrypted, bc.chat_id
+            FROM ga_selected_bots gsb
+            JOIN child_bots cb ON cb.id = gsb.child_bot_id
+            JOIN bot_chats bc ON bc.child_bot_id = cb.id
+            WHERE gsb.owner_id = $1 AND bc.is_active = true
+        """, owner_id)
 
+    import asyncio
+    unkicked = 0
+    for row in bots_chats:
+        token = decrypt_token(row['token_encrypted'])
+        if not token: continue
+        temp_bot = Bot(token=token)
+        try:
+            await temp_bot.unban_chat_member(chat_id=row['chat_id'], user_id=target_user_id)
+            unkicked += 1
+        except Exception:
+            pass
+        finally:
+            await temp_bot.session.close()
+        await asyncio.sleep(0.05)
+
+
+class GlobalBlacklistFSM(StatesGroup):
+    add_user = State()
+    del_user = State()
+
+async def mass_sync_blacklist(owner_id: int, turn_on: bool, admin_id: int, bot: Bot):
+    """Фоновая задача для массовой синхронизации (бан/разбан) всех записей глобального ЧС."""
+    from services.security import decrypt_token
+    import asyncio
+
+    action_text = "блокировка" if turn_on else "разблокировка"
+    try:
+        msg = await bot.send_message(
+            chat_id=admin_id,
+            text=f"⏳ <b>Глобальная синхронизация</b>\n\nНачат процесс массовой операции ({action_text}) по базе ЧС во всех выбранных проектах.\n<i>Пожалуйста, подождите...</i>",
+            parse_mode="HTML"
+        )
+    except Exception:
+        return
+
+    async with get_pool().acquire() as conn:
+        bots_chats = await conn.fetch("""
+            SELECT cb.token_encrypted, bc.chat_id
+            FROM ga_selected_bots gsb
+            JOIN child_bots cb ON cb.id = gsb.child_bot_id
+            JOIN bot_chats bc ON bc.child_bot_id = cb.id
+            WHERE gsb.owner_id = $1 AND bc.is_active = true
+        """, owner_id)
+        
+        selected_bot_ids = [r['child_bot_id'] for r in await conn.fetch("SELECT child_bot_id FROM ga_selected_bots WHERE owner_id=$1", owner_id)]
+        
+        if not selected_bot_ids or not bots_chats:
+            await msg.edit_text("ℹ️ Нет активных каналов выборки для синхронизации.")
+            return
+
+        users = await conn.fetch("""
+            SELECT DISTINCT ON (COALESCE(user_id::text, lower(username))) user_id
+            FROM blacklist
+            WHERE child_bot_id = ANY($1::int[]) OR (owner_id = $2 AND child_bot_id IS NULL)
+        """, selected_bot_ids, owner_id)
+
+    success_count = 0
+    total_actions = len(users) * len(bots_chats)
+    
+    if total_actions == 0:
+        await msg.edit_text("ℹ️ Чёрный список пуст, синхронизация не требуется.")
+        return
+
+    for user_row in users:
+        target_id = user_row['user_id']
+        if not target_id: continue 
+        
+        for chat_row in bots_chats:
+            token = decrypt_token(chat_row['token_encrypted'])
+            if not token: continue
+            
+            temp_bot = Bot(token=token)
+            try:
+                if turn_on:
+                    await temp_bot.ban_chat_member(chat_id=chat_row['chat_id'], user_id=target_id)
+                else:
+                    await temp_bot.unban_chat_member(chat_id=chat_row['chat_id'], user_id=target_id)
+                success_count += 1
+            except Exception:
+                pass
+            finally:
+                await temp_bot.session.close()
+            await asyncio.sleep(0.05) 
+
+    finish_text = "заблокированы" if turn_on else "разблокированы"
+    await msg.edit_text(f"✅ <b>Синхронизация завершена!</b>\n\nПользователи успешно {finish_text} во всех {len(bots_chats)} активных разделах выборки.", parse_mode="HTML")
 
 @router.callback_query(F.data.startswith("ga_bl:"))
-async def on_ga_bl(callback: CallbackQuery):
+async def on_ga_bl(callback: CallbackQuery, state: FSMContext = None):
+    if state:
+        await state.clear()
     role, owner_id = await get_admin_context(callback.from_user.id, callback.from_user.username)
     if not role:
         return await callback.answer("❌ Нет прав", show_alert=True)
@@ -1804,6 +1903,9 @@ async def on_ga_bl_master_toggle(callback: CallbackQuery):
     except Exception:
         pass
     
+    import asyncio
+    asyncio.create_task(mass_sync_blacklist(owner_id, turn_on=new_val, admin_id=callback.from_user.id, bot=callback.bot))
+    
     # Сразу обновляем экран, передав управление в on_ga_bl
     await on_ga_bl(callback)
 
@@ -1918,92 +2020,123 @@ async def _export_bl_csv(bot, chat_id: int, admin_id: int, owner_id: int, msg_to
 
 
 @router.callback_query(F.data.startswith("ga_bl_add:"))
-async def on_ga_bl_add(callback: CallbackQuery):
+async def on_ga_bl_add(callback: CallbackQuery, state: FSMContext):
     owner_id = int(callback.data.split(":")[1])
+    await state.set_state(GlobalBlacklistFSM.add_user)
+    await state.update_data(owner_id=owner_id)
     text = (
-        "➕ <b>Добавить в ЧС</b>\n\n"
-        "Для блокировки пользователя используйте команду:\n"
-        "<code>/block 123456789</code>\n\n"
-        "При блокировке пользователь будет автоматически кикнут изо всех ботов, где включён режим ЧС."
+        "➕ <b>Добавить в Глобальный ЧС</b>\n\n"
+        "Отправьте мне <b>ID</b> или <b>@юзернейм</b> пользователя, которого необходимо заблокировать.\n\n"
+        "<i>Пользователь будет немедленно исключён из всех каналов/групп в вашей активной выборке ботов.</i>"
     )
-    kb = [[InlineKeyboardButton(text="◀️ Назад", callback_data=f"ga_bl:{owner_id}")]]
+    kb = [[InlineKeyboardButton(text="Отмена", callback_data=f"ga_bl:{owner_id}")]]
     await callback.message.edit_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
     await callback.answer()
 
+@router.message(GlobalBlacklistFSM.add_user)
+async def process_ga_bl_add(message: Message, state: FSMContext):
+    data = await state.get_data()
+    owner_id = data.get("owner_id")
+    
+    # Пытаемся распарсить ID или username
+    text = message.text.strip()
+    target_id = None
+    target_username = None
 
-@router.callback_query(F.data.startswith("ga_bl_del:"))
-async def on_ga_bl_del(callback: CallbackQuery):
-    owner_id = int(callback.data.split(":")[1])
-    text = (
-        "➖ <b>Удалить из ЧС</b>\n\n"
-        "Для разблокировки пользователя используйте команду:\n"
-        "<code>/unblock 123456789</code>"
-    )
-    kb = [[InlineKeyboardButton(text="◀️ Назад", callback_data=f"ga_bl:{owner_id}")]]
-    await callback.message.edit_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
-    await callback.answer()
+    if text.isdigit():
+        target_id = int(text)
+    elif text.startswith("@"):
+        target_username = text[1:]
+    else:
+        return await message.answer("❌ Формат неверен. Отправьте числовой ID или @username.")
 
-
-@router.message(Command("block"))
-async def cmd_block(message: Message):
-    role, owner_id = await get_admin_context(message.from_user.id, message.from_user.username)
-    if not role:
-        return await message.answer("❌ Нет прав.")
-        
-    args = message.text.split(maxsplit=1)
-    if len(args) < 2:
-        return await message.answer("❌ Формат: <code>/block &lt;user_id&gt;</code>")
-        
-    try:
-        target_id = int(args[1])
-    except ValueError:
-        return await message.answer("❌ Укажите числовой ID пользователя.")
-
-    import asyncpg
+    await state.clear()
+    
     async with get_pool().acquire() as conn:
         try:
-            await conn.execute("""
-                INSERT INTO blacklist (owner_id, user_id, added_by, reason)
-                VALUES ($1, $2, $3, 'Global Admin Block')
-            """, owner_id, target_id, message.from_user.id)
-            # Запись в журнал
+            if target_id:
+                await conn.execute("""
+                    INSERT INTO blacklist (owner_id, user_id, added_by, reason)
+                    VALUES ($1, $2, $3, 'Global Admin Block')
+                """, owner_id, target_id, message.from_user.id)
+            else:
+                await conn.execute("""
+                    INSERT INTO blacklist (owner_id, username, added_by, reason)
+                    VALUES ($1, $2, $3, 'Global Admin Block')
+                """, owner_id, target_username, message.from_user.id)
+                
+            ident = target_id if target_id else f"@{target_username}"
             await conn.execute("""
                 INSERT INTO audit_log (owner_id, user_id, action, details)
                 VALUES ($1, $2, 'block', $3)
-            """, owner_id, message.from_user.id,
-                json.dumps({"info": f"Blocked user {target_id} via /block"}))
-            await message.answer(f"✅ Пользователь <code>{target_id}</code> занесён в Глобальный ЧС.\nНачинаю блокировку во всех активных ботах...", parse_mode="HTML")
-            import asyncio
-            asyncio.create_task(_kick_from_all_chats(owner_id, target_id))
+            """, owner_id, message.from_user.id, json.dumps({"info": f"Blocked user {ident} via FSM"}))
+            
+            kb = [[InlineKeyboardButton(text="◀️ Вернуться в Глобальный ЧС", callback_data=f"ga_bl:{owner_id}")]]
+            
+            if target_id:
+                import asyncio
+                asyncio.create_task(_kick_from_all_chats(owner_id, target_id))
+                await message.answer(f"✅ Пользователь <code>{target_id}</code> добавлен в Глобальный ЧС!\n⏳ <i>Запущен зачисточный рейд по всем выбранным проектам...</i>", parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+            else:
+                await message.answer(f"✅ Пользователь @{target_username} добавлен в Глобальный ЧС!\n⚠️ <i>(Глобальный кик по юзернейму технически невозможен до его первой попытки написать в чат, но заявки будут автоматически отклоняться)</i>", parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+                
         except asyncpg.UniqueViolationError:
-            await message.answer("⚠️ Пользователь уже находится в Глобальном ЧС.")
+            kb = [[InlineKeyboardButton(text="◀️ Назад", callback_data=f"ga_bl:{owner_id}")]]
+            await message.answer("⚠️ Пользователь уже находится в Глобальном ЧС.", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
 
+@router.callback_query(F.data.startswith("ga_bl_del:"))
+async def on_ga_bl_del(callback: CallbackQuery, state: FSMContext):
+    owner_id = int(callback.data.split(":")[1])
+    await state.set_state(GlobalBlacklistFSM.del_user)
+    await state.update_data(owner_id=owner_id)
+    text = (
+        "➖ <b>Удалить из Глобального ЧС</b>\n\n"
+        "Отправьте мне <b>ID</b> или <b>@юзернейм</b> пользователя для разблокировки."
+    )
+    kb = [[InlineKeyboardButton(text="Отмена", callback_data=f"ga_bl:{owner_id}")]]
+    await callback.message.edit_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+    await callback.answer()
 
-@router.message(Command("unblock"))
-async def cmd_unblock(message: Message):
-    role, owner_id = await get_admin_context(message.from_user.id, message.from_user.username)
-    if not role:
-        return await message.answer("❌ Нет прав.")
-        
-    args = message.text.split(maxsplit=1)
-    if len(args) < 2:
-        return await message.answer("❌ Формат: <code>/unblock &lt;user_id&gt;</code>")
+@router.message(GlobalBlacklistFSM.del_user)
+async def process_ga_bl_del(message: Message, state: FSMContext):
+    data = await state.get_data()
+    owner_id = data.get("owner_id")
+    
+    text = message.text.strip()
+    target_id = None
+    target_username = None
 
-    try:
-        target_id = int(args[1])
-    except ValueError:
-        return await message.answer("❌ Укажите числовой ID пользователя.")
+    if text.isdigit():
+        target_id = int(text)
+    elif text.startswith("@"):
+        target_username = text[1:]
+    else:
+        return await message.answer("❌ Формат неверен. Отправьте числовой ID или @username.")
 
+    await state.clear()
+    
+    kb = [[InlineKeyboardButton(text="◀️ Вернуться", callback_data=f"ga_bl:{owner_id}")]]
+    
     async with get_pool().acquire() as conn:
-        res = await conn.execute("DELETE FROM blacklist WHERE owner_id=$1 AND user_id=$2", owner_id, target_id)
-        if res == "DELETE 0":
-            await message.answer(f"⚠️ Пользователя <code>{target_id}</code> нет в Глобальном ЧС.")
+        if target_id:
+            res = await conn.execute("DELETE FROM blacklist WHERE owner_id=$1 AND user_id=$2 AND child_bot_id IS NULL", owner_id, target_id)
         else:
+            res = await conn.execute("DELETE FROM blacklist WHERE owner_id=$1 AND username=$2 AND child_bot_id IS NULL", owner_id, target_username)
+            
+        if res == "DELETE 0":
+            await message.answer("⚠️ Пользователя нет в Глобальном ЧС.", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+        else:
+            ident = target_id if target_id else f"@{target_username}"
             await conn.execute("""
                 INSERT INTO audit_log (owner_id, user_id, action, details)
                 VALUES ($1, $2, 'unblock', $3)
-            """, owner_id, message.from_user.id, json.dumps({"info": f"Unblocked user {target_id} via /unblock"}))
-            await message.answer(f"✅ Пользователь <code>{target_id}</code> удалён из Глобального ЧС.", parse_mode="HTML")
+            """, owner_id, message.from_user.id, json.dumps({"info": f"Unblocked user {ident} via FSM"}))
+            
+            if target_id:
+                import asyncio
+                asyncio.create_task(_unkick_from_all_chats(owner_id, target_id))
+            
+            await message.answer(f"✅ Пользователь <code>{ident}</code> удалён из Глобального ЧС.", parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
 
 
 import tempfile

@@ -1689,12 +1689,11 @@ async def on_ga_bl(callback: CallbackQuery):
         [InlineKeyboardButton(text="◀️ Назад", callback_data=f"ga_main:{owner_id}")]
     ]
 
-    if callback.message.text:
-        try:
-            await callback.message.edit_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
-        except Exception:
-            pass
-    else:
+    try:
+        await callback.message.edit_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"Failed to edit message in on_ga_bl: {e}")
         try:
             await callback.message.delete()
         except:
@@ -1730,9 +1729,12 @@ async def on_ga_bl_master_toggle(callback: CallbackQuery):
         """, owner_id, callback.from_user.id,
             json.dumps({"info": "Blacklist ENABLED" if new_val else "Blacklist DISABLED"}))
 
-    alert = ("✅ ЧС включён — защита активна, записи блокируют вход" if new_val
-            else "⛔ ЧС выключен — пользователи из ЧС могут войти")
-    await callback.answer()   # тихо, без попапа
+    try:
+        await callback.answer()   # тихо, без попапа
+    except Exception:
+        pass
+    
+    # Сразу обновляем экран, передав управление в on_ga_bl
     callback.data = f"ga_bl:{owner_id}"
     await on_ga_bl(callback)
 

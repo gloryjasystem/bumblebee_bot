@@ -1335,17 +1335,41 @@ def _period_tabs_kb(owner_id: int, section: str, current_period: str) -> InlineK
 # ── Main screen builder (СЕТЬ БОТОВ only) ──────────────────────────────────
 
 async def _build_network_text(owner_id: int, conn) -> str:
-    total_bots   = await conn.fetchval("SELECT COUNT(*) FROM child_bots WHERE owner_id=$1", owner_id) or 0
-    total_chats  = await conn.fetchval("SELECT COUNT(*) FROM bot_chats WHERE owner_id=$1 AND is_active=true", owner_id) or 0
-    total_owners = await conn.fetchval("SELECT COUNT(*) FROM platform_users") or 0
+    from datetime import datetime
+    
+    # ── 1. БЕЗОПАСНОСТЬ И ЗАЩИТА ──
+    total_bl = await conn.fetchval("SELECT COUNT(*) FROM blacklist") or 0
+    total_prevented = await conn.fetchval("SELECT SUM(blocked_count) FROM child_bots") or 0
+
+    # ── 2. ТРАФИК И АУДИТОРИЯ ──
+    total_audience = await conn.fetchval("SELECT COUNT(*) FROM bot_users") or 0
+    new_users_24h = await conn.fetchval("SELECT COUNT(*) FROM bot_users WHERE joined_at >= NOW() - INTERVAL '24 hours'") or 0
+    active_bots = await conn.fetchval("SELECT COUNT(*) FROM child_bots") or 0
+    
+    # ── 3. ПЛАТФОРМА ──
+    active_chats = await conn.fetchval("SELECT COUNT(*) FROM bot_chats WHERE is_active=true") or 0
+    paid_owners = await conn.fetchval("SELECT COUNT(*) FROM platform_users WHERE tariff != 'free'") or 0
+    
+    report_time = datetime.now().strftime("%d.%m.%Y в %H:%M")
+
+    # Форматирование тысячных разделителей через пробел
+    fmt = lambda x: f"{x:,}".replace(",", " ")
 
     return (
-        "📊 <b>Аналитика BotCloud</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        "🤖 <b>СЕТЬ БОТОВ</b>\n"
-        f"🗄️  Подключено ботов:  <b>{total_bots}</b>\n"
-        f"📡  Активных каналов/групп:  <b>{total_chats}</b>\n"
-        f"👤  Владельцев ботов:  <b>{total_owners}</b>"
+        "📊 <b>Аналитика Bumblebee Bot</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        "🛡 <b>БЕЗОПАСНОСТЬ И ЗАЩИТА</b>\n"
+        f"├ В глобальном ЧС: <b>{fmt(total_bl)}</b>\n"
+        f"└ Предотвращено вторжений: <b>{fmt(total_prevented)}</b>\n\n"
+        "⚡ <b>ТРАФИК И АУДИТОРИЯ</b>\n"
+        f"├ Суммарный охват сети: <b>{fmt(total_audience)}</b> чел.\n"
+        f"├ Прирост (за 24 часа): <b>+{fmt(new_users_24h)}</b>\n"
+        f"└ Активных ботов в работе: <b>{fmt(active_bots)}</b>\n\n"
+        "💎 <b>ПЛАТФОРМА</b>\n"
+        f"├ Управляется каналов/групп: <b>{fmt(active_chats)}</b>\n"
+        f"└ Клиентов с подпиской (PRO+): <b>{fmt(paid_owners)}</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"🕒 <i>Актуально на: {report_time}</i>"
     )
 
 

@@ -106,41 +106,50 @@ async def add_to_blacklist(owner_id: int, user_id: int | None, username: str | N
     """
     uname_lower = username.lower() if username else None
 
-    # Явная проверка существования — не зависит от индексов
+    # Step 1: Пытаемся вылечить пустой ID, если пришел и ID, и username
+    if user_id and uname_lower:
+        if child_bot_id is not None:
+            updated = await db.execute(
+                "UPDATE blacklist SET user_id=$1 WHERE owner_id=$2 AND child_bot_id=$3 AND lower(username)=$4 AND user_id IS NULL",
+                user_id, owner_id, child_bot_id, uname_lower
+            )
+        else:
+            updated = await db.execute(
+                "UPDATE blacklist SET user_id=$1 WHERE owner_id=$2 AND child_bot_id IS NULL AND lower(username)=$3 AND user_id IS NULL",
+                user_id, owner_id, uname_lower
+            )
+        # Если обновили — значит запись там уже была пустой, теперь мы её починили
+        if updated == "UPDATE 1":
+            return True
+
+    # Step 2: Проверяем, существует ли уже такая запись (по ID или Юзернейму)
     if child_bot_id is not None:
         if user_id:
-            exists = await db.fetchval(
-                "SELECT 1 FROM blacklist WHERE owner_id=$1 AND child_bot_id=$2 AND user_id=$3",
-                owner_id, child_bot_id, user_id,
-            )
+            exists = await db.fetchval("SELECT 1 FROM blacklist WHERE owner_id=$1 AND child_bot_id=$2 AND user_id=$3", owner_id, child_bot_id, user_id)
         else:
-            exists = await db.fetchval(
-                "SELECT 1 FROM blacklist WHERE owner_id=$1 AND child_bot_id=$2 AND lower(username)=lower($3)",
-                owner_id, child_bot_id, uname_lower,
-            )
+            exists = await db.fetchval("SELECT 1 FROM blacklist WHERE owner_id=$1 AND child_bot_id=$2 AND lower(username)=$3", owner_id, child_bot_id, uname_lower)
     else:
         if user_id:
-            exists = await db.fetchval(
-                "SELECT 1 FROM blacklist WHERE owner_id=$1 AND child_bot_id IS NULL AND user_id=$2",
-                owner_id, user_id,
-            )
+            exists = await db.fetchval("SELECT 1 FROM blacklist WHERE owner_id=$1 AND child_bot_id IS NULL AND user_id=$2", owner_id, user_id)
         else:
-            exists = await db.fetchval(
-                "SELECT 1 FROM blacklist WHERE owner_id=$1 AND child_bot_id IS NULL AND lower(username)=lower($2)",
-                owner_id, uname_lower,
-            )
+            exists = await db.fetchval("SELECT 1 FROM blacklist WHERE owner_id=$1 AND child_bot_id IS NULL AND lower(username)=$3", owner_id, uname_lower)
 
     if exists:
-        return False  # уже в базе
+        return False  # уже в базе полностью
 
-    result = await db.execute(
-        """
-        INSERT INTO blacklist (owner_id, user_id, username, child_bot_id)
-        VALUES ($1, $2, $3, $4)
-        """,
-        owner_id, user_id, uname_lower, child_bot_id,
-    )
-    return result == "INSERT 0 1"
+    # Step 3: Вставляем
+    import asyncpg
+    try:
+        result = await db.execute(
+            """
+            INSERT INTO blacklist (owner_id, user_id, username, child_bot_id)
+            VALUES ($1, $2, $3, $4)
+            """,
+            owner_id, user_id, uname_lower, child_bot_id,
+        )
+        return result == "INSERT 0 1"
+    except asyncpg.UniqueViolationError:
+        return False
 
 
 async def _get_chats_with_tokens(owner_id: int, child_bot_id: int | None = None) -> list:
@@ -306,15 +315,70 @@ async def import_file(owner_id: int, content: bytes, filename: str, child_bot_id
     newly_added = []
 
     if rows:
-        # Из-за возможных больших списков делаем это батчами
+        from services.blacklist import resolve_username_to_id
+        
         for i in range(0, len(rows), 1000):
             batch = rows[i:i+1000]
             existing_uids = set()
             existing_unames = set()
             
-            # Собираем всех user_id и username из батча
-            batch_uids = [r[1] for r in batch if r[1] is not None]
-            batch_unames = [r[2].lower() for r in batch if r[2] is not None]
+            # Step 1: Deep Resolve Missing IDs
+            # Находим никнеймы, для которых нет ID 
+            unames_to_resolve = [r[2].lower() for r in batch if r[1] is None and r[2] is not None]
+            resolved_map = {}
+            if unames_to_resolve:
+                # Массовый резолв по всей базе
+                res_rows = await db.fetch(
+                    """
+                    SELECT DISTINCT user_id, lower(username) as uname FROM (
+                        SELECT user_id, username FROM bot_users WHERE lower(username) = ANY($1::text[]) AND user_id IS NOT NULL
+                        UNION
+                        SELECT user_id, username FROM platform_users WHERE lower(username) = ANY($1::text[]) AND user_id IS NOT NULL
+                        UNION
+                        SELECT user_id, username FROM blacklist WHERE lower(username) = ANY($1::text[]) AND user_id IS NOT NULL
+                        UNION
+                        SELECT user_id, username FROM join_requests WHERE lower(username) = ANY($1::text[]) AND user_id IS NOT NULL
+                    ) t
+                    """,
+                    unames_to_resolve
+                )
+                for rr in res_rows:
+                    resolved_map[rr["uname"]] = rr["user_id"]
+
+            # Формируем итоговый батч с подставленными ID
+            enriched_batch = []
+            for r in batch:
+                uid, uname = r[1], r[2]
+                if not uid and uname and uname.lower() in resolved_map:
+                    uid = resolved_map[uname.lower()]
+                enriched_batch.append((owner_id, uid, uname, child_bot_id))
+
+            # Step 2: Обновляем существующие записи (Лечим NULL user_ids)
+            # Если юзернейм уже был в ЧС с пустым ID, мы его заполним, не удаляя запись!
+            update_tuples = [(r[1], r[2].lower()) for r in enriched_batch if r[1] is not None and r[2] is not None]
+            if update_tuples:
+                if child_bot_id:
+                    upd_query = """
+                    UPDATE blacklist AS b
+                    SET user_id = v.user_id::bigint
+                    FROM (SELECT * FROM UNNEST($1::bigint[], $2::text[])) AS v(user_id, username)
+                    WHERE b.owner_id = $3 AND b.child_bot_id = $4
+                      AND lower(b.username) = v.username AND b.user_id IS NULL
+                    """
+                    await db.execute(upd_query, [t[0] for t in update_tuples], [t[1] for t in update_tuples], owner_id, child_bot_id)
+                else:
+                    upd_query = """
+                    UPDATE blacklist AS b
+                    SET user_id = v.user_id::bigint
+                    FROM (SELECT * FROM UNNEST($1::bigint[], $2::text[])) AS v(user_id, username)
+                    WHERE b.owner_id = $3 AND b.child_bot_id IS NULL
+                      AND lower(b.username) = v.username AND b.user_id IS NULL
+                    """
+                    await db.execute(upd_query, [t[0] for t in update_tuples], [t[1] for t in update_tuples], owner_id)
+            
+            # Step 3: Собираем existing, чтобы отсеять полные дубликаты перед INSERT
+            batch_uids = [r[1] for r in enriched_batch if r[1] is not None]
+            batch_unames = [r[2].lower() for r in enriched_batch if r[2] is not None]
             
             if batch_uids:
                 if child_bot_id:
@@ -330,20 +394,28 @@ async def import_file(owner_id: int, content: bytes, filename: str, child_bot_id
                     res = await db.fetch("SELECT lower(username) as uname FROM blacklist WHERE owner_id=$1 AND child_bot_id IS NULL AND lower(username) = ANY($2)", owner_id, batch_unames)
                 existing_unames.update(r["uname"] for r in res)
                 
-            # Фильтруем батч: оставляем только тех, кого нет в базе
+            # Фильтруем батч: добавляем только тех, кого СОВСЕМ нет в базе (ни по ID, ни по юзернейму)
             to_insert = []
-            for r in batch:
+            for r in enriched_batch:
                 uid, uname = r[1], r[2]
+                
+                # Если у нас есть ID, и в базе уже есть запись с таким ID - пропускаем
                 if uid and uid in existing_uids:
                     duplicates += 1
+                    # Мы всё равно передаем его для кика (с пушнутым ID)
+                    newly_added.append({"user_id": uid, "username": uname})
                     continue
-                if uname and uname.lower() in existing_unames:
+                    
+                # Если у нас НЕТ ID (только юзернейм), и в базе есть запись с таким юзернеймом - пропускаем
+                # (Если у нас ЕСТЬ ID, и в базе есть запись с таким юзернеймом, мы ее уже обновили в Step 2)
+                if uname and uname.lower() in existing_unames and not uid:
                     duplicates += 1
+                    newly_added.append({"user_id": uid, "username": uname})
                     continue
+                    
                 to_insert.append(r)
-                newly_added.append({"user_id": uid, "username": uname})
+                newly_added.append({"user_id": uid, "username": uname})  # С точным Resolved UID!
                 
-                # Добавляем в локальный existing_*, чтобы не дублировать внутри одного файла
                 if uid: existing_uids.add(uid)
                 if uname: existing_unames.add(uname.lower())
 

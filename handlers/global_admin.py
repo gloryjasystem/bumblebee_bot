@@ -1629,12 +1629,14 @@ async def _kick_from_all_chats(owner_id: int, target_user_id: int):
             await temp_bot.session.close()
         await asyncio.sleep(0.05)
 
-    if kicked > 0:
-        logger.info(f"[GA KICK] user={target_user_id} kicked from {kicked} chats by admin={admin_id}")
-
-async def _unkick_from_all_chats(owner_id: int, target_user_id: int):
-    """Снимает бан со всех активных площадок ботов в выборке для конкретного пользователя."""
+async def _mass_kick_unban_list(owner_id: int, target_user_ids: list, turn_on: bool):
+    """Снимает/ставит бан со всех активных площадок ботов в выборке для КОНКРЕТНОГО списка пользователей."""
+    if not target_user_ids:
+        return
+        
     from services.security import decrypt_token
+    import asyncio
+    
     async with get_pool().acquire() as conn:
         bots_chats = await conn.fetch("""
             SELECT cb.token_encrypted, bc.chat_id
@@ -1644,20 +1646,25 @@ async def _unkick_from_all_chats(owner_id: int, target_user_id: int):
             WHERE gsb.owner_id = $1 AND bc.is_active = true
         """, owner_id)
 
-    import asyncio
-    unkicked = 0
-    for row in bots_chats:
-        token = decrypt_token(row['token_encrypted'])
+    if not bots_chats:
+        return
+
+    for chat_row in bots_chats:
+        token = decrypt_token(chat_row['token_encrypted'])
         if not token: continue
         temp_bot = Bot(token=token)
         try:
-            await temp_bot.unban_chat_member(chat_id=row['chat_id'], user_id=target_user_id)
-            unkicked += 1
-        except Exception:
-            pass
+            for target_id in target_user_ids:
+                try:
+                    if turn_on:
+                        await temp_bot.ban_chat_member(chat_id=chat_row['chat_id'], user_id=target_id)
+                    else:
+                        await temp_bot.unban_chat_member(chat_id=chat_row['chat_id'], user_id=target_id)
+                except Exception:
+                    pass
+                await asyncio.sleep(0.05)
         finally:
             await temp_bot.session.close()
-        await asyncio.sleep(0.05)
 
 
 class GlobalBlacklistFSM(StatesGroup):
@@ -2026,63 +2033,123 @@ async def on_ga_bl_add(callback: CallbackQuery, state: FSMContext):
     await state.update_data(owner_id=owner_id)
     text = (
         "➕ <b>Добавить в Глобальный ЧС</b>\n\n"
-        "Отправьте мне <b>ID</b> или <b>@юзернейм</b> пользователя, которого необходимо заблокировать.\n\n"
-        "<i>Пользователь будет немедленно исключён из всех каналов/групп в вашей активной выборке ботов.</i>"
+        "Отправьте мне <b>ID</b>, <b>@юзернейм</b> ИЛИ загрузите <b>документ (.txt / .csv)</b> со списком.\n\n"
+        "<i>Пользователи будут немедленно исключены из всех каналов/групп в вашей активной выборке ботов.</i>"
     )
     kb = [[InlineKeyboardButton(text="Отмена", callback_data=f"ga_bl:{owner_id}")]]
     await callback.message.edit_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
     await callback.answer()
 
 @router.message(GlobalBlacklistFSM.add_user)
-async def process_ga_bl_add(message: Message, state: FSMContext):
+async def process_ga_bl_add(message: Message, state: FSMContext, bot: Bot):
     data = await state.get_data()
     owner_id = data.get("owner_id")
     
-    # Пытаемся распарсить ID или username
-    text = message.text.strip()
-    target_id = None
-    target_username = None
-
-    if text.isdigit():
-        target_id = int(text)
-    elif text.startswith("@"):
-        target_username = text[1:]
+    targets = []
+    if message.text:
+        lines = [message.text.strip()]
+    elif message.document:
+        if not message.document.file_name.lower().endswith(('.txt', '.csv')):
+            return await message.answer("❌ Поддерживаются только форматы .txt и .csv")
+        
+        status_msg = await message.answer("⏳ Читаю файл...")
+        import io
+        file_io = io.BytesIO()
+        await bot.download(message.document, destination=file_io)
+        try:
+            content = file_io.getvalue().decode('utf-8-sig')
+        except:
+            return await status_msg.edit_text("❌ Ошибка кодировки файла. Пожалуйста, используйте UTF-8.")
+        lines = content.splitlines()
+        await status_msg.delete()
     else:
-        return await message.answer("❌ Формат неверен. Отправьте числовой ID или @username.")
+        return await message.answer("❌ Формат неверен. Отправьте текст или документ.")
+        
+    for line in lines:
+        clean = line.replace('"', '').replace(',', ' ').strip().split()
+        if not clean: continue
+        clean = clean[0]
+        
+        if clean.isdigit():
+            targets.append({'id': int(clean), 'username': None})
+        elif clean.startswith('@'):
+            targets.append({'id': None, 'username': clean[1:]})
+        elif len(clean) >= 3 and clean.isalnum():
+            targets.append({'id': None, 'username': clean})
+
+    if not targets:
+        return await message.answer("❌ В сообщении или файле не найдено ни одного правильного ID или юзернейма.")
 
     await state.clear()
+    status_msg = await message.answer("⏳ Анализ базы и добавление...")
     
+    target_ids_to_kick = []
+    inserted_count = 0
+    added_by = message.from_user.id
+    
+    import asyncpg
     async with get_pool().acquire() as conn:
-        try:
-            if target_id:
-                await conn.execute("""
-                    INSERT INTO blacklist (owner_id, user_id, added_by, reason)
-                    VALUES ($1, $2, $3, 'Global Admin Block')
-                """, owner_id, target_id, message.from_user.id)
-            else:
-                await conn.execute("""
-                    INSERT INTO blacklist (owner_id, username, added_by, reason)
-                    VALUES ($1, $2, $3, 'Global Admin Block')
-                """, owner_id, target_username, message.from_user.id)
-                
-            ident = target_id if target_id else f"@{target_username}"
-            await conn.execute("""
-                INSERT INTO audit_log (owner_id, user_id, action, details)
-                VALUES ($1, $2, 'block', $3)
-            """, owner_id, message.from_user.id, json.dumps({"info": f"Blocked user {ident} via FSM"}))
+        for t in targets:
+            if t['username'] and not t['id']:
+                row = await conn.fetchrow("""
+                    SELECT user_id FROM bot_users WHERE LOWER(username) = $1
+                    UNION
+                    SELECT user_id FROM platform_users WHERE LOWER(username) = $1
+                    LIMIT 1
+                """, t['username'].lower())
+                if row and row['user_id']:
+                    t['id'] = row['user_id']
             
-            kb = [[InlineKeyboardButton(text="◀️ Вернуться в Глобальный ЧС", callback_data=f"ga_bl:{owner_id}")]]
-            
-            if target_id:
-                import asyncio
-                asyncio.create_task(_kick_from_all_chats(owner_id, target_id))
-                await message.answer(f"✅ Пользователь <code>{target_id}</code> добавлен в Глобальный ЧС!\n⏳ <i>Запущен зачисточный рейд по всем выбранным проектам...</i>", parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
-            else:
-                await message.answer(f"✅ Пользователь @{target_username} добавлен в Глобальный ЧС!\n⚠️ <i>(Глобальный кик по юзернейму технически невозможен до его первой попытки написать в чат, но заявки будут автоматически отклоняться)</i>", parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+            if t['id']: target_ids_to_kick.append(t['id'])
+                    
+            try:
+                if t['id'] and t['username']:
+                    # Step 1: Пытаемся обновить (вылечить) старую запись с пустым ID
+                    res = await conn.execute("""
+                        UPDATE blacklist SET user_id = $1 
+                        WHERE owner_id = $2 AND child_bot_id IS NULL 
+                          AND lower(username) = $3 AND user_id IS NULL
+                    """, t['id'], owner_id, t['username'].lower())
+                    
+                    # Если строка обновилась, значит она уже присутствовала в базе.
+                    # Но поскольку мы "пропатчили" её ID, мы всё равно отправляем её в рейд.
+                    
+                    # Step 2: Пытаемся вставить как новую (если её вообще не было)
+                    await conn.execute("""
+                        INSERT INTO blacklist (owner_id, user_id, username, added_by, reason)
+                        VALUES ($1, $2, $3, $4, 'Global Admin Block')
+                    """, owner_id, t['id'], t['username'], added_by)
+                    inserted_count += 1
+                    
+                elif t['id']:
+                    await conn.execute("""
+                        INSERT INTO blacklist (owner_id, user_id, added_by, reason)
+                        VALUES ($1, $2, $3, 'Global Admin Block')
+                    """, owner_id, t['id'], added_by)
+                    inserted_count += 1
+                else:
+                    await conn.execute("""
+                        INSERT INTO blacklist (owner_id, username, added_by, reason)
+                        VALUES ($1, $2, $3, 'Global Admin Block')
+                    """, owner_id, t['username'], added_by)
+                    inserted_count += 1
                 
-        except asyncpg.UniqueViolationError:
-            kb = [[InlineKeyboardButton(text="◀️ Назад", callback_data=f"ga_bl:{owner_id}")]]
-            await message.answer("⚠️ Пользователь уже находится в Глобальном ЧС.", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+                ident = t['id'] if t['id'] else f"@{t['username']}"
+                await conn.execute("""
+                    INSERT INTO audit_log (owner_id, user_id, action, details)
+                    VALUES ($1, $2, 'block', $3)
+                """, owner_id, added_by, json.dumps({"info": f"Blocked user {ident} via FSM"}))
+            except asyncpg.UniqueViolationError:
+                pass
+
+    kb = [[InlineKeyboardButton(text="◀️ Вернуться в Глобальный ЧС", callback_data=f"ga_bl:{owner_id}")]]
+    text_res = f"✅ <b>Операция завершена!</b>\n\nНовых уникальных записей добавлено: <b>{inserted_count}</b> / {len(targets)}"
+    if target_ids_to_kick:
+        text_res += f"\n⏳ <i>Запущен фоновый рейд по всем выбранным проектам для {len(target_ids_to_kick)} пользователей...</i>"
+        import asyncio
+        asyncio.create_task(_mass_kick_unban_list(owner_id, target_ids_to_kick, turn_on=True))
+        
+    await status_msg.edit_text(text_res, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
 
 @router.callback_query(F.data.startswith("ga_bl_del:"))
 async def on_ga_bl_del(callback: CallbackQuery, state: FSMContext):
@@ -2091,52 +2158,94 @@ async def on_ga_bl_del(callback: CallbackQuery, state: FSMContext):
     await state.update_data(owner_id=owner_id)
     text = (
         "➖ <b>Удалить из Глобального ЧС</b>\n\n"
-        "Отправьте мне <b>ID</b> или <b>@юзернейм</b> пользователя для разблокировки."
+        "Отправьте мне <b>ID</b>, <b>@юзернейм</b> ИЛИ загрузите <b>документ (.txt / .csv)</b> со списком.\n\n"
+        "<i>Пользователи будут немедленно разблокированы во всех каналах/группах выборки.</i>"
     )
     kb = [[InlineKeyboardButton(text="Отмена", callback_data=f"ga_bl:{owner_id}")]]
     await callback.message.edit_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
     await callback.answer()
 
 @router.message(GlobalBlacklistFSM.del_user)
-async def process_ga_bl_del(message: Message, state: FSMContext):
+async def process_ga_bl_del(message: Message, state: FSMContext, bot: Bot):
     data = await state.get_data()
     owner_id = data.get("owner_id")
     
-    text = message.text.strip()
-    target_id = None
-    target_username = None
-
-    if text.isdigit():
-        target_id = int(text)
-    elif text.startswith("@"):
-        target_username = text[1:]
+    targets = []
+    if message.text:
+        lines = [message.text.strip()]
+    elif message.document:
+        if not message.document.file_name.lower().endswith(('.txt', '.csv')):
+            return await message.answer("❌ Поддерживаются только форматы .txt и .csv")
+        
+        status_msg = await message.answer("⏳ Читаю файл...")
+        import io
+        file_io = io.BytesIO()
+        await bot.download(message.document, destination=file_io)
+        try:
+            content = file_io.getvalue().decode('utf-8-sig')
+        except:
+            return await status_msg.edit_text("❌ Ошибка кодировки файла. Пожалуйста, используйте UTF-8.")
+        lines = content.splitlines()
+        await status_msg.delete()
     else:
-        return await message.answer("❌ Формат неверен. Отправьте числовой ID или @username.")
+        return await message.answer("❌ Формат неверен. Отправьте текст или документ.")
+        
+    for line in lines:
+        clean = line.replace('"', '').replace(',', ' ').strip().split()
+        if not clean: continue
+        clean = clean[0]
+        
+        if clean.isdigit():
+            targets.append({'id': int(clean), 'username': None})
+        elif clean.startswith('@'):
+            targets.append({'id': None, 'username': clean[1:]})
+        elif len(clean) >= 3 and clean.isalnum():
+            targets.append({'id': None, 'username': clean})
+
+    if not targets:
+        return await message.answer("❌ Не найдено ни одного правильного ID или юзернейма.")
 
     await state.clear()
+    status_msg = await message.answer("⏳ Анализ базы и удаление...")
     
-    kb = [[InlineKeyboardButton(text="◀️ Вернуться", callback_data=f"ga_bl:{owner_id}")]]
+    target_ids_to_unban = []
+    deleted_count = 0
     
     async with get_pool().acquire() as conn:
-        if target_id:
-            res = await conn.execute("DELETE FROM blacklist WHERE owner_id=$1 AND user_id=$2 AND child_bot_id IS NULL", owner_id, target_id)
-        else:
-            res = await conn.execute("DELETE FROM blacklist WHERE owner_id=$1 AND username=$2 AND child_bot_id IS NULL", owner_id, target_username)
+        for t in targets:
+            if t['username'] and not t['id']:
+                row = await conn.fetchrow("""
+                    SELECT user_id FROM bot_users WHERE LOWER(username) = $1
+                    UNION
+                    SELECT user_id FROM platform_users WHERE LOWER(username) = $1
+                    LIMIT 1
+                """, t['username'].lower())
+                if row and row['user_id']:
+                    t['id'] = row['user_id']
             
-        if res == "DELETE 0":
-            await message.answer("⚠️ Пользователя нет в Глобальном ЧС.", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
-        else:
-            ident = target_id if target_id else f"@{target_username}"
-            await conn.execute("""
-                INSERT INTO audit_log (owner_id, user_id, action, details)
-                VALUES ($1, $2, 'unblock', $3)
-            """, owner_id, message.from_user.id, json.dumps({"info": f"Unblocked user {ident} via FSM"}))
+            if t['id']: target_ids_to_unban.append(t['id'])
             
-            if target_id:
-                import asyncio
-                asyncio.create_task(_unkick_from_all_chats(owner_id, target_id))
-            
-            await message.answer(f"✅ Пользователь <code>{ident}</code> удалён из Глобального ЧС.", parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+            if t['id']:
+                res = await conn.execute("DELETE FROM blacklist WHERE owner_id=$1 AND user_id=$2 AND child_bot_id IS NULL", owner_id, t['id'])
+            else:
+                res = await conn.execute("DELETE FROM blacklist WHERE owner_id=$1 AND username=$2 AND child_bot_id IS NULL", owner_id, t['username'])
+                
+            if res != "DELETE 0":
+                deleted_count += 1
+                ident = t['id'] if t['id'] else f"@{t['username']}"
+                await conn.execute("""
+                    INSERT INTO audit_log (owner_id, user_id, action, details)
+                    VALUES ($1, $2, 'unblock', $3)
+                """, owner_id, message.from_user.id, json.dumps({"info": f"Unblocked user {ident} via FSM bulk"}))
+
+    kb = [[InlineKeyboardButton(text="◀️ Вернуться", callback_data=f"ga_bl:{owner_id}")]]
+    text_res = f"✅ <b>Операция завершена!</b>\n\nОчищено записей из ЧС: <b>{deleted_count}</b> / {len(targets)}"
+    if target_ids_to_unban:
+        text_res += f"\n⏳ <i>Запущен процесс разблокировки {len(target_ids_to_unban)} пользователей по всем выбранным проектам...</i>"
+        import asyncio
+        asyncio.create_task(_mass_kick_unban_list(owner_id, target_ids_to_unban, turn_on=False))
+        
+    await status_msg.edit_text(text_res, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
 
 
 import tempfile

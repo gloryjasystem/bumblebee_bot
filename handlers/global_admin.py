@@ -1820,9 +1820,9 @@ async def on_ga_bl(callback: CallbackQuery, state: FSMContext = None):
         return await callback.answer("❌ Нет прав", show_alert=True)
 
     async with get_pool().acquire() as conn:
-        # 1. Получаем список выбранных ботов (с их id и статистикой блокировок)
+        # 1. Получаем список выбранных ботов (с их id и обоими счетчиками блокировок)
         selected_bots = await conn.fetch("""
-            SELECT cb.id, cb.bot_username, cb.global_blocked_count
+            SELECT cb.id, cb.bot_username, cb.blocked_count, cb.global_blocked_count
             FROM ga_selected_bots gsb
             JOIN child_bots cb ON cb.id = gsb.child_bot_id
             WHERE gsb.owner_id = $1
@@ -1836,25 +1836,33 @@ async def on_ga_bl(callback: CallbackQuery, state: FSMContext = None):
         )
         bl_active = pu_row['blacklist_active'] if pu_row and pu_row['blacklist_active'] is not None else True
 
-        # 3. Подсчитываем статистику строго для выбранных ботов + глобальный ЧС платформы
+        # 3. Независимые счетчики записей: Глобальный ЧС (наши) vs Локальные ЧС (юзеров ботов)
+        # Глобальный ЧС — записи загруженные администратором (child_bot_id IS NULL)
+        global_record_count = await conn.fetchval(
+            "SELECT COUNT(*) FROM blacklist WHERE owner_id=$1 AND child_bot_id IS NULL", owner_id
+        ) or 0
+
         if selected_bot_ids:
-            # Уникальные записи базы (как при экспорте CSV)
-            bl_count = await conn.fetchval("""
-                SELECT COUNT(*) FROM (
-                    SELECT DISTINCT ON (COALESCE(user_id::text, lower(username))) user_id
-                    FROM blacklist
-                    WHERE child_bot_id = ANY($1::int[]) OR (owner_id = $2 AND child_bot_id IS NULL)
-                ) t
-            """, selected_bot_ids, owner_id) or 0
-            
-            # Суммируем глобально обоснованные блокировки этими ботами
-            total_blocked = sum((r['global_blocked_count'] or 0) for r in selected_bots)
+            # Локальные ЧС — уникальные записи в базах выбранных ботов (только child_bot_id)
+            local_record_count = await conn.fetchval("""
+                SELECT COUNT(DISTINCT COALESCE(user_id::text, lower(username)))
+                FROM blacklist
+                WHERE child_bot_id = ANY($1::int[])
+            """, selected_bot_ids) or 0
+
+            # Суммарные блокировки: global_blocked — только наш ЧС, total — все боты
+            total_global_blocked = sum((r['global_blocked_count'] or 0) for r in selected_bots)
+            total_all_blocked = sum((r['blocked_count'] or 0) for r in selected_bots)
+            # Локальные блокировки = все минус влияние глобального ЧС
+            total_local_blocked = max(0, total_all_blocked - total_global_blocked)
         else:
-            # Если боты не выбраны — показываем только глобальный размер базы платформы (child_bot_id IS NULL)
-            bl_count = await conn.fetchval(
-                "SELECT COUNT(*) FROM blacklist WHERE owner_id=$1 AND child_bot_id IS NULL", owner_id
-            ) or 0
-            total_blocked = 0
+            local_record_count = 0
+            total_global_blocked = 0
+            total_all_blocked = 0
+            total_local_blocked = 0
+
+        bl_count = global_record_count + local_record_count
+        total_blocked = total_all_blocked
 
     bots_list = ("\n".join(f"• @{r['bot_username']}" for r in selected_bots)
                  if selected_bots else
@@ -1868,11 +1876,14 @@ async def on_ga_bl(callback: CallbackQuery, state: FSMContext = None):
         toggle_text = "☑️ ЧС: Выключен 🔴"
 
     text = (
-        "🚫 <b>Глобальный Чёрный Список</b>\n"
-        "─────────────────────────────\n"
+        "🚫 <b>Глобальный Чёрный Список</b>\n\n"
         f"{shield}\n\n"
-        f"📂 Записей в базе: <b>{bl_count}</b>\n"
-        f"🚫 Заблокировано всего: <b>{total_blocked:,}</b>\n\n"
+        f"🗄 <b>База ЧС: {bl_count} записей</b>\n"
+        f"├ Глобальный (наш): <b>{global_record_count}</b>\n"
+        f"└ ЧС пользователей: <b>{local_record_count}</b>\n\n"
+        f"🛡 <b>Нейтрализовано угроз: {total_blocked:,}</b>\n"
+        f"├ Нашим глоб. ЧС: <b>{total_global_blocked:,}</b>\n"
+        f"└ ЧС пользов. ботов: <b>{total_local_blocked:,}</b>\n\n"
         f"🤖 <b>Распространяется на ботов:</b>\n{bots_list}\n\n"
         "<i>Управлять ботами — '🗄️ Управление общей базой'</i>"
     )

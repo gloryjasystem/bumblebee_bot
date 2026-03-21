@@ -152,19 +152,21 @@ async def _show_admin_panel(message_or_cb, role: str, owner_id: int, admin_id: i
 
         admin_count = await conn.fetchval("SELECT COUNT(*) FROM global_admins WHERE owner_id=$1", owner_id) or 0
 
-    status_emoji = "👑 Владелец" if role == 'owner' else "👮‍♂️ Админ"
-    
-    base_text = (
-        "🐝 <b>Bumblebee Bot</b>\n"
-        f"🎛 Управление  •  {status_emoji}\n"
-        "──────────\n\n"
-        f"🤖 Ботов общей базы: <b>{net_bots}</b>\n\n"
-        f"👥 Всего пользователей: <b>{pu_total:,}</b>\n"
-        f"👨‍💻 Владельцев ботов: <b>{owners_count:,}</b>\n"
-        f"💎 Платные подписки: <b>{clients_count:,}</b>\n"
-        f"🔥 Создателей (2+ ботов): <b>{active_creators:,}</b>\n\n"
-        f"🚫 В чёрном списке: <b>{bl_count:,}</b>"
-    )
+    status = "👑 ВЛАДЕЛЕЦ" if role == 'owner' else "👮‍♂️ АДМИН"
+
+    blocks = [
+        "<b>🐝 BUMBLEBEE BOT</b>",
+        
+        "<b>🎛 ПАНЕЛЬ УПРАВЛЕНИЯ</b>\n"
+        f"├ 👤 <b>Статус:</b> {status}\n"
+        f"└ 🤖 <b>Ботов в сети:</b> {net_bots}",
+        
+        "<b>📊 АУДИТОРИЯ ПЛАТФОРМЫ</b>\n"
+        f"├ 👥 <b>Всего пользователей:</b> {pu_total:,}\n"
+        f"├ 👨‍💻 <b>Владельцев ботов:</b> {owners_count:,}\n"
+        f"├ 💎 <b>Клиентов платформы:</b> {clients_count:,}\n"
+        f"└ 🔥 <b>Создателей (2+ ботов):</b> {active_creators:,}"
+    ]
 
     if role == 'owner':
         async with get_pool().acquire() as conn:
@@ -174,19 +176,27 @@ async def _show_admin_panel(message_or_cb, role: str, owner_id: int, admin_id: i
             tariff_rows = await conn.fetch(
                 "SELECT tariff, COUNT(*) AS cnt FROM platform_users GROUP BY tariff ORDER BY cnt DESC LIMIT 5"
             )
-        tariff_str = "  \u2022  ".join(
-            f"<b>{r['tariff'].title()}</b>\u202f{r['cnt']}" for r in tariff_rows
-        ) if tariff_rows else "\u2014"
+        tariff_str = " • ".join(
+            f"{r['tariff'].title()} <b>{r['cnt']}</b>" for r in tariff_rows
+        ) if tariff_rows else "—"
         
-        header = (
-            f"{base_text}\n"
-            f"🧑‍💼 Моя команда: <b>{admin_count}</b>\n\n"
-            f"📊 <b>Статистика по тарифам</b>\n"
-            f"📎 {tariff_str}\n"
-            f"✨ Прирост (7 дней): <b>+{pu_new7}</b>"
+        blocks.append(
+            "<b>🛡 БЕЗОПАСНОСТЬ И СЕТЬ</b>\n"
+            f"├ 🚫 <b>В чёрном списке:</b> {bl_count:,}\n"
+            f"└ 🧑‍💼 <b>Моя команда:</b> {admin_count}"
+        )
+        blocks.append(
+            "<b>💳 СТАТИСТИКА И ТАРИФЫ</b>\n"
+            f"├ ✨ <b>Прирост (за 7 дней):</b> +{pu_new7}\n"
+            f"└ 📎 <b>Распределение:</b> {tariff_str}"
         )
     else:
-        header = base_text
+        blocks.append(
+            "<b>🛡 БЕЗОПАСНОСТЬ</b>\n"
+            f"└ 🚫 <b>В чёрном списке:</b> {bl_count:,}"
+        )
+
+    header = "\n\n".join(blocks)
 
     kb = []
     if role == 'owner':

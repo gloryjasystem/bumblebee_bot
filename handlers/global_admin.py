@@ -1732,29 +1732,20 @@ async def on_ga_bl_clear_confirm(callback: CallbackQuery):
         return await callback.answer("❌ Нет прав", show_alert=True)
     
     async with get_pool().acquire() as conn:
-        selected_bot_ids_rows = await conn.fetch(
-            "SELECT child_bot_id FROM ga_selected_bots WHERE owner_id=$1", owner_id
-        )
-        selected_bot_ids = [r['child_bot_id'] for r in selected_bot_ids_rows]
-        
-        if selected_bot_ids:
-            bl_count = await conn.fetchval("""
-                SELECT COUNT(*) FROM blacklist 
-                WHERE child_bot_id = ANY($1::int[]) OR (owner_id = $2 AND child_bot_id IS NULL)
-            """, selected_bot_ids, owner_id) or 0
-        else:
-            bl_count = await conn.fetchval(
-                "SELECT COUNT(*) FROM blacklist WHERE owner_id=$1 AND child_bot_id IS NULL", owner_id
-            ) or 0
+        bl_count_global = await conn.fetchval(
+            "SELECT COUNT(*) FROM blacklist WHERE owner_id=$1 AND child_bot_id IS NULL", owner_id
+        ) or 0
             
-    if bl_count == 0:
-        return await callback.answer("🗑 База ЧС уже пуста!", show_alert=True)
+    if bl_count_global == 0:
+        return await callback.answer("🗑 Ваш Глобальный Чёрный Список уже абсолютно пуст!", show_alert=True)
 
     text = (
-        "⚠️ <b>Очистка Чёрного Списка</b>\n"
+        "⚠️ <b>Очистка Глобального ЧС</b>\n"
         "─────────────────────────────\n"
-        "Вы точно уверены, что хотите безвозвратно удалить <b>всю</b> базу черного списка для текущей выборки?\n\n"
-        f"<i>Будет удалено записей: {bl_count}</i>"
+        "Вы уверены, что хотите безвозвратно удалить <b>ВЕСЬ</b> ваш глобальный черный список бота?\n\n"
+        "✅ <i>Не переживайте: локальные базы данных пользователей (черные списки в их дочерних ботах) "
+        "затронуты <b>НЕ будут</b>. Удаляются только глобальные блокировки!</i>\n\n"
+        f"<i>Будет удалено ваших глобальных записей: {bl_count_global}</i>"
     )
 
     kb = [
@@ -1774,22 +1765,12 @@ async def on_ga_bl_clear_yes(callback: CallbackQuery):
         return await callback.answer("❌ Нет прав", show_alert=True)
 
     async with get_pool().acquire() as conn:
-        selected_bot_ids_rows = await conn.fetch(
-            "SELECT child_bot_id FROM ga_selected_bots WHERE owner_id=$1", owner_id
+        # Удаляем ТОЛЬКО глобальные записи администратора платформы (child_bot_id IS NULL).
+        await conn.execute(
+            "DELETE FROM blacklist WHERE owner_id=$1 AND child_bot_id IS NULL", owner_id
         )
-        selected_bot_ids = [r['child_bot_id'] for r in selected_bot_ids_rows]
-        
-        if selected_bot_ids:
-            await conn.execute("""
-                DELETE FROM blacklist 
-                WHERE child_bot_id = ANY($1::int[]) OR (owner_id = $2 AND child_bot_id IS NULL)
-            """, selected_bot_ids, owner_id)
-        else:
-            await conn.execute(
-                "DELETE FROM blacklist WHERE owner_id=$1 AND child_bot_id IS NULL", owner_id
-            )
             
-    await callback.answer("✅ Чёрный список успешно очищен!", show_alert=True)
+    await callback.answer("✅ ВАШ Глобальный Чёрный список полностью очищен!", show_alert=True)
     await on_ga_bl(callback)
 
 

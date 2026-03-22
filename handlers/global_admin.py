@@ -1798,45 +1798,51 @@ async def mass_sync_blacklist(owner_id: int, turn_on: bool, admin_id: int, bot: 
         return
 
     async with get_pool().acquire() as conn:
+        # Только каналы выбранных ботов (с child_bot_id для последующего обновления счётчиков)
         bots_chats = await conn.fetch("""
-            SELECT cb.token_encrypted, bc.chat_id
+            SELECT cb.id AS child_bot_id, cb.token_encrypted, bc.chat_id
             FROM ga_selected_bots gsb
             JOIN child_bots cb ON cb.id = gsb.child_bot_id
             JOIN bot_chats bc ON bc.child_bot_id = cb.id
             WHERE gsb.owner_id = $1 AND bc.is_active = true
         """, owner_id)
-        
-        selected_bot_ids = [r['child_bot_id'] for r in await conn.fetch("SELECT child_bot_id FROM ga_selected_bots WHERE owner_id=$1", owner_id)]
-        
-        if not selected_bot_ids or not bots_chats:
+
+        if not bots_chats:
             await msg.edit_text("ℹ️ Нет активных каналов выборки для синхронизации.")
             return
 
+        # ТОЛЬКО записи Глобального ЧС платформы (child_bot_id IS NULL)
         users = await conn.fetch("""
-            SELECT DISTINCT ON (COALESCE(user_id::text, lower(username))) user_id
+            SELECT DISTINCT user_id
             FROM blacklist
-            WHERE child_bot_id = ANY($1::int[]) OR (owner_id = $2 AND child_bot_id IS NULL)
-        """, selected_bot_ids, owner_id)
+            WHERE owner_id = $1 AND child_bot_id IS NULL AND user_id IS NOT NULL
+        """, owner_id)
 
-    success_count = 0
-    total_actions = len(users) * len(bots_chats)
-    
-    if total_actions == 0:
-        await msg.edit_text("ℹ️ Чёрный список пуст, синхронизация не требуется.")
+    if not users:
+        await msg.edit_text("ℹ️ Глобальный ЧС пуст, синхронизация не требуется.")
         return
+
+    # per_bot_success[child_bot_id] = количество успешных банов
+    per_bot_success: dict[int, int] = {}
+    success_count = 0
 
     for user_row in users:
         target_id = user_row['user_id']
-        if not target_id: continue 
-        
+        if not target_id:
+            continue
+
         for chat_row in bots_chats:
             token = decrypt_token(chat_row['token_encrypted'])
-            if not token: continue
-            
+            if not token:
+                continue
+
             temp_bot = Bot(token=token)
             try:
                 if turn_on:
                     await temp_bot.ban_chat_member(chat_id=chat_row['chat_id'], user_id=target_id)
+                    # Считаем успешные баны для каждого бота
+                    cid = chat_row['child_bot_id']
+                    per_bot_success[cid] = per_bot_success.get(cid, 0) + 1
                 else:
                     await temp_bot.unban_chat_member(chat_id=chat_row['chat_id'], user_id=target_id)
                 success_count += 1
@@ -1844,10 +1850,26 @@ async def mass_sync_blacklist(owner_id: int, turn_on: bool, admin_id: int, bot: 
                 pass
             finally:
                 await temp_bot.session.close()
-            await asyncio.sleep(0.05) 
+            await asyncio.sleep(0.05)
+
+    # Обновляем статистику только при бане (включение ЧС)
+    if turn_on and per_bot_success:
+        async with get_pool().acquire() as conn:
+            for cid, count in per_bot_success.items():
+                await conn.execute("""
+                    UPDATE child_bots
+                    SET global_blocked_count = global_blocked_count + $1,
+                        blocked_count = blocked_count + $1
+                    WHERE id = $2
+                """, count, cid)
 
     finish_text = "заблокированы" if turn_on else "разблокированы"
-    await msg.edit_text(f"✅ <b>Синхронизация завершена!</b>\n\nПользователи успешно {finish_text} во всех {len(bots_chats)} активных разделах выборки.", parse_mode="HTML")
+    await msg.edit_text(
+        f"✅ <b>Синхронизация завершена!</b>\n\n"
+        f"Пользователи из Глобального ЧС успешно {finish_text} "
+        f"во всех {len(bots_chats)} активных разделах выборки.",
+        parse_mode="HTML"
+    )
 
 @router.callback_query(F.data.startswith("ga_bl:"))
 async def on_ga_bl(callback: CallbackQuery, state: FSMContext = None):

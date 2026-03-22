@@ -2265,18 +2265,10 @@ async def process_ga_bl_add(message: Message, state: FSMContext, bot: Bot):
     async with get_pool().acquire() as conn:
         for t in targets:
             if t['username'] and not t['id']:
-                row = await conn.fetchrow("""
-                    SELECT user_id FROM bot_users WHERE LOWER(username) = $1 AND user_id IS NOT NULL
-                    UNION
-                    SELECT user_id FROM platform_users WHERE LOWER(username) = $1 AND user_id IS NOT NULL
-                    UNION
-                    SELECT user_id FROM blacklist WHERE LOWER(username) = $1 AND user_id IS NOT NULL
-                    UNION
-                    SELECT user_id FROM join_requests WHERE LOWER(username) = $1 AND user_id IS NOT NULL
-                    LIMIT 1
-                """, t['username'].lower())
-                if row and row['user_id']:
-                    t['id'] = row['user_id']
+                from services.blacklist import resolve_username_to_id
+                resolved_id = await resolve_username_to_id(t['username'], owner_id=owner_id, child_bot_id=None)
+                if resolved_id:
+                    t['id'] = resolved_id
 
             if t['id']:
                 target_ids_to_kick.append(t['id'])

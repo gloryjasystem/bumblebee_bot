@@ -1727,7 +1727,7 @@ async def _mass_kick_unban_list(owner_id: int, target_user_ids: list, turn_on: b
             )
             for bot_id, cnt in kicked_per_bot.items():
                 await conn.execute(
-                    "UPDATE child_bots SET blocked_count = blocked_count + $1 WHERE id = $2",
+                    "UPDATE child_bots SET blocked_count = blocked_count + $1, global_blocked_count = global_blocked_count + $1 WHERE id = $2",
                     cnt, bot_id
                 )
 

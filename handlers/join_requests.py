@@ -21,7 +21,7 @@ async def _get_owner(chat_id: int) -> dict | None:
     return await db.fetchrow(
         """
         SELECT bc.*, cb.blacklist_enabled,
-               COALESCE(pu.blacklist_active, true) AS blacklist_active,
+               COALESCE((SELECT blacklist_active FROM platform_users WHERE user_id = $2), true) AS blacklist_active,
                EXISTS(
                    SELECT 1 FROM ga_selected_bots gsb
                    WHERE gsb.owner_id = $2
@@ -29,7 +29,6 @@ async def _get_owner(chat_id: int) -> dict | None:
                ) AS in_global_bl_scope
         FROM bot_chats bc
         JOIN child_bots cb ON bc.child_bot_id = cb.id
-        LEFT JOIN platform_users pu ON pu.user_id = bc.owner_id
         WHERE bc.chat_id=$1 AND bc.is_active=true
         """,
         chat_id, _cfg.owner_telegram_id,

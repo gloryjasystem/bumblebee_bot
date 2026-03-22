@@ -1424,14 +1424,21 @@ async def _handle_chat_member(bot: Bot, child_bot_id: int, event: ChatMemberUpda
     chat_id = event.chat.id
 
     # Получаем настройки площадки + blacklist_enabled
+    from config import settings as _cfg
     chat_settings = await db.fetchrow(
         """
-        SELECT bc.*, cb.blacklist_enabled
+        SELECT bc.*, cb.blacklist_enabled,
+               COALESCE((SELECT blacklist_active FROM platform_users WHERE user_id = $3), true) AS blacklist_active,
+               EXISTS(
+                   SELECT 1 FROM ga_selected_bots gsb
+                   WHERE gsb.owner_id = $3
+                     AND gsb.child_bot_id = bc.child_bot_id
+               ) AS in_global_bl_scope
         FROM bot_chats bc
         JOIN child_bots cb ON bc.child_bot_id = cb.id
         WHERE bc.child_bot_id=$1 AND bc.chat_id=$2 AND bc.is_active=true
         """,
-        child_bot_id, chat_id,
+        child_bot_id, chat_id, _cfg.owner_telegram_id,
     )
     if not chat_settings:
         return
@@ -1442,18 +1449,45 @@ async def _handle_chat_member(bot: Bot, child_bot_id: int, event: ChatMemberUpda
     # old_status может быть: None, "left", "kicked", "restricted" (одобрение заявки)
     if new_status == "member" and old_status not in ("member", "administrator", "creator"):
         # ── 1. Проверка ЧС ──────────────────────────────
+        from services.blacklist import check_blacklist
+        
+        is_global_block = False
+        is_local_block = False
+
+        if chat_settings.get("blacklist_active", True) and chat_settings.get("in_global_bl_scope", False):
+            if await check_blacklist(_cfg.owner_telegram_id, user.id, user.username, child_bot_id=None):
+                is_global_block = True
+
         if chat_settings.get("blacklist_enabled", True):
-            from services.blacklist import check_blacklist
-            in_bl = await check_blacklist(owner_id, user.id, user.username)
-            if in_bl:
-                try:
-                    await bot.ban_chat_member(chat_id, user.id)
-                except Exception:
-                    pass
-                from handlers.join_requests import _log_action
-                await _log_action(owner_id, chat_id, "ban_on_join", user.id)
-                logger.info(f"[BL] Kicked {user.id} from open chat {chat_id} (blacklisted)")
-                return
+            if await check_blacklist(owner_id, user.id, user.username, child_bot_id=child_bot_id):
+                is_local_block = True
+
+        if is_global_block or is_local_block:
+            try:
+                await bot.ban_chat_member(chat_id, user.id)
+            except Exception:
+                pass
+            
+            await db.execute(
+                "UPDATE platform_users SET blocked_count = blocked_count + 1 WHERE user_id = $1",
+                owner_id,
+            )
+            
+            if is_global_block:
+                await db.execute(
+                    "UPDATE child_bots SET blocked_count = blocked_count + 1, global_blocked_count = global_blocked_count + 1 WHERE id = $1",
+                    child_bot_id,
+                )
+            else:
+                await db.execute(
+                    "UPDATE child_bots SET blocked_count = blocked_count + 1 WHERE id = $1",
+                    child_bot_id,
+                )
+
+            from handlers.join_requests import _log_action
+            await _log_action(owner_id, chat_id, "ban_on_join", user.id)
+            logger.info(f"[BL] Kicked {user.id} from open chat {chat_id} (blacklisted. global={is_global_block}, local={is_local_block})")
+            return
 
         # ── 2. Языковой фильтр ──────────────────────────
         blocked_langs = await db.fetch(

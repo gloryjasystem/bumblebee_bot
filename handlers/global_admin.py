@@ -1886,6 +1886,7 @@ async def on_ga_bl(callback: CallbackQuery, state: FSMContext = None):
                 SELECT COUNT(DISTINCT COALESCE(user_id::text, lower(username)))
                 FROM blacklist
                 WHERE child_bot_id = ANY($1::int[])
+                  AND child_bot_id IS NOT NULL
             """, selected_bot_ids) or 0
 
             # Суммарные блокировки: global_blocked — только наш ЧС, total — все боты

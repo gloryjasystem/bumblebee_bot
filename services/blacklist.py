@@ -312,22 +312,49 @@ async def import_file(owner_id: int, content: bytes, filename: str, child_bot_id
     except UnicodeDecodeError:
         text = content.decode("latin-1")
 
+    import csv as _csv
+    import io as _io
+
+    is_csv = filename.lower().endswith(".csv")
     rows = []
     added = duplicates = invalid = 0
 
-    for line_no, line in enumerate(text.splitlines(), start=1):
-        # Защита 4: каждая строка обернута в try/except — креш файла не сломает весь импорт
+    if is_csv:
+        reader = _csv.reader(_io.StringIO(text))
+        lines_iter = list(reader)
+    else:
+        lines_iter = [[line] for line in text.splitlines()]
+
+    for line_no, cells in enumerate(lines_iter, start=1):
         try:
-            parsed = parse_blacklist_line(line)
+            # Skip header rows (if first cell looks like a column name)
+            if line_no == 1 and cells and not cells[0].strip().lstrip("@").isdigit():
+                first = cells[0].strip().lower()
+                if first in ("user_id", "id", "username", "user", "#"):
+                    continue
+
+            parsed = None
+            for cell in cells:
+                cell = cell.strip()
+                if not cell:
+                    continue
+                result = parse_blacklist_line(cell)
+                if result is not None:
+                    parsed = result
+                    break  # first valid token in the row wins
+
             if parsed is None:
-                if line.strip() and not line.startswith("#"):
+                # Count as invalid only if the row has non-empty content
+                if any(c.strip() for c in cells):
                     invalid += 1
                 continue
+
             rows.append((owner_id, parsed["user_id"], parsed["username"], child_bot_id))
         except Exception as e:
-            logger.error(f"[BL IMPORT] Parse error at line {line_no}: {e!r} | raw: {line[:80]!r}")
+            logger.error(f"[BL IMPORT] Parse error at line {line_no}: {e!r} | raw: {str(cells)[:80]!r}")
             invalid += 1
             continue
+
 
     newly_added = []
 

@@ -55,25 +55,36 @@ async def resolve_username_to_id(username: str, owner_id: int | None = None, chi
     finally:
         await master_bot.session.close()
 
-    # 3. Пробуем через child_bot (он может видеть юзера в своём канале)
+    # 3. Пробуем через getChatMember по юзернейму в каналах выбранных ботов
+    #    get_chat(@username) работает ТОЛЬКО для каналов/ботов, но не для обычных пользователей.
+    #    getChatMember(chat_id, @username) работает, если пользователь состоит в этом чате.
     bot_ids_to_try = []
     if child_bot_id:
         bot_ids_to_try.append(child_bot_id)
     elif owner_id:
-        # Для глобального ЧС проверяем все выбранные боты админа
         rows = await db.fetch("SELECT child_bot_id FROM ga_selected_bots WHERE owner_id=$1", owner_id)
         bot_ids_to_try.extend(r['child_bot_id'] for r in rows)
 
     if bot_ids_to_try:
         from services.security import decrypt_token
-        bot_rows = await db.fetch("SELECT id, token_encrypted FROM child_bots WHERE id = ANY($1::int[])", bot_ids_to_try)
+        bot_rows = await db.fetch(
+            "SELECT cb.id, cb.token_encrypted, bc.chat_id "
+            "FROM child_bots cb "
+            "JOIN bot_chats bc ON bc.child_bot_id = cb.id "
+            "WHERE cb.id = ANY($1::int[]) AND bc.is_active = true",
+            bot_ids_to_try
+        )
         for bot_row in bot_rows:
             try:
                 async with Bot(token=decrypt_token(bot_row["token_encrypted"])).context() as child_bot:
-                    chat = await child_bot.get_chat(f"@{uname_clean}")
-                    if chat and chat.id:
-                        logger.info(f"[BL RESOLVE] @{uname_clean} → {chat.id} (via child bot {bot_row['id']})")
-                        return chat.id
+                    member = await child_bot.get_chat_member(
+                        chat_id=bot_row["chat_id"],
+                        user_id=f"@{uname_clean}"
+                    )
+                    if member and member.user and member.user.id:
+                        uid = member.user.id
+                        logger.info(f"[BL RESOLVE] @{uname_clean} → {uid} (via getChatMember in {bot_row['chat_id']})")
+                        return uid
             except Exception:
                 continue
 

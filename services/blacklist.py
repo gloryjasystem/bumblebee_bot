@@ -50,14 +50,13 @@ async def resolve_username_to_id(username: str, owner_id: int | None = None, chi
         if chat and chat.id:
             logger.info(f"[BL RESOLVE] @{uname_clean} → {chat.id} (via master bot)")
             return chat.id
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"[BL RESOLVE] Master bot failed to resolve @{uname_clean}: {e}")
     finally:
         await master_bot.session.close()
 
-    # 3. Пробуем через getChatMember по юзернейму в каналах выбранных ботов
-    #    get_chat(@username) работает ТОЛЬКО для каналов/ботов, но не для обычных пользователей.
-    #    getChatMember(chat_id, @username) работает, если пользователь состоит в этом чате.
+    # 3. Пробуем через get_chat по юзернейму в каналах выбранных ботов
+    #    (Telegram Bot API позволяет это только если пользователь когда-то пересекался с ботом)
     bot_ids_to_try = []
     if child_bot_id:
         bot_ids_to_try.append(child_bot_id)
@@ -77,15 +76,13 @@ async def resolve_username_to_id(username: str, owner_id: int | None = None, chi
         for bot_row in bot_rows:
             try:
                 async with Bot(token=decrypt_token(bot_row["token_encrypted"])).context() as child_bot:
-                    member = await child_bot.get_chat_member(
-                        chat_id=bot_row["chat_id"],
-                        user_id=f"@{uname_clean}"
-                    )
-                    if member and member.user and member.user.id:
-                        uid = member.user.id
-                        logger.info(f"[BL RESOLVE] @{uname_clean} → {uid} (via getChatMember in {bot_row['chat_id']})")
+                    chat = await child_bot.get_chat(f"@{uname_clean}")
+                    if chat and chat.id:
+                        uid = chat.id
+                        logger.info(f"[BL RESOLVE] @{uname_clean} → {uid} (via getChat in {bot_row['chat_id']})")
                         return uid
-            except Exception:
+            except Exception as e:
+                logger.warning(f"[BL RESOLVE] Child bot {bot_row['id']} failed to resolve @{uname_clean}: {e}")
                 continue
 
     logger.debug(f"[BL RESOLVE] Cannot resolve @{uname_clean}")

@@ -2269,6 +2269,10 @@ async def process_ga_bl_add(message: Message, state: FSMContext, bot: Bot):
                     SELECT user_id FROM bot_users WHERE LOWER(username) = $1 AND user_id IS NOT NULL
                     UNION
                     SELECT user_id FROM platform_users WHERE LOWER(username) = $1 AND user_id IS NOT NULL
+                    UNION
+                    SELECT user_id FROM blacklist WHERE LOWER(username) = $1 AND user_id IS NOT NULL
+                    UNION
+                    SELECT user_id FROM join_requests WHERE LOWER(username) = $1 AND user_id IS NOT NULL
                     LIMIT 1
                 """, t['username'].lower())
                 if row and row['user_id']:

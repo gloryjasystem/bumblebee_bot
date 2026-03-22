@@ -56,18 +56,26 @@ async def resolve_username_to_id(username: str, owner_id: int | None = None, chi
         await master_bot.session.close()
 
     # 3. Пробуем через child_bot (он может видеть юзера в своём канале)
+    bot_ids_to_try = []
     if child_bot_id:
-        try:
-            from services.security import decrypt_token
-            bot_row = await db.fetchrow("SELECT token_encrypted FROM child_bots WHERE id=$1", child_bot_id)
-            if bot_row:
+        bot_ids_to_try.append(child_bot_id)
+    elif owner_id:
+        # Для глобального ЧС проверяем все выбранные боты админа
+        rows = await db.fetch("SELECT child_bot_id FROM ga_selected_bots WHERE owner_id=$1", owner_id)
+        bot_ids_to_try.extend(r['child_bot_id'] for r in rows)
+
+    if bot_ids_to_try:
+        from services.security import decrypt_token
+        bot_rows = await db.fetch("SELECT id, token_encrypted FROM child_bots WHERE id = ANY($1::int[])", bot_ids_to_try)
+        for bot_row in bot_rows:
+            try:
                 async with Bot(token=decrypt_token(bot_row["token_encrypted"])).context() as child_bot:
                     chat = await child_bot.get_chat(f"@{uname_clean}")
                     if chat and chat.id:
-                        logger.info(f"[BL RESOLVE] @{uname_clean} → {chat.id} (via child bot {child_bot_id})")
+                        logger.info(f"[BL RESOLVE] @{uname_clean} → {chat.id} (via child bot {bot_row['id']})")
                         return chat.id
-        except Exception:
-            pass
+            except Exception:
+                continue
 
     logger.debug(f"[BL RESOLVE] Cannot resolve @{uname_clean}")
     return None

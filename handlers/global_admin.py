@@ -2831,7 +2831,7 @@ async def on_broadcast_message_received(message: Message, state: FSMContext):
                 JOIN bot_chats bc ON bu.chat_id = bc.chat_id
                 JOIN child_bots cb ON cb.id = bc.child_bot_id
                 WHERE bc.owner_id = $1 AND bu.user_id IS NOT NULL
-                ORDER BY bu.user_id, bu.created_at ASC
+                ORDER BY bu.user_id, bu.joined_at ASC
             """, owner_id)
         elif segment == "active":
             rows = await conn.fetch("""
@@ -2840,7 +2840,7 @@ async def on_broadcast_message_received(message: Message, state: FSMContext):
                 JOIN bot_chats bc ON bu.chat_id = bc.chat_id
                 JOIN child_bots cb ON cb.id = bc.child_bot_id
                 WHERE bc.owner_id = $1 AND bu.user_id IS NOT NULL AND bu.is_active = true
-                ORDER BY bu.user_id, bu.created_at ASC
+                ORDER BY bu.user_id, bu.joined_at ASC
             """, owner_id)
         else:
             tariff_filter = ""
@@ -2858,7 +2858,7 @@ async def on_broadcast_message_received(message: Message, state: FSMContext):
                 JOIN child_bots cb ON cb.id = bc.child_bot_id
                 JOIN platform_users pu ON bu.user_id = pu.user_id
                 WHERE bc.owner_id = $1 AND bu.user_id IS NOT NULL AND {tariff_filter}
-                ORDER BY bu.user_id, bu.created_at ASC
+                ORDER BY bu.user_id, bu.joined_at ASC
             """, owner_id)
 
     if not rows:

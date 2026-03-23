@@ -2711,18 +2711,18 @@ async def on_ga_broadcast(callback: CallbackQuery, state: FSMContext):
         return await callback.answer("❌ Нет прав", show_alert=True)
 
     text = (
-        "📣 <b>Глобальная Рассылка</b>\n"
-        "─────────────────────────────\n"
-        "Выберите аудиторию для отправки сообщения.\n\n"
-        "💼 <b>B2B (Владельцам ботов):</b>\n"
-        "Рассылка от имени Главного бота.\n\n"
-        "🎯 <b>B2C (Конечным юзерам):</b>\n"
-        "Промо-рассылка от имени дочерних ботов."
+        "📣 <b>Центр Глобальных Рассылок</b>\n\n"
+        "Пожалуйста, выберите целевой сегмент аудитории.\n"
+        "<i>Способ доставки будет адаптирован автоматически.</i>\n\n"
+        "🔹 <b>Прямая связь (Владельцы ботов)</b>\n"
+        "Отправка сообщений клиентам платформы напрямую от лица Главного бота.\n\n"
+        "🔹 <b>Рекламная сеть (Подписчики ботов)</b>\n"
+        "Массовая отправка промо-материалов конечным зрителям через сеть уязвимых (бесплатных) ботов."
     )
     kb = [
         [
-            InlineKeyboardButton(text="📢 Промо ботам", callback_data=f"ga_bc_seg:{owner_id}:promo"),
-            InlineKeyboardButton(text="🌍 Всем",    callback_data=f"ga_bc_seg:{owner_id}:all")
+            InlineKeyboardButton(text="🌍 Всем",    callback_data=f"ga_bc_seg:{owner_id}:all"),
+            InlineKeyboardButton(text="📢 Промо ботам", callback_data=f"ga_bc_seg:{owner_id}:promo")
         ],
         [
             InlineKeyboardButton(text="🆓 Лиды", callback_data=f"ga_bc_seg:{owner_id}:lead"),

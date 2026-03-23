@@ -501,18 +501,74 @@ async def on_ga_pu_pm_input(message: Message, state: FSMContext):
 async def on_ga_pu_note(callback: CallbackQuery, state: FSMContext):
     parts = callback.data.split(":")
     target_uid, admin_owner_id = int(parts[1]), int(parts[2])
+    
+    async with get_pool().acquire() as conn:
+        existing_note = await conn.fetchval(
+            "SELECT note FROM platform_user_notes WHERE owner_id=$1 AND target_user_id=$2",
+            admin_owner_id, target_uid
+        )
+    
+    if existing_note:
+        await callback.message.edit_text(
+            "📝 <b>Заметка пользователя</b>\n\n"
+            "Статус: 🟢 Активна\n\n"
+            f"<i>{existing_note}</i>",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🔄 Изменить заметку", callback_data=f"ga_pu_note_edit:{target_uid}:{admin_owner_id}")],
+                [InlineKeyboardButton(text="🗑 Удалить заметку", callback_data=f"ga_pu_note_del:{target_uid}:{admin_owner_id}")],
+                [InlineKeyboardButton(text="◀️ Назад", callback_data=f"ga_pu_card:{target_uid}:{admin_owner_id}")]
+            ])
+        )
+        await callback.answer()
+    else:
+        await state.set_state(StaffFSM.waiting_note_input)
+        await state.update_data(note_target_uid=target_uid, owner_id=admin_owner_id)
+        await callback.message.edit_text(
+            "📝 <b>Добавить заметку</b>\n\n"
+            "Напишите приватную заметку об этом пользователе\n"
+            "(видите только вы, до 500 символов):",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🚫 Отмена", callback_data=f"ga_pu_card:{target_uid}:{admin_owner_id}")]
+            ])
+        )
+        await callback.answer()
+
+
+@router.callback_query(F.data.startswith("ga_pu_note_edit:"))
+async def on_ga_pu_note_edit(callback: CallbackQuery, state: FSMContext):
+    parts = callback.data.split(":")
+    target_uid, admin_owner_id = int(parts[1]), int(parts[2])
+    
     await state.set_state(StaffFSM.waiting_note_input)
     await state.update_data(note_target_uid=target_uid, owner_id=admin_owner_id)
     await callback.message.edit_text(
-        "📝 <b>Добавить заметку</b>\n\n"
-        "Напишите приватную заметку об этом пользователе\n"
+        "📝 <b>Изменить заметку</b>\n\n"
+        "Напишите новую приватную заметку об этом пользователе\n"
         "(видите только вы, до 500 символов):",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🚫 Отмена", callback_data=f"ga_pu_card:{target_uid}:{admin_owner_id}")]
+            [InlineKeyboardButton(text="🚫 Отмена", callback_data=f"ga_pu_note:{target_uid}:{admin_owner_id}")]
         ])
     )
     await callback.answer()
+
+
+@router.callback_query(F.data.startswith("ga_pu_note_del:"))
+async def on_ga_pu_note_del(callback: CallbackQuery):
+    parts = callback.data.split(":")
+    target_uid, admin_owner_id = int(parts[1]), int(parts[2])
+    
+    async with get_pool().acquire() as conn:
+        await conn.execute(
+            "DELETE FROM platform_user_notes WHERE owner_id=$1 AND target_user_id=$2",
+            admin_owner_id, target_uid
+        )
+        row = await conn.fetchrow("SELECT * FROM platform_users WHERE user_id=$1", target_uid)
+        
+    await _show_platform_user_card(callback, admin_owner_id, row)
+    await callback.answer("✅ Заметка удалена", show_alert=True)
 
 
 @router.message(StaffFSM.waiting_note_input)

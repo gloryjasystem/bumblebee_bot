@@ -250,11 +250,84 @@ async def _poll_child_bot(child_bot_id: int, owner_id: int, bot_username: str, r
         await bot.session.close()
 
 
+async def _global_blacklist_check(bot: Bot, child_bot_id: int, owner_id: int, update: Update) -> bool:
+    """Проверяет любое действие юзера по базе ЧС (Глобальной или Локальной). Возвращает True, если юзер заблокирован."""
+    user = None
+    chat_id = None
+    chat_type = None
+
+    if update.message and update.message.from_user:
+        user = update.message.from_user
+        chat = update.message.chat
+        chat_id = chat.id if chat else None
+        chat_type = chat.type if chat else None
+    elif update.callback_query and update.callback_query.from_user:
+        user = update.callback_query.from_user
+        if update.callback_query.message and update.callback_query.message.chat:
+            chat_id = update.callback_query.message.chat.id
+            chat_type = update.callback_query.message.chat.type
+    elif update.chat_member and update.chat_member.new_chat_member:
+        user = update.chat_member.new_chat_member.user
+        chat_id = update.chat_member.chat.id
+        chat_type = update.chat_member.chat.type
+    elif update.chat_join_request:
+        user = update.chat_join_request.from_user
+        chat_id = update.chat_join_request.chat.id
+        chat_type = update.chat_join_request.chat.type
+    elif getattr(update, "message_reaction", None) and getattr(update.message_reaction, "user", None):
+        # В Aiogram 3 MessageReactionUpdated
+        user = update.message_reaction.user
+        chat_id = update.message_reaction.chat.id
+        chat_type = update.message_reaction.chat.type
+
+    if not user:
+        return False
+
+    settings = await db.fetchrow(
+        "SELECT blacklist_active, blacklist_enabled, in_global_bl_scope FROM bot_settings WHERE owner_id=$1", 
+        owner_id
+    )
+    if not settings:
+        return False
+
+    from services.blacklist import check_blacklist
+    from config import settings as _cfg
+
+    is_global_block = False
+    is_local_block = False
+
+    if settings.get("blacklist_active", True) and settings.get("in_global_bl_scope", False):
+        if await check_blacklist(_cfg.owner_telegram_id, user.id, user.username, child_bot_id=None):
+            is_global_block = True
+
+    if not is_global_block and settings.get("blacklist_enabled", True):
+        if await check_blacklist(owner_id, user.id, user.username, child_bot_id=child_bot_id):
+            is_local_block = True
+
+    if is_global_block or is_local_block:
+        if chat_id and chat_type in ("group", "supergroup", "channel"):
+            try:
+                await bot.ban_chat_member(chat_id, user.id)
+            except Exception:
+                pass
+            # Баним, а если это сообщение - оно обычно не удалится автоматически (или можно попробовать удалить)
+            if update.message:
+                try:
+                    await bot.delete_message(chat_id, update.message.message_id)
+                except Exception:
+                    pass
+        return True
+    return False
+
+
 async def _handle_child_update(
     bot: Bot, child_bot_id: int, owner_id: int, bot_username: str, update: Update
 ):
     """Обрабатывает одно событие от дочернего бота."""
     try:
+        # Супер-перехват Капкана (Blacklist) на любое действие
+        if await _global_blacklist_check(bot, child_bot_id, owner_id, update):
+            return  # Игнорируем и блокируем всё дальнейшее выполнение
         # ── Бот добавлен/удалён из чата ──────────────────────
         if update.my_chat_member:
             await _handle_my_chat_member(bot, child_bot_id, owner_id, bot_username, update.my_chat_member)

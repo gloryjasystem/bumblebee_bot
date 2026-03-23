@@ -2687,6 +2687,15 @@ async def on_ga_dl_bck(callback: CallbackQuery):
     if role:
         msg = await callback.message.answer("♻️ Открываю меню...")
         await _show_ga_users(msg, callback.from_user.id, owner_id2)
+        
+        import asyncio
+        async def _del_loader():
+            await asyncio.sleep(5)
+            try:
+                await msg.delete()
+            except Exception:
+                pass
+        asyncio.create_task(_del_loader())
     await callback.answer()
 
 

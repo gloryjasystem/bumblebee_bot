@@ -2707,13 +2707,32 @@ async def cmd_users(message: Message):
     asyncio.create_task(_export_users_csv(message.bot, message.chat.id, owner_id, internal_type, msg))
 
 
+def _global_delete_label(minutes: int) -> str:
+    """Читаемые метки для времени удаления."""
+    if minutes == 0:
+        return "выкл"
+    if minutes < 60:
+        return f"{minutes} мин"
+    hours = minutes // 60
+    if hours % 10 == 1 and hours != 11:
+        word = "час"
+    elif hours % 10 in (2, 3, 4) and hours not in (12, 13, 14):
+        word = "часа"
+    else:
+        word = "часов"
+    return f"{hours} {word}"
+
+_GLOBAL_DELETE_CYCLE = [0, 30, 60, 180, 360, 720, 1440, 2160, 2880]
+
 @router.callback_query(F.data.startswith("ga_broadcast:"))
 async def on_ga_broadcast(callback: CallbackQuery, state: FSMContext):
-    await state.clear()  # <-- Очищаем состояние при входе в меню рассылок или нажатии "Отмена"
-    
-    role, owner_id = await get_admin_context(callback.from_user.id, callback.from_user.username)
+    owner_id = int(callback.data.split(":")[1])
+    role, _ = await get_admin_context(callback.from_user.id, callback.from_user.username)
     if not role:
         return await callback.answer("❌ Нет прав", show_alert=True)
+
+    data = await state.get_data()
+    delete_min = data.get("ga_bc_delete_min", 0)
 
     text = (
         "📣 <b>Центр Глобальных Рассылок</b>\n\n"
@@ -2730,10 +2749,32 @@ async def on_ga_broadcast(callback: CallbackQuery, state: FSMContext):
             InlineKeyboardButton(text="🔥 Квалы", callback_data=f"ga_bc_seg:{owner_id}:qual"),
             InlineKeyboardButton(text="💎 Клиенты", callback_data=f"ga_bc_seg:{owner_id}:client")
         ],
+        [
+            InlineKeyboardButton(text=f"🗑 Удаление сообщений: {_global_delete_label(delete_min)}", callback_data=f"ga_bc_del:{owner_id}")
+        ],
         [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"ga_main:{owner_id}")]
     ]
     await callback.message.edit_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
     await callback.answer()
+
+@router.callback_query(F.data.startswith("ga_bc_del:"))
+async def on_ga_bc_del(callback: CallbackQuery, state: FSMContext):
+    owner_id = int(callback.data.split(":")[1])
+    data = await state.get_data()
+    current = data.get("ga_bc_delete_min", 0)
+    
+    try:
+        idx = _GLOBAL_DELETE_CYCLE.index(current)
+    except ValueError:
+        idx = 0
+    new_val = _GLOBAL_DELETE_CYCLE[(idx + 1) % len(_GLOBAL_DELETE_CYCLE)]
+    
+    await state.update_data(ga_bc_delete_min=new_val)
+    await callback.answer(f"Удаление через: {_global_delete_label(new_val)}")
+    
+    # Refresh menu
+    fake_cb = callback.model_copy(update={"data": f"ga_broadcast:{owner_id}"})
+    await on_ga_broadcast(fake_cb, state)
 
 
 @router.callback_query(F.data.startswith("ga_bc_seg:"))
@@ -2817,6 +2858,7 @@ async def on_broadcast_message_received(message: Message, state: FSMContext):
     data = await state.get_data()
     owner_id = data.get("broadcast_owner")
     segment = data.get("broadcast_segment")
+    delete_min = data.get("ga_bc_delete_min", 0)
 
     if not owner_id or not segment:
         await state.clear()
@@ -2857,6 +2899,14 @@ async def on_broadcast_message_received(message: Message, state: FSMContext):
     if not rows:
         return await msg.edit_text("⚠️ В этом сегменте нет ни одного получателя.")
 
+    async def _delayed_delete(bot_instance, cid, mid, delay_m):
+        import asyncio
+        await asyncio.sleep(delay_m * 60)
+        try:
+            await bot_instance.delete_message(chat_id=cid, message_id=mid)
+        except Exception:
+            pass
+
     async def run_broadcast():
         success = 0
         import asyncio
@@ -2878,8 +2928,10 @@ async def on_broadcast_message_received(message: Message, state: FSMContext):
                 
                 tb = valid_bots[token]
                 try:
-                    await message.copy_to(chat_id=u_id, bot=tb)
+                    sent_msg = await message.copy_to(chat_id=u_id, bot=tb)
                     success += 1
+                    if delete_min > 0 and sent_msg and hasattr(sent_msg, 'message_id'):
+                        asyncio.create_task(_delayed_delete(tb, u_id, sent_msg.message_id, delete_min))
                 except Exception:
                     pass
                 await asyncio.sleep(0.04)
@@ -2892,8 +2944,10 @@ async def on_broadcast_message_received(message: Message, state: FSMContext):
                 u_id = r['user_id']
                 if u_id == message.bot.id: continue # Отсекаем самого бота
                 try:
-                    await message.copy_to(chat_id=u_id)
+                    sent_msg = await message.copy_to(chat_id=u_id)
                     success += 1
+                    if delete_min > 0 and sent_msg and hasattr(sent_msg, 'message_id'):
+                        asyncio.create_task(_delayed_delete(message.bot, u_id, sent_msg.message_id, delete_min))
                 except Exception:
                     pass
                 await asyncio.sleep(0.04)

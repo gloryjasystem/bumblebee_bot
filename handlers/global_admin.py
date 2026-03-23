@@ -968,7 +968,7 @@ async def on_ga_team_howto(callback: CallbackQuery, state: FSMContext):
     if role != 'owner':
         return await callback.answer("❌ Только для Владельца", show_alert=True)
     await state.set_state(StaffFSM.waiting_add_input)
-    await state.update_data(owner_id=owner_id)
+    await state.update_data(owner_id=owner_id, prompt_msg_id=callback.message.message_id)
     text = (
         "➕ <b>Добавить администратора</b>\n\n"
         "Введите <b>@username</b> или <b>Telegram ID</b> сотрудника:\n\n"
@@ -989,11 +989,14 @@ async def on_ga_team_add_input(message: Message, state: FSMContext):
         return
     data = await state.get_data()
     owner_id = data.get("owner_id")
+    prompt_msg_id = data.get("prompt_msg_id")
     await state.clear()
 
     raw = (message.text or "").strip()
     try:
         await message.delete()
+        if prompt_msg_id:
+            await message.bot.delete_message(chat_id=message.chat.id, message_id=prompt_msg_id)
     except Exception:
         pass
 
@@ -1075,7 +1078,7 @@ async def on_ga_team_remove(callback: CallbackQuery, state: FSMContext):
     if role != 'owner':
         return await callback.answer("❌ Только для Владельца", show_alert=True)
     await state.set_state(StaffFSM.waiting_remove_input)
-    await state.update_data(owner_id=owner_id)
+    await state.update_data(owner_id=owner_id, prompt_msg_id=callback.message.message_id)
     text = (
         "➖ <b>Удалить администратора</b>\n\n"
         "Введите <b>@username</b> или <b>Telegram ID</b> сотрудника, которого хотите убрать:\n\n"
@@ -1093,11 +1096,14 @@ async def on_ga_team_remove_input(message: Message, state: FSMContext):
         return
     data = await state.get_data()
     owner_id = data.get("owner_id")
+    prompt_msg_id = data.get("prompt_msg_id")
     await state.clear()
 
     raw = (message.text or "").strip()
     try:
         await message.delete()
+        if prompt_msg_id:
+            await message.bot.delete_message(chat_id=message.chat.id, message_id=prompt_msg_id)
     except Exception:
         pass
 

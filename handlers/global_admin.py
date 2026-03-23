@@ -1384,16 +1384,22 @@ def _period_tabs_kb(owner_id: int, section: str, current_period: str) -> InlineK
 
 async def _build_network_text(owner_id: int, conn) -> str:
     from datetime import datetime
+    from config import settings as _cfg
     
     # ── 1. БЕЗОПАСНОСТЬ И ЗАЩИТА ──
-    # Глобальный ЧС - только записи админа (где child_bot_id IS NULL)
+    # Глобальный ЧС - уникальные записи ТОЛЬКО Мастер-Админа
     total_global_bl = await conn.fetchval(
-        "SELECT COUNT(*) FROM blacklist WHERE child_bot_id IS NULL"
+        """SELECT COUNT(DISTINCT COALESCE(user_id::text, lower(username))) 
+           FROM blacklist 
+           WHERE child_bot_id IS NULL AND owner_id = $1""",
+        _cfg.owner_telegram_id
     ) or 0
     
-    # Локальные ЧС - записи клиентов
+    # Локальные ЧС - уникальные записи по ВСЕМ ботам платформы
     total_local_bl = await conn.fetchval(
-        "SELECT COUNT(*) FROM blacklist WHERE child_bot_id IS NOT NULL"
+        """SELECT COUNT(DISTINCT COALESCE(user_id::text, lower(username))) 
+           FROM blacklist 
+           WHERE child_bot_id IS NOT NULL"""
     ) or 0
     
     # Всего предотвращено (все баны)
@@ -1403,8 +1409,9 @@ async def _build_network_text(owner_id: int, conn) -> str:
     global_prevented = await conn.fetchval("SELECT SUM(global_blocked_count) FROM child_bots") or 0
 
     # ── 2. ТРАФИК И АУДИТОРИЯ ──
-    total_audience = await conn.fetchval("SELECT COUNT(*) FROM bot_users") or 0
-    new_users_24h = await conn.fetchval("SELECT COUNT(*) FROM bot_users WHERE joined_at >= NOW() - INTERVAL '24 hours'") or 0
+    # Уникальные пользователи по всей платформе
+    total_audience = await conn.fetchval("SELECT COUNT(DISTINCT user_id) FROM bot_users") or 0
+    new_users_24h = await conn.fetchval("SELECT COUNT(DISTINCT user_id) FROM bot_users WHERE joined_at >= NOW() - INTERVAL '24 hours'") or 0
     active_bots = await conn.fetchval("SELECT COUNT(*) FROM child_bots") or 0
     
     # ── 3. ПЛАТФОРМА ──

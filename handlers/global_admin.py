@@ -3114,7 +3114,7 @@ async def on_ga_bots_noop(callback: CallbackQuery):
 async def on_ga_bots_search(callback: CallbackQuery, state: FSMContext):
     _, owner_id = await get_admin_context(callback.from_user.id, callback.from_user.username)
     await state.set_state(BotNetworkFSM.waiting_search)
-    await state.update_data(owner_id=owner_id, search_mode="name")
+    await state.update_data(owner_id=owner_id, search_mode="name", prompt_msg_id=callback.message.message_id)
     kb = [[InlineKeyboardButton(text="❌ Отмена", callback_data=f"ga_bots_search_cancel:{owner_id}")]]
     await callback.message.edit_text(
         "🔍 <b>Поиск по названию</b>\n"
@@ -3131,7 +3131,7 @@ async def on_ga_bots_search(callback: CallbackQuery, state: FSMContext):
 async def on_ga_bots_owner_search(callback: CallbackQuery, state: FSMContext):
     _, owner_id = await get_admin_context(callback.from_user.id, callback.from_user.username)
     await state.set_state(BotNetworkFSM.waiting_search)
-    await state.update_data(owner_id=owner_id, search_mode="owner")
+    await state.update_data(owner_id=owner_id, search_mode="owner", prompt_msg_id=callback.message.message_id)
     kb = [[InlineKeyboardButton(text="❌ Отмена", callback_data=f"ga_bots_search_cancel:{owner_id}")]]
     await callback.message.edit_text(
         "🔍 <b>Поиск по владельцу</b>\n"
@@ -3157,9 +3157,14 @@ async def on_bots_search_input(message: Message, state: FSMContext):
     data = await state.get_data()
     owner_id = data.get("owner_id") or (await get_admin_context(message.from_user.id, message.from_user.username))[1]
     search_mode = data.get("search_mode", "name")
+    prompt_msg_id = data.get("prompt_msg_id")
+    admin_id = message.from_user.id
+
     await state.clear()
     try:
         await message.delete()
+        if prompt_msg_id:
+            await message.bot.delete_message(chat_id=message.chat.id, message_id=prompt_msg_id)
     except Exception:
         pass
     raw = (message.text or "").strip()

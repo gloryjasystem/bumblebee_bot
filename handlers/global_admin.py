@@ -2714,13 +2714,17 @@ async def on_ga_broadcast(callback: CallbackQuery, state: FSMContext):
         "📣 <b>Глобальная Рассылка</b>\n"
         "─────────────────────────────\n"
         "Выберите аудиторию для отправки сообщения.\n\n"
-        "<i>После выбора бот попросит прислать текст/фото/видео.\n"
-        "Рассылка идет от имени подключенных ботов.</i>"
+        "💼 <b>B2B (Владельцам ботов):</b>\n"
+        "Рассылка от имени Главного бота.\n\n"
+        "🎯 <b>B2C (Конечным юзерам):</b>\n"
+        "Промо-рассылка от имени дочерних ботов."
     )
     kb = [
         [
-            InlineKeyboardButton(text="👥 Активные", callback_data=f"ga_bc_seg:{owner_id}:active"),
-            InlineKeyboardButton(text="🌍 Вся база", callback_data=f"ga_bc_seg:{owner_id}:all")
+            InlineKeyboardButton(text="📢 Промо в ботах", callback_data=f"ga_bc_seg:{owner_id}:promo")
+        ],
+        [
+            InlineKeyboardButton(text="🌍 Все Владельцы", callback_data=f"ga_bc_seg:{owner_id}:all")
         ],
         [
             InlineKeyboardButton(text="🆓 Лиды", callback_data=f"ga_bc_seg:{owner_id}:lead"),
@@ -2746,21 +2750,20 @@ async def on_ga_broadcast_segment(callback: CallbackQuery, state: FSMContext):
     await state.set_state(BroadcastFSM.waiting_message)
     await state.update_data(broadcast_owner=owner_id, broadcast_segment=segment)
 
-    seg_names = {
-        "active": "👥 Активных",
-        "all": "🌍 Вся база",
-        "lead": "🆓 Лиды (Free)",
-        "qual": "🔥 Квалы (Pro/Biz)",
-        "client": "💎 Клиенты (Платники)"
+    seg_desc = {
+        "promo": "📢 <b>Промо-рассылка (Монетизация)</b>\n👥 <i>Кому:</i> Подписчики бесплатных ботов\n📬 <i>От кого:</i> От лица их дочерних ботов\n🎯 <i>Цель:</i> Реклама конечным юзерам.",
+        "all": "🌍 <b>Все Владельцы</b>\n👥 <i>Кому:</i> Абсолютно все зарегистрированные владельцы ботов\n📬 <i>От кого:</i> От Главного бота",
+        "lead": "🆓 <b>Лиды</b>\n👥 <i>Кому:</i> Владельцы ботов на бесплатном тарифе (Free)\n📬 <i>От кого:</i> От Главного бота",
+        "qual": "🔥 <b>Квалифицированные (Квалы)</b>\n👥 <i>Кому:</i> Владельцы ботов с Premium тарифами (Pro/Business)\n📬 <i>От кого:</i> От Главного бота",
+        "client": "💎 <b>Все Клиенты</b>\n👥 <i>Кому:</i> Владельцы ботов, совершавшие покупки (Start/Pro/Business)\n📬 <i>От кого:</i> От Главного бота"
     }
-    s_name = seg_names.get(segment, segment)
+    s_desc = seg_desc.get(segment, f"<b>Сегмент: {segment}</b>")
 
     text = (
-        f"Выбран сегмент: <b>{s_name}</b>\n"
+        f"Выбран сегмент:\n{s_desc}\n"
         "─────────────────────────────\n"
-        "Отправьте мне сообщение, которое нужно разослать.\n"
-        "<i>(Поддерживается текст, фото, видео)</i>\n\n"
-        "Для отмены нажмите кнопку ниже."
+        "Отправьте сообщение (текст, фото, видео), которое нужно разослать.\n\n"
+        "❌ <i>Для отмены нажмите кнопку ниже.</i>"
     )
     kb = [[InlineKeyboardButton(text="❌ Отмена", callback_data=f"ga_broadcast:{owner_id}")]]
     await callback.message.edit_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
@@ -2824,42 +2827,33 @@ async def on_broadcast_message_received(message: Message, state: FSMContext):
     msg = await message.answer("⏳ Собираю аудиторию...")
 
     async with get_pool().acquire() as conn:
-        if segment == "all":
+        if segment == "promo":
+            # РЕКЛАМА (B2C): Подписчики бесплатных ботов (отправка через дочерних ботов)
             rows = await conn.fetch("""
                 SELECT DISTINCT ON (bu.user_id) bu.user_id, cb.token_encrypted
                 FROM bot_users bu
                 JOIN bot_chats bc ON bu.chat_id = bc.chat_id
                 JOIN child_bots cb ON cb.id = bc.child_bot_id
-                WHERE bc.owner_id = $1 AND bu.user_id IS NOT NULL
+                JOIN platform_users pu ON bc.owner_id = pu.user_id
+                WHERE bu.is_active = true 
+                  AND bu.user_id IS NOT NULL 
+                  AND COALESCE(pu.tariff, 'free') = 'free'
                 ORDER BY bu.user_id, bu.joined_at ASC
-            """, owner_id)
-        elif segment == "active":
-            rows = await conn.fetch("""
-                SELECT DISTINCT ON (bu.user_id) bu.user_id, cb.token_encrypted
-                FROM bot_users bu
-                JOIN bot_chats bc ON bu.chat_id = bc.chat_id
-                JOIN child_bots cb ON cb.id = bc.child_bot_id
-                WHERE bc.owner_id = $1 AND bu.user_id IS NOT NULL AND bu.is_active = true
-                ORDER BY bu.user_id, bu.joined_at ASC
-            """, owner_id)
+            """)
         else:
-            tariff_filter = ""
-            if segment == "lead":
-                tariff_filter = "COALESCE(pu.tariff, 'free') = 'free'"
-            elif segment == "qual":
-                tariff_filter = "pu.tariff IN ('pro', 'business')"
-            elif segment == "client":
-                tariff_filter = "pu.tariff IN ('start', 'pro', 'business')"
-                
-            rows = await conn.fetch(f"""
-                SELECT DISTINCT ON (bu.user_id) bu.user_id, cb.token_encrypted
-                FROM bot_users bu
-                JOIN bot_chats bc ON bu.chat_id = bc.chat_id
-                JOIN child_bots cb ON cb.id = bc.child_bot_id
-                JOIN platform_users pu ON bu.user_id = pu.user_id
-                WHERE bc.owner_id = $1 AND bu.user_id IS NOT NULL AND {tariff_filter}
-                ORDER BY bu.user_id, bu.joined_at ASC
-            """, owner_id)
+            # CRM (B2B): Владельцы ботов (отправка через Главного бота)
+            if segment == "all":
+                rows = await conn.fetch("SELECT user_id FROM platform_users")
+            else:
+                tariff_filter = "1=1"
+                if segment == "lead":
+                    tariff_filter = "COALESCE(tariff, 'free') = 'free'"
+                elif segment == "qual":
+                    tariff_filter = "tariff IN ('pro', 'business')"
+                elif segment == "client":
+                    tariff_filter = "tariff IN ('start', 'pro', 'business')"
+                    
+                rows = await conn.fetch(f"SELECT user_id FROM platform_users WHERE {tariff_filter}")
 
     if not rows:
         return await msg.edit_text("⚠️ В этом сегменте нет ни одного получателя.")
@@ -2869,30 +2863,43 @@ async def on_broadcast_message_received(message: Message, state: FSMContext):
         import asyncio
         from aiogram.client.default import DefaultBotProperties
         
-        valid_bots = {}
-        for r in rows:
-            u_id = r['user_id']
-            enc_token = r['token_encrypted']
-            try:
-                token = decrypt_token(enc_token)
-            except Exception:
-                continue
+        if segment == "promo":
+            # B2C Dispatch (via child bots)
+            valid_bots = {}
+            for r in rows:
+                u_id = r['user_id']
+                enc_token = r['token_encrypted']
+                try:
+                    token = decrypt_token(enc_token)
+                except Exception:
+                    continue
+                    
+                if token not in valid_bots:
+                    valid_bots[token] = Bot(token=token, default=DefaultBotProperties(parse_mode="HTML"))
                 
-            if token not in valid_bots:
-                valid_bots[token] = Bot(token=token, default=DefaultBotProperties(parse_mode="HTML"))
-            
-            tb = valid_bots[token]
-            try:
-                await message.copy_to(chat_id=u_id, bot=tb)
-                success += 1
-            except Exception:
-                pass
-            await asyncio.sleep(0.04)
-            
-        for b in valid_bots.values():
-            await b.session.close()
-            
-        await msg.edit_text(f"✅ <b>Рассылка завершена!</b>\n\nДоставлено: <b>{success}</b> пользователей.", parse_mode="HTML")
+                tb = valid_bots[token]
+                try:
+                    await message.copy_to(chat_id=u_id, bot=tb)
+                    success += 1
+                except Exception:
+                    pass
+                await asyncio.sleep(0.04)
+                
+            for b in valid_bots.values():
+                await b.session.close()
+        else:
+            # B2B Dispatch (via master bot)
+            for r in rows:
+                u_id = r['user_id']
+                if u_id == message.bot.id: continue # Отсекаем самого бота
+                try:
+                    await message.copy_to(chat_id=u_id)
+                    success += 1
+                except Exception:
+                    pass
+                await asyncio.sleep(0.04)
+                
+        await msg.edit_text(f"✅ <b>Рассылка завершена!</b>\n\nДоставлено: <b>{success}</b> пользователям.", parse_mode="HTML")
 
     import asyncio
     asyncio.create_task(run_broadcast())

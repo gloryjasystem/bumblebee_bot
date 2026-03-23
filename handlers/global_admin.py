@@ -708,8 +708,7 @@ async def on_ga_pu_chat_toggle(callback: CallbackQuery):
         await conn.execute("UPDATE bot_chats SET is_active=$1 WHERE id=$2", not current, chat_row_id)
     await callback.answer("✅ Площадка выключена" if current else "✅ Площадка включена")
     # refresh the page
-    fake_cb = callback
-    fake_cb.data = f"ga_pu_bot_detail:{bot_id}:{target_uid}:{admin_owner_id}"
+    fake_cb = callback.model_copy(update={"data": f"ga_pu_bot_detail:{bot_id}:{target_uid}:{admin_owner_id}"})
     await on_ga_pu_bot_detail(fake_cb)
 
 
@@ -720,8 +719,7 @@ async def on_ga_pu_chat_del(callback: CallbackQuery):
     async with get_pool().acquire() as conn:
         await conn.execute("DELETE FROM bot_chats WHERE id=$1", chat_row_id)
     await callback.answer("🗑 Площадка удалена")
-    fake_cb = callback
-    fake_cb.data = f"ga_pu_bot_detail:{bot_id}:{target_uid}:{admin_owner_id}"
+    fake_cb = callback.model_copy(update={"data": f"ga_pu_bot_detail:{bot_id}:{target_uid}:{admin_owner_id}"})
     await on_ga_pu_bot_detail(fake_cb)
 
 
@@ -732,8 +730,7 @@ async def on_ga_pu_bot_del(callback: CallbackQuery):
     async with get_pool().acquire() as conn:
         await conn.execute("DELETE FROM child_bots WHERE id=$1", bot_id)
     await callback.answer("🗑 Бот удалён")
-    fake_cb = callback
-    fake_cb.data = f"ga_pu_bots:{target_uid}:{admin_owner_id}"
+    fake_cb = callback.model_copy(update={"data": f"ga_pu_bots:{target_uid}:{admin_owner_id}"})
     await on_ga_pu_bots(fake_cb)
 
 

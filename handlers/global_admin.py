@@ -1410,12 +1410,12 @@ async def _build_network_text(owner_id: int, conn) -> str:
         f"├ В глобальном ЧС: <b>{fmt(total_bl)}</b>\n"
         f"└ Предотвращено вторжений: <b>{fmt(total_prevented)}</b>\n\n"
         "⚡ <b>ТРАФИК И АУДИТОРИЯ</b>\n"
-        f"├ Суммарный охват сети: <b>{fmt(total_audience)}</b> чел.\n"
+        f"├ Уникальных юзеров (во всех ботах): <b>{fmt(total_audience)}</b>\n"
         f"├ Прирост (за 24 часа): <b>+{fmt(new_users_24h)}</b>\n"
         f"└ Активных ботов в работе: <b>{fmt(active_bots)}</b>\n\n"
         "💎 <b>ПЛАТФОРМА</b>\n"
         f"├ Управляется каналов/групп: <b>{fmt(active_chats)}</b>\n"
-        f"└ Клиентов с подпиской (PRO+): <b>{fmt(paid_owners)}</b>\n"
+        f"└ Клиентов на платных тарифах: <b>{fmt(paid_owners)}</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"🕒 <i>Актуально на: {report_time}</i>"
     )
@@ -1620,9 +1620,14 @@ async def on_ga_stats(callback: CallbackQuery):
     ])
     try:
         await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
-    except Exception:
-        await callback.message.answer(text, parse_mode="HTML", reply_markup=kb)
-    await callback.answer()
+    except Exception as e:
+        if "message is not modified" not in str(e).lower():
+            try:
+                await callback.message.delete()
+            except Exception:
+                pass
+            await callback.message.answer(text, parse_mode="HTML", reply_markup=kb)
+    await callback.answer("✅ Обновлено")
 
 
 @router.callback_query(F.data.startswith("ga_audience:"))
@@ -1638,9 +1643,14 @@ async def on_ga_audience(callback: CallbackQuery):
     kb = _period_tabs_kb(owner_id, "audience", period)
     try:
         await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
-    except Exception:
-        await callback.message.answer(text, parse_mode="HTML", reply_markup=kb)
-    await callback.answer()
+    except Exception as e:
+        if "message is not modified" not in str(e).lower():
+            try:
+                await callback.message.delete()
+            except Exception:
+                pass
+            await callback.message.answer(text, parse_mode="HTML", reply_markup=kb)
+    await callback.answer("✅ Обновлено")
 
 
 @router.callback_query(F.data.startswith("ga_segment:"))
@@ -1656,9 +1666,14 @@ async def on_ga_segment(callback: CallbackQuery):
     kb = _period_tabs_kb(owner_id, "segment", period)
     try:
         await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
-    except Exception:
-        await callback.message.answer(text, parse_mode="HTML", reply_markup=kb)
-    await callback.answer()
+    except Exception as e:
+        if "message is not modified" not in str(e).lower():
+            try:
+                await callback.message.delete()
+            except Exception:
+                pass
+            await callback.message.answer(text, parse_mode="HTML", reply_markup=kb)
+    await callback.answer("✅ Обновлено")
 
 
 @router.callback_query(F.data.startswith("ga_finance:"))
@@ -1674,9 +1689,14 @@ async def on_ga_finance(callback: CallbackQuery):
     kb = _period_tabs_kb(owner_id, "finance", period)
     try:
         await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
-    except Exception:
-        await callback.message.answer(text, parse_mode="HTML", reply_markup=kb)
-    await callback.answer()
+    except Exception as e:
+        if "message is not modified" not in str(e).lower():
+            try:
+                await callback.message.delete()
+            except Exception:
+                pass
+            await callback.message.answer(text, parse_mode="HTML", reply_markup=kb)
+    await callback.answer("✅ Обновлено")
 
 
 # ga_segment and ga_rev redirect to merged handlers

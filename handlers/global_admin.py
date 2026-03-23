@@ -1386,8 +1386,21 @@ async def _build_network_text(owner_id: int, conn) -> str:
     from datetime import datetime
     
     # ── 1. БЕЗОПАСНОСТЬ И ЗАЩИТА ──
-    total_bl = await conn.fetchval("SELECT COUNT(*) FROM blacklist") or 0
+    # Глобальный ЧС - только записи админа (где child_bot_id IS NULL)
+    total_global_bl = await conn.fetchval(
+        "SELECT COUNT(*) FROM blacklist WHERE child_bot_id IS NULL"
+    ) or 0
+    
+    # Локальные ЧС - записи клиентов
+    total_local_bl = await conn.fetchval(
+        "SELECT COUNT(*) FROM blacklist WHERE child_bot_id IS NOT NULL"
+    ) or 0
+    
+    # Всего предотвращено (все баны)
     total_prevented = await conn.fetchval("SELECT SUM(blocked_count) FROM child_bots") or 0
+    
+    # Предотвращено именно Глобальным ЧС
+    global_prevented = await conn.fetchval("SELECT SUM(global_blocked_count) FROM child_bots") or 0
 
     # ── 2. ТРАФИК И АУДИТОРИЯ ──
     total_audience = await conn.fetchval("SELECT COUNT(*) FROM bot_users") or 0
@@ -1404,19 +1417,19 @@ async def _build_network_text(owner_id: int, conn) -> str:
     fmt = lambda x: f"{x:,}".replace(",", " ")
 
     return (
-        "📊 <b>Аналитика Bumblebee Bot</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        "📊 <b>Аналитика Bumblebee Bot</b>\n\n"
         "🛡 <b>БЕЗОПАСНОСТЬ И ЗАЩИТА</b>\n"
-        f"├ В глобальном ЧС: <b>{fmt(total_bl)}</b>\n"
-        f"└ Предотвращено вторжений: <b>{fmt(total_prevented)}</b>\n\n"
+        f"├ В базе Глобального ЧС: <b>{fmt(total_global_bl)}</b>\n"
+        f"├ В базах ЧС клиентов: <b>{fmt(total_local_bl)}</b>\n"
+        f"├ Всего отбито спамеров: <b>{fmt(total_prevented)}</b>\n"
+        f"└ Из них спасла Глобальная база: <b>{fmt(global_prevented)}</b>\n\n"
         "⚡ <b>ТРАФИК И АУДИТОРИЯ</b>\n"
-        f"├ Уникальных юзеров (во всех ботах): <b>{fmt(total_audience)}</b>\n"
-        f"├ Прирост (за 24 часа): <b>+{fmt(new_users_24h)}</b>\n"
+        f"├ База пользователей (охват): <b>{fmt(total_audience)}</b> чел.\n"
+        f"├ Новых юзеров (за 24ч): <b>+{fmt(new_users_24h)}</b>\n"
         f"└ Активных ботов в работе: <b>{fmt(active_bots)}</b>\n\n"
         "💎 <b>ПЛАТФОРМА</b>\n"
-        f"├ Управляется каналов/групп: <b>{fmt(active_chats)}</b>\n"
-        f"└ Клиентов на платных тарифах: <b>{fmt(paid_owners)}</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"├ Защищается каналов/групп: <b>{fmt(active_chats)}</b>\n"
+        f"└ Клиентов на платных тарифах: <b>{fmt(paid_owners)}</b>\n\n"
         f"🕒 <i>Актуально на: {report_time}</i>"
     )
 

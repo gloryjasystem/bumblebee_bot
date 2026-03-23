@@ -2690,7 +2690,7 @@ async def on_ga_dl_bck(callback: CallbackQuery):
         
         import asyncio
         async def _del_loader():
-            await asyncio.sleep(5)
+            await asyncio.sleep(1)
             try:
                 await msg.delete()
             except Exception:

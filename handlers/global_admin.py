@@ -264,7 +264,7 @@ async def on_ga_manage_users(callback: CallbackQuery, state: FSMContext):
     if not role:
         return await callback.answer("❌ Нет прав", show_alert=True)
     await state.set_state(StaffFSM.waiting_user_search)
-    await state.update_data(owner_id=owner_id)
+    await state.update_data(owner_id=owner_id, prompt_msg_id=callback.message.message_id)
     await callback.message.edit_text(
         "⚙️ <b>Управление пользователями</b>\n"
         "──────────────────────────────\n\n"
@@ -286,12 +286,17 @@ async def on_ga_user_search_input(message: Message, state: FSMContext):
         return
     data = await state.get_data()
     owner_id = data.get("owner_id")
+    prompt_msg_id = data.get("prompt_msg_id")
     await state.clear()
     raw = (message.text or "").strip()
+    
     try:
         await message.delete()
+        if prompt_msg_id:
+            await message.bot.delete_message(chat_id=message.chat.id, message_id=prompt_msg_id)
     except Exception:
         pass
+        
     async with get_pool().acquire() as conn:
         if raw.lstrip("-").isdigit():
             row = await conn.fetchrow("SELECT * FROM platform_users WHERE user_id=$1", int(raw))

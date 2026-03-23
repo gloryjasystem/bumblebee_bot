@@ -2721,10 +2721,8 @@ async def on_ga_broadcast(callback: CallbackQuery, state: FSMContext):
     )
     kb = [
         [
-            InlineKeyboardButton(text="📢 Промо в ботах", callback_data=f"ga_bc_seg:{owner_id}:promo")
-        ],
-        [
-            InlineKeyboardButton(text="🌍 Все Владельцы", callback_data=f"ga_bc_seg:{owner_id}:all")
+            InlineKeyboardButton(text="📢 Промо ботам", callback_data=f"ga_bc_seg:{owner_id}:promo"),
+            InlineKeyboardButton(text="🌍 Всем",    callback_data=f"ga_bc_seg:{owner_id}:all")
         ],
         [
             InlineKeyboardButton(text="🆓 Лиды", callback_data=f"ga_bc_seg:{owner_id}:lead"),

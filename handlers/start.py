@@ -259,35 +259,72 @@ async def on_settings_menu(callback: CallbackQuery, platform_user: dict | None):
         "pro": "⭐ Про", "business": "💼 Бизнес",
     }
     label = tariff_labels.get(tariff, "🆓 Free")
-    until = ""
-    if platform_user.get("tariff_until"):
-        until = f"\nДействует до: {platform_user['tariff_until'].strftime('%d.%m.%Y')}"
-
-    lang_cur = "🇷🇺 Русский" if platform_user.get("language", "ru") == "ru" else "🇺🇸 English"
+    
+    # Расчет периода действия тарифа
+    until_str = ""
+    if tariff != "free":
+        last_payment = await db.fetchrow(
+            "SELECT paid_at FROM payments WHERE user_id=$1 AND status='paid' ORDER BY paid_at DESC LIMIT 1",
+            platform_user["user_id"]
+        )
+        since_str = ""
+        if last_payment and last_payment["paid_at"]:
+            since_str = f"с {last_payment['paid_at'].strftime('%d.%m.%Y')} "
+            
+        if platform_user.get("tariff_until"):
+            until_str = f" ({since_str}по {platform_user['tariff_until'].strftime('%d.%m.%Y')})"
+        else:
+            until_str = f" ({since_str}Бессрочно)"
 
     await navigate(
         callback,
         f"🔑 <b>Управление аккаунтом</b>\n\n"
         f"👤 ID: <code>{platform_user['user_id']}</code>\n"
-        f"📦 Тариф: {label}{until}\n"
-        f"🌍 Язык: {lang_cur}",
+        f"📦 Тариф: {label}{until_str}",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🌍 Сменить язык",    callback_data="settings:lang")],
+            [InlineKeyboardButton(text="📜 История покупок",  callback_data="settings:history")],
             [InlineKeyboardButton(text="💳 Тарифы и оплата", callback_data="menu:tariffs")],
             [InlineKeyboardButton(text="◀️ Назад",           callback_data="menu:main")],
         ]),
     )
 
 
-@router.callback_query(F.data == "settings:lang")
-async def on_settings_lang(callback: CallbackQuery):
+@router.callback_query(F.data == "settings:history")
+async def on_settings_history(callback: CallbackQuery, platform_user: dict | None):
+    if not platform_user:
+        return
+
+    payments = await db.fetch(
+        "SELECT * FROM payments WHERE user_id=$1 AND status='paid' ORDER BY paid_at DESC LIMIT 20",
+        platform_user["user_id"]
+    )
+    
+    if not payments:
+        text = "📜 <b>История покупок</b>\n\nУ вас еще нет завершенных платежей."
+    else:
+        text = "📜 <b>История покупок</b>\n\n"
+        tariff_labels = {"start": "🌱 Старт", "pro": "⭐ Про", "business": "💼 Бизнес"}
+        period_labels = {"month": "1 мес", "year": "1 год"}
+        
+        for p in payments:
+            dt = p["paid_at"].strftime("%d.%m.%Y %H:%M")
+            t_label = tariff_labels.get(p["tariff"], p["tariff"].capitalize())
+            p_label = period_labels.get(p["period"], p["period"])
+            amount = float(p["amount_usd"])
+            curr = (p["currency"] or "USD").upper()
+            
+            text += (
+                f"📅 <b>{dt}</b>\n"
+                f"📦 Тариф: {t_label} ({p_label})\n"
+                f"💵 Сумма: {amount:.2f} $\n"
+                f"────────────────\n"
+            )
+
     await navigate(
         callback,
-        "🌍 <b>Выберите язык / Choose language:</b>",
+        text,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🇷🇺 Русский", callback_data="lang:ru")],
-            [InlineKeyboardButton(text="🇺🇸 English",  callback_data="lang:en")],
-            [InlineKeyboardButton(text="◀️ Назад",    callback_data="menu:settings")],
+            [InlineKeyboardButton(text="◀️ Назад", callback_data="menu:settings")],
         ]),
     )
 

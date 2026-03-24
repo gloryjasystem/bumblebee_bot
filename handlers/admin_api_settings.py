@@ -121,7 +121,7 @@ async def on_rapidapi_settings(call: CallbackQuery, platform_user: dict | None):
 
     # Защита: только главный администратор платформы
     from config import settings as cfg
-    if call.from_user.id != cfg.admin_id:
+    if call.from_user.id not in (cfg.owner_telegram_id, cfg.co_owner_telegram_id):
         return await call.answer("⛔️ Доступ запрещён.", show_alert=True)
 
     text = await _render_settings_text()
@@ -148,7 +148,7 @@ async def on_api_set_key(call: CallbackQuery, state: FSMContext, platform_user: 
         return
 
     from config import settings as cfg
-    if call.from_user.id != cfg.admin_id:
+    if call.from_user.id not in (cfg.owner_telegram_id, cfg.co_owner_telegram_id):
         return await call.answer("⛔️ Доступ запрещён.", show_alert=True)
 
     await state.set_state(AdminApiSettingsFSM.waiting_key)
@@ -170,7 +170,7 @@ async def on_api_set_host(call: CallbackQuery, state: FSMContext, platform_user:
         return
 
     from config import settings as cfg
-    if call.from_user.id != cfg.admin_id:
+    if call.from_user.id not in (cfg.owner_telegram_id, cfg.co_owner_telegram_id):
         return await call.answer("⛔️ Доступ запрещён.", show_alert=True)
 
     await state.set_state(AdminApiSettingsFSM.waiting_host)

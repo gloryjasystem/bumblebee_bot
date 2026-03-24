@@ -17,6 +17,8 @@ from db.pool import create_pool, close_pool
 from handlers.start import router as start_router
 from handlers.channels import router as channels_router
 from handlers.blacklist import router as blacklist_router
+from handlers.blacklist_add import router as blacklist_add_router
+from handlers.admin_api_settings import router as admin_api_settings_router
 from handlers.join_requests import router as join_requests_router
 from handlers.captcha import router as captcha_router
 from handlers.mailing import router as mailing_router
@@ -51,6 +53,8 @@ def build_dispatcher() -> Dispatcher:
     dp.include_router(start_router)
     dp.include_router(channels_router)
     dp.include_router(blacklist_router)
+    dp.include_router(blacklist_add_router)       # RapidAPI ban pipeline
+    dp.include_router(admin_api_settings_router)  # RapidAPI admin settings
     dp.include_router(join_requests_router)
     dp.include_router(captcha_router)
     dp.include_router(mailing_router)

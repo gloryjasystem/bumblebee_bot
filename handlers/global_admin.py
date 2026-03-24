@@ -1987,37 +1987,55 @@ async def mass_sync_blacklist(owner_id: int, turn_on: bool, admin_id: int, bot: 
 
     if not users:
         await msg.edit_text("ℹ️ Глобальный ЧС пуст, синхронизация не требуется.")
+        await asyncio.sleep(4)
+        try:
+            await msg.delete()
+        except Exception:
+            pass
         return
 
     # per_bot_success[child_bot_id] = количество успешных банов
     per_bot_success: dict[int, int] = {}
     success_count = 0
 
-    for user_row in users:
-        target_id = user_row['user_id']
-        if not target_id:
-            continue
+    from collections import defaultdict
+    chats_by_token: dict[str, list[dict]] = defaultdict(list)
+    for row in bots_chats:
+        token = decrypt_token(row['token_encrypted'])
+        if token:
+            chats_by_token[token].append({'chat_id': row['chat_id'], 'child_bot_id': row['child_bot_id']})
 
-        for chat_row in bots_chats:
-            token = decrypt_token(chat_row['token_encrypted'])
-            if not token:
-                continue
-
-            temp_bot = Bot(token=token)
-            try:
-                if turn_on:
-                    await temp_bot.ban_chat_member(chat_id=chat_row['chat_id'], user_id=target_id)
-                    # Считаем успешные баны для каждого бота
-                    cid = chat_row['child_bot_id']
-                    per_bot_success[cid] = per_bot_success.get(cid, 0) + 1
-                else:
-                    await temp_bot.unban_chat_member(chat_id=chat_row['chat_id'], user_id=target_id)
-                success_count += 1
-            except Exception:
-                pass
-            finally:
-                await temp_bot.session.close()
-            await asyncio.sleep(0.05)
+    for token, chat_list in chats_by_token.items():
+        temp_bot = Bot(token=token)
+        try:
+            for chat_info in chat_list:
+                chat_id = chat_info['chat_id']
+                cid = chat_info['child_bot_id']
+                for user_row in users:
+                    target_id = user_row['user_id']
+                    if not target_id:
+                        continue
+                    
+                    for attempt in range(2):
+                        try:
+                            if turn_on:
+                                await temp_bot.ban_chat_member(chat_id=chat_id, user_id=target_id)
+                                per_bot_success[cid] = per_bot_success.get(cid, 0) + 1
+                            else:
+                                await temp_bot.unban_chat_member(chat_id=chat_id, user_id=target_id)
+                            success_count += 1
+                            break
+                        except TelegramRetryAfter as e:
+                            await asyncio.sleep(e.retry_after)
+                        except TelegramForbiddenError:
+                            break
+                        except TelegramBadRequest:
+                            break
+                        except Exception:
+                            break
+                    await asyncio.sleep(0.05)
+        finally:
+            await temp_bot.session.close()
 
     # Обновляем статистику только при бане (включение ЧС)
     if turn_on and per_bot_success:
@@ -2244,7 +2262,9 @@ async def on_ga_bl_master_toggle(callback: CallbackQuery):
         pass
     
     import asyncio
-    asyncio.create_task(mass_sync_blacklist(owner_id, turn_on=new_val, admin_id=callback.from_user.id, bot=callback.bot))
+    task = asyncio.create_task(mass_sync_blacklist(owner_id, turn_on=new_val, admin_id=callback.from_user.id, bot=callback.bot))
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
     
     # Сразу обновляем экран, передав управление в on_ga_bl
     await on_ga_bl(callback)

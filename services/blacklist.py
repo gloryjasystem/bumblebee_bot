@@ -204,12 +204,13 @@ async def add_to_blacklist(owner_id: int, user_id: int | None, username: str | N
 async def _get_chats_with_tokens(owner_id: int, child_bot_id: int | None = None) -> list:
     """
     Возвращает список активных чатов со статусом ЧС и расшифрованными токенами.
+    Глобальный уровень (child_bot_id=None) берёт чаты ТОЛЬКО у ботов из ga_selected_bots.
     """
     from services.security import decrypt_token
     if child_bot_id:
         rows = await db.fetch(
             """
-            SELECT bc.chat_id, cb.token_encrypted, cb.blacklist_enabled
+            SELECT bc.chat_id, cb.token_encrypted, cb.blacklist_enabled, cb.id as bot_id
             FROM bot_chats bc
             JOIN child_bots cb ON cb.id = bc.child_bot_id
             WHERE bc.owner_id = $1 AND bc.child_bot_id = $2 AND bc.is_active = true
@@ -219,9 +220,10 @@ async def _get_chats_with_tokens(owner_id: int, child_bot_id: int | None = None)
     else:
         rows = await db.fetch(
             """
-            SELECT bc.chat_id, cb.token_encrypted, cb.blacklist_enabled
+            SELECT bc.chat_id, cb.token_encrypted, cb.blacklist_enabled, cb.id as bot_id
             FROM bot_chats bc
             JOIN child_bots cb ON cb.id = bc.child_bot_id
+            JOIN ga_selected_bots gsb ON gsb.child_bot_id = cb.id AND gsb.owner_id = $1
             WHERE bc.owner_id = $1 AND bc.is_active = true
             """,
             owner_id,
@@ -234,6 +236,7 @@ async def _get_chats_with_tokens(owner_id: int, child_bot_id: int | None = None)
                 "chat_id": r["chat_id"],
                 "token": token,
                 "blacklist_enabled": r.get("blacklist_enabled", True),
+                "child_bot_id": r["bot_id"],
             })
     return result
 

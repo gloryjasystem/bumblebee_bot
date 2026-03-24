@@ -326,21 +326,22 @@ async def _worker(
             # ── Шаг 4: Ban Sweep + сохранение в БД ────────────────────────────
             if not _handled:
                 if resolved_id:
-                    banned_count = await _ban_in_all_chats(owner_id, resolved_id, child_bot_id)
+                    banned_by_bot = await _ban_in_all_chats(owner_id, resolved_id, child_bot_id)
 
                     # Сохраняем запись в blacklist (ON CONFLICT DO NOTHING — безопасно)
                     await _save_to_blacklist(
                         owner_id, resolved_id, username, child_bot_id
                     )
 
+                    total_banned = sum(banned_by_bot.values())
                     # Обновляем счётчик blocked_count для аналитики
-                    if banned_count > 0:
-                        await _increment_blocked_count(owner_id, child_bot_id, banned_count)
+                    if total_banned > 0:
+                        await _increment_blocked_count(owner_id, banned_by_bot, is_global=(child_bot_id is None))
 
                     results["ok"] += 1
                     logger.info(
                         "[WORKER %d] Banned user=%d in %d chats",
-                        worker_id, resolved_id, banned_count,
+                        worker_id, resolved_id, total_banned,
                     )
                 else:
                     # Пришёл None numeric_id и None username — не должно случиться
@@ -453,28 +454,30 @@ async def _ban_in_all_chats(
     owner_id:     int,
     tg_id:        int,
     child_bot_id: Optional[int],
-) -> int:
+) -> dict[int, int]:
     """
-    Банит tg_id во всех активных чатах владельца.
+    Банит tg_id во всех активных чатах владельца (согласно scope).
 
     Переиспользует _get_chats_with_tokens из services.blacklist — там уже
-    реализована вся логика получения токенов дочерних ботов.
+    реализована вся логика получения токенов дочерних ботов и соблюдения ga_selected_bots.
 
     Защита от Telegram flood:
       - Микро-пауза BAN_DELAY после каждого бана.
       - TelegramRetryAfter перехватывается с повтором до BAN_MAX_RETRIES раз.
 
     Returns:
-        Количество чатов, в которых бан применён успешно.
+        Словарь { child_bot_id: количество_успешных_банов }
     """
     from aiogram import Bot as AioBot
+    from collections import defaultdict
 
     chats = await _get_chats_with_tokens(owner_id, child_bot_id)
-    banned = 0
+    banned_by_bot = defaultdict(int)
 
     for chat in chats:
         chat_id: int   = chat["chat_id"]
         token:   str   = chat["token"]
+        bot_id:  int   = chat.get("child_bot_id")
 
         attempt = 0
         while attempt < BAN_MAX_RETRIES:
@@ -485,7 +488,8 @@ async def _ban_in_all_chats(
                         user_id=tg_id,
                         revoke_messages=False,
                     )
-                banned += 1
+                if bot_id:
+                    banned_by_bot[bot_id] += 1
                 logger.debug("[BAN] user=%d → chat=%d ✓", tg_id, chat_id)
                 break  # успех — следующий чат
 
@@ -518,7 +522,7 @@ async def _ban_in_all_chats(
         # Микро-пауза между банами: 5 воркеров × 20 чатов × 0.05s = 5 req/s — безопасно
         await asyncio.sleep(BAN_DELAY)
 
-    return banned
+    return dict(banned_by_bot)
 
 
 # ── Вспомогательные DB-функции ────────────────────────────────────────────────
@@ -569,19 +573,36 @@ async def _save_resolve_error(
 
 
 async def _increment_blocked_count(
-    owner_id:     int,
-    child_bot_id: Optional[int],
-    count:        int,
+    owner_id:      int,
+    banned_by_bot: dict[int, int],
+    is_global:     bool,
 ) -> None:
-    """Инкрементирует счётчики blocked_count для аналитики (как в kick_single_user)."""
+    """Инкрементирует счётчики blocked_count для аналитики (с учётом выборки ботов)."""
+    total_count = sum(banned_by_bot.values())
+    if total_count == 0:
+        return
+
+    # Обновляем общую статистику владельца на платформе
     await db.execute(
         "UPDATE platform_users SET blocked_count = blocked_count + $1 WHERE user_id = $2",
-        count, owner_id,
+        total_count, owner_id,
     )
-    if child_bot_id:
-        await db.execute(
+
+    # Массово обновляем статистику всех участвовавших в бане ботов
+    # Если это глобальный ЧС (is_global=True), то обновляем И global_blocked_count тоже
+    updates = [(count, bot_id) for bot_id, count in banned_by_bot.items() if bot_id]
+    if not updates:
+        return
+
+    if is_global:
+        await db.executemany(
+            "UPDATE child_bots SET blocked_count = blocked_count + $1, global_blocked_count = global_blocked_count + $1 WHERE id = $2",
+            updates,
+        )
+    else:
+        await db.executemany(
             "UPDATE child_bots SET blocked_count = blocked_count + $1 WHERE id = $2",
-            count, child_bot_id,
+            updates,
         )
 
 

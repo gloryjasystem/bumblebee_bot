@@ -57,7 +57,10 @@ async def on_ga_rapidapi_add(call: CallbackQuery, state: FSMContext, platform_us
     if not platform_user:
         return
 
-    await state.update_data(child_bot_id=None, back_cb="on_ga_bl")
+    owner_id = platform_user["user_id"]
+    back_cb  = f"ga_bl:{owner_id}"
+
+    await state.update_data(child_bot_id=None, back_cb=back_cb)
     await state.set_state(RapidApiFSM.waiting_for_input)
 
     await call.message.edit_text(
@@ -68,7 +71,7 @@ async def on_ga_rapidapi_add(call: CallbackQuery, state: FSMContext, platform_us
         "<i>Пользователи будут конвертированы через RapidAPI и забанены "
         "во всех подключённых каналах.</i>",
         parse_mode="HTML",
-        reply_markup=_kb_cancel_input("on_ga_bl"),
+        reply_markup=_kb_cancel_input(back_cb),
     )
 
 

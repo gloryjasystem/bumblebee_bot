@@ -1,18 +1,20 @@
 """
 services/ban_pipeline.py — Главный асинхронный конвейер бана пользователей.
 
-Архитектура (Producer-Consumer pattern):
+Архитектура (Producer-Consumer pattern + Smart Resolver):
   ┌──────────────────────────────────────────────────────┐
   │  start_ban_pipeline()                                │
+  │  ├─ Дедупликация входных данных (set())              │
   │  ├─ Наполняет asyncio.Queue парами (username, id)   │
   │  ├─ Запускает N воркеров (_worker)                  │
   │  ├─ Регистрирует stop_event в active_pipelines       │
   │  └─ В finally: сохраняет квоту, чистит реестр        │
   │                                                      │
-  │  _worker() × CONCURRENCY                            │
-  │  ├─ Проверяет stop_event на каждой итерации         │
-  │  ├─ Резолвит @username → ID через RapidAPI          │
-  │  └─ Вызывает _ban_in_all_chats()                    │
+  │  _worker() × CONCURRENCY — 4-шаговый Smart Resolver │
+  │  ├─ Шаг 1: Deduplication — уже есть в ЧС? → skip   │
+  │  ├─ Шаг 2: Local DB Resolution — UNION ALL query    │
+  │  ├─ Шаг 3: External API (RapidAPI) — только fallback│
+  │  └─ Шаг 4: Background Sweep — бан + сохранение      │
   │                                                      │
   │  _ban_in_all_chats()                                │
   │  ├─ До 3 попыток при TelegramRetryAfter             │
@@ -93,7 +95,14 @@ async def start_ban_pipeline(
         status_msg_id:  ID сообщения с прогресс-баром (привязка Graceful Shutdown).
         child_bot_id:   None → глобальный ЧС (все боты), int → конкретный бот.
     """
-    total = len(usernames) + len(numeric_ids)
+    # ── Шаг 0: Дедупликация на входе (устраняет Race Condition внутри батча) ────
+    # set() убирает дубли прямо в памяти, до попадания в очередь.
+    # Если 5 воркеров одновременно взяли бы одинаковый username — было бы 5 API-вызовов.
+    # Теперь каждый уникальный username войдёт в очередь РОВНО 1 РАЗ.
+    unique_usernames: list[str] = list(dict.fromkeys(u.lower().lstrip("@") for u in usernames))
+    unique_ids:       list[int] = list(dict.fromkeys(numeric_ids))
+
+    total = len(unique_usernames) + len(unique_ids)
     queue: asyncio.Queue[tuple[Optional[str], Optional[int]]] = asyncio.Queue()
     stop_event = asyncio.Event()
 
@@ -102,6 +111,7 @@ async def start_ban_pipeline(
         "ok":         0,
         "not_found":  0,
         "error":      0,
+        "already_in_bl": 0,
         "total":      total,
     }
     # Последний известный остаток квоты RapidAPI — обновляется из каждого ответа
@@ -111,14 +121,15 @@ async def start_ban_pipeline(
     active_pipelines[status_msg_id] = stop_event
 
     # Наполняем очередь: (username, None) или (None, numeric_id)
-    for u in usernames:
+    for u in unique_usernames:
         await queue.put((u, None))
-    for uid in numeric_ids:
+    for uid in unique_ids:
         await queue.put((None, uid))
 
     logger.info(
-        "[PIPELINE] Started: owner=%d total=%d (usernames=%d, ids=%d)",
-        owner_id, total, len(usernames), len(numeric_ids),
+        "[PIPELINE] Started: owner=%d total=%d (usernames=%d, ids=%d, dupes_skipped=%d)",
+        owner_id, total, len(unique_usernames), len(unique_ids),
+        (len(usernames) + len(numeric_ids)) - total,
     )
 
     connector = aiohttp.TCPConnector(limit=10, ttl_dns_cache=300, ssl=True)
@@ -232,13 +243,39 @@ async def _worker(
             # Очередь временно пуста, проверим stop_event снова
             continue
 
-        # Флаг: нужно ли продолжить while-цикл сразу (без task_done + sleep будет после)
+        # task_done() вызывается ВСЕГДА через finally — защита от deadlock queue.join()
         _handled = False
         try:
             resolved_id: Optional[int] = numeric_id
 
-            # ── Шаг 1: Резолв @username → numeric ID ──────────────────────────
-            if username and resolved_id is None:
+            # ── Шаг 1 & 2: Smart Resolve (Dedup + Local DB) ───────────────────
+            # Проверяем: юзер уже в ЧС? Знаем его ID без API?
+            if username or resolved_id:
+                already, local_id = await _smart_resolve(
+                    owner_id=owner_id,
+                    username=username,
+                    numeric_id=resolved_id,
+                    child_bot_id=child_bot_id,
+                )
+                if already:
+                    # Шаг 1 сработал: дубликат — пропускаем без API
+                    logger.info(
+                        "[WORKER %d] %s/%s already in blacklist, skipping",
+                        worker_id, username, resolved_id,
+                    )
+                    results["already_in_bl"] += 1
+                    results["ok"] += 1  # считаем как успех в итоговых счётчиках
+                    _handled = True
+                elif local_id is not None:
+                    # Шаг 2 сработал: ID найден в локальных таблицах, API не трогаем
+                    logger.info(
+                        "[WORKER %d] @%s → %d (resolved locally, no API call)",
+                        worker_id, username, local_id,
+                    )
+                    resolved_id = local_id
+
+            # ── Шаг 3: External API (только если не удалось разрешить локально) ─
+            if not _handled and username and resolved_id is None:
                 try:
                     tg_id, quota = await username_to_id(session, username)
                     resolved_id = tg_id
@@ -247,7 +284,7 @@ async def _worker(
                     if quota is not None:
                         quota_box["remaining"] = quota
 
-                    logger.info("[WORKER %d] @%s → %d", worker_id, username, tg_id)
+                    logger.info("[WORKER %d] @%s → %d (via RapidAPI)", worker_id, username, tg_id)
 
                 except UserNotFoundError:
                     logger.info("[WORKER %d] @%s not found", worker_id, username)
@@ -275,12 +312,12 @@ async def _worker(
                     results["error"] += 1
                     _handled = True
 
-            # ── Шаг 2: Бан во всех чатах ─────────────────────────────────────
+            # ── Шаг 4: Ban Sweep + сохранение в БД ────────────────────────────
             if not _handled:
                 if resolved_id:
                     banned_count = await _ban_in_all_chats(owner_id, resolved_id, child_bot_id)
 
-                    # Сохраняем запись в blacklist
+                    # Сохраняем запись в blacklist (ON CONFLICT DO NOTHING — безопасно)
                     await _save_to_blacklist(
                         owner_id, resolved_id, username, child_bot_id
                     )
@@ -314,6 +351,88 @@ async def _worker(
         # Микро-пауза и обновление прогресс-бара — вне try/finally
         await asyncio.sleep(DELAY_BETWEEN)
         _report_progress(bot, results, notify_chat_id, status_msg_id)
+
+
+# ── Smart Resolver — 4-шаговое разрешение без API ────────────────────────────
+
+async def _smart_resolve(
+    owner_id:     int,
+    username:     Optional[str],
+    numeric_id:   Optional[int],
+    child_bot_id: Optional[int],
+) -> tuple[bool, Optional[int]]:
+    """
+    Шаг 1 + Шаг 2 умного резолвера.
+
+    Returns:
+        (already_in_bl, local_id)
+        - already_in_bl: True  → запись уже есть в blacklist → пропустить обработку
+        - local_id:      int   → ID найден в локальных таблицах → API не нужен
+                         None  → нужен внешний RapidAPI вызов
+    """
+    clean_username = username.lower().lstrip("@") if username else None
+
+    async with db.get_pool().acquire() as conn:
+        # ── Шаг 1: Deduplication Check ────────────────────────────────────────
+        # Проверяем, есть ли user_id ИЛИ username в целевом ЧС.
+        # child_bot_id IS NOT DISTINCT FROM $3 корректно сравнивает NULL = NULL (ANSI SQL).
+        if numeric_id:
+            dup_row = await conn.fetchrow(
+                """
+                SELECT 1 FROM blacklist
+                WHERE owner_id = $1
+                  AND user_id = $2
+                  AND child_bot_id IS NOT DISTINCT FROM $3
+                LIMIT 1
+                """,
+                owner_id, numeric_id, child_bot_id,
+            )
+        elif clean_username:
+            dup_row = await conn.fetchrow(
+                """
+                SELECT 1 FROM blacklist
+                WHERE owner_id = $1
+                  AND LOWER(username) = $2
+                  AND child_bot_id IS NOT DISTINCT FROM $3
+                LIMIT 1
+                """,
+                owner_id, clean_username, child_bot_id,
+            )
+        else:
+            return False, None
+
+        if dup_row:
+            return True, None  # Дубликат — пропускаем
+
+        # ── Шаг 2: Local DB Resolution (только если username, без ID) ────────
+        # Одно обращение к БД: UNION ALL по трём таблицам + LIMIT 1.
+        # ВАЖНО: для оптимальной производительности на больших данных необходимы
+        # функциональные индексы: CREATE INDEX ON bot_users (LOWER(username));
+        if not clean_username or numeric_id:
+            # ID уже известен или username не предоставлен — пропускаем локальный поиск
+            return False, numeric_id
+
+        local_row = await conn.fetchrow(
+            """
+            SELECT user_id FROM (
+                SELECT user_id FROM bot_users
+                WHERE LOWER(username) = $1 AND user_id IS NOT NULL
+                UNION ALL
+                SELECT user_id FROM platform_users
+                WHERE LOWER(username) = $1 AND user_id IS NOT NULL
+                UNION ALL
+                SELECT user_id FROM blacklist
+                WHERE LOWER(username) = $1 AND user_id IS NOT NULL
+            ) src
+            LIMIT 1
+            """,
+            clean_username,
+        )
+
+        if local_row:
+            return False, int(local_row["user_id"])
+
+    return False, None  # Нужен внешний API-запрос
 
 
 

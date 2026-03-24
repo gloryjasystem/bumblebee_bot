@@ -713,47 +713,55 @@ async def on_ga_pu_chat_toggle(callback: CallbackQuery):
     chat_row_id, bot_id, target_uid, admin_owner_id = int(parts[1]), int(parts[2]), int(parts[3]), int(parts[4])
 
     async with get_pool().acquire() as conn:
-        # Получаем текущее состояние + chat_id и owner_id нужные для разбана
+        # Получаем текущее состояние и chat_id для последующего разбана
         row = await conn.fetchrow(
-            "SELECT is_active, chat_id, owner_id FROM bot_chats WHERE id=$1",
+            "SELECT is_active, chat_id FROM bot_chats WHERE id=$1",
             chat_row_id
         )
         current = row["is_active"] if row else True
         chat_id = row["chat_id"] if row else None
-        owner_id = row["owner_id"] if row else None
         await conn.execute("UPDATE bot_chats SET is_active=$1 WHERE id=$2", not current, chat_row_id)
 
     await callback.answer("✅ Площадка выключена" if current else "✅ Площадка включена")
 
     # ── При ВЫКЛЮЧЕНИИ площадки — разбаниваем всех из Глобального ЧС в этом чате ──
     # Принцип тот же, что у локального тумблера ЧС (on_bs_bl_toggle → sweep_unban_after_disable).
-    # Только здесь мы работаем с одним конкретным chat_id, а не со всеми чатами сразу.
-    if current and chat_id and owner_id:
+    # ВАЖНО: Глобальный ЧС хранится под admin_owner_id (владелец платформы /admin),
+    # а НЕ под bot_chats.owner_id (владелец конкретного бота).
+    if current and chat_id:
         async def _unban_global_bl_in_chat():
             """Разбанивает всех пользователей Глобального ЧС в одном конкретном чате."""
             try:
                 async with get_pool().acquire() as conn2:
-                    # Токен бота для работы с Telegram API
+                    # Токен дочернего бота для работы с Telegram API
                     token_row = await conn2.fetchrow(
                         "SELECT token_encrypted FROM child_bots WHERE id=$1",
                         bot_id
                     )
                     if not token_row:
+                        logger.warning(f"[GA TOGGLE] No token found for bot_id={bot_id}")
                         return
-                    # Все user_id из Глобального ЧС (child_bot_id IS NULL = глобальный)
+                    # ★ Глобальный ЧС ищем по admin_owner_id, а НЕ по bot_chats.owner_id ★
                     bl_users = await conn2.fetch(
                         "SELECT user_id FROM blacklist "
                         "WHERE owner_id=$1 AND child_bot_id IS NULL AND user_id IS NOT NULL",
-                        owner_id
+                        admin_owner_id
                     )
                 if not bl_users:
+                    logger.info(f"[GA TOGGLE] Global BL is empty for admin_owner={admin_owner_id}, skip unban")
                     return
 
                 token = decrypt_token(token_row["token_encrypted"])
                 if not token:
+                    logger.warning(f"[GA TOGGLE] Failed to decrypt token for bot_id={bot_id}")
                     return
 
+                logger.info(
+                    f"[GA TOGGLE] Starting unban of {len(bl_users)} global BL users "
+                    f"from chat={chat_id} (bot_id={bot_id}, admin_owner={admin_owner_id})"
+                )
                 temp_bot = Bot(token=token)
+                unbanned = 0
                 try:
                     for user_row in bl_users:
                         uid = user_row["user_id"]
@@ -763,6 +771,7 @@ async def on_ga_pu_chat_toggle(callback: CallbackQuery):
                                 user_id=uid,
                                 only_if_banned=True  # не падает, если пользователь не забанен
                             )
+                            unbanned += 1
                         except TelegramRetryAfter as e:
                             # FloodWait: ждём и делаем ещё одну попытку
                             wait = e.retry_after
@@ -774,20 +783,22 @@ async def on_ga_pu_chat_toggle(callback: CallbackQuery):
                                         user_id=uid,
                                         only_if_banned=True
                                     )
+                                    unbanned += 1
                                 except Exception:
                                     pass
                         except (TelegramForbiddenError, TelegramBadRequest):
-                            # Бот не имеет прав или чат недоступен — прекращаем
+                            # Бот не имеет прав или чат недоступен — прекращаем весь цикл
+                            logger.warning(f"[GA TOGGLE] Bot has no rights in chat={chat_id}, stopping unban")
                             break
-                        except Exception:
-                            pass  # Любые другие ошибки — молча пропускаем
+                        except Exception as ex:
+                            logger.debug(f"[GA TOGGLE] Unban uid={uid} in chat={chat_id}: {ex}")
                         await asyncio.sleep(0.05)  # 20 вызовов/сек — безопасный лимит
                 finally:
                     await temp_bot.session.close()
 
                 logger.info(
-                    f"[GA TOGGLE] Unbanned {len(bl_users)} global BL users "
-                    f"from chat={chat_id} (bot_id={bot_id}, owner={owner_id})"
+                    f"[GA TOGGLE] Done: unbanned {unbanned}/{len(bl_users)} users "
+                    f"from chat={chat_id} (admin_owner={admin_owner_id})"
                 )
             except Exception as e:
                 logger.error(f"[GA TOGGLE] Unban task failed for chat={chat_id}: {e}", exc_info=True)

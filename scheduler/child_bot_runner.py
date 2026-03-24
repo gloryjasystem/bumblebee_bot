@@ -284,8 +284,18 @@ async def _global_blacklist_check(bot: Bot, child_bot_id: int, owner_id: int, up
         return False
 
     settings = await db.fetchrow(
-        "SELECT blacklist_active, blacklist_enabled, in_global_bl_scope FROM bot_settings WHERE owner_id=$1", 
-        owner_id
+        """
+        SELECT cb.blacklist_enabled,
+               COALESCE((SELECT blacklist_active FROM platform_users WHERE user_id = $1), true) AS blacklist_active,
+               EXISTS(
+                   SELECT 1 FROM ga_selected_bots gsb
+                   WHERE gsb.owner_id = $1
+                     AND gsb.child_bot_id = $2
+               ) AS in_global_bl_scope
+        FROM child_bots cb
+        WHERE cb.id = $2
+        """,
+        owner_id, child_bot_id
     )
     if not settings:
         return False

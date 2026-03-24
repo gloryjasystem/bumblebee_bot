@@ -1913,6 +1913,11 @@ async def mass_sync_blacklist(owner_id: int, turn_on: bool, admin_id: int, bot: 
 
         if not bots_chats:
             await msg.edit_text("ℹ️ Нет активных каналов выборки для синхронизации.")
+            await asyncio.sleep(4)
+            try:
+                await msg.delete()
+            except Exception:
+                pass
             return
 
         # ТОЛЬКО записи Глобального ЧС платформы (child_bot_id IS NULL)

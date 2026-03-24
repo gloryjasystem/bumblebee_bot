@@ -306,6 +306,12 @@ async def on_save_host(msg: Message, state: FSMContext, platform_user: dict | No
     # 5. Сбрасываем FSM
     await state.clear()
 
+    # 6. Удаляем ответ пользователя с введённым хостом из истории чата
+    try:
+        await msg.delete()
+    except Exception:
+        pass
+
     logger.info("[ADMIN API] Host=%s URL=%s param=%s (user=%d)",
                 new_host, new_url, new_param, msg.from_user.id)
 

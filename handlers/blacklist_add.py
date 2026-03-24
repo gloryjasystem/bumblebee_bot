@@ -63,7 +63,7 @@ async def on_ga_rapidapi_add(call: CallbackQuery, state: FSMContext, platform_us
     await state.update_data(child_bot_id=None, back_cb=back_cb)
     await state.set_state(RapidApiFSM.waiting_for_input)
 
-    await call.message.edit_text(
+    prompt_msg = await call.message.edit_text(
         "🌐 <b>Глобальный ЧС — добавить через RapidAPI</b>\n\n"
         "Отправьте <b>@username</b>, <b>числовой ID</b>, ссылку <b>t.me/user</b> "
         "или загрузите файл <b>.txt/.csv</b>.\n"
@@ -73,6 +73,7 @@ async def on_ga_rapidapi_add(call: CallbackQuery, state: FSMContext, platform_us
         parse_mode="HTML",
         reply_markup=_kb_cancel_input(back_cb),
     )
+    await state.update_data(prompt_msg_id=prompt_msg.message_id)
 
 
 # ── Локальная точка входа (владелец дочернего бота) ───────────────────────────
@@ -92,7 +93,7 @@ async def on_bl_rapidapi_add(call: CallbackQuery, state: FSMContext, platform_us
     await state.update_data(child_bot_id=child_bot_id, back_cb=back_cb)
     await state.set_state(RapidApiFSM.waiting_for_input)
 
-    await call.message.edit_text(
+    prompt_msg = await call.message.edit_text(
         "🔑 <b>Добавить в ЧС через RapidAPI</b>\n\n"
         "Отправьте <b>@username</b>, <b>числовой ID</b>, ссылку <b>t.me/user</b> "
         "или загрузите файл <b>.txt/.csv</b>.\n"
@@ -102,6 +103,7 @@ async def on_bl_rapidapi_add(call: CallbackQuery, state: FSMContext, platform_us
         parse_mode="HTML",
         reply_markup=_kb_cancel_input(back_cb),
     )
+    await state.update_data(prompt_msg_id=prompt_msg.message_id)
 
 
 # ── Приём текста ──────────────────────────────────────────────────────────────
@@ -174,9 +176,17 @@ async def _kick_off_pipeline(
 
     data          = await state.get_data()
     child_bot_id  = data.get("child_bot_id")
+    prompt_msg_id = data.get("prompt_msg_id")
     owner_id      = platform_user["user_id"]
 
     await state.set_state(RapidApiFSM.processing)
+
+    # Удаляем сообщение с просьбой ввести данные (если есть)
+    if prompt_msg_id:
+        try:
+            await msg.bot.delete_message(chat_id=msg.chat.id, message_id=prompt_msg_id)
+        except Exception:
+            pass
 
     status_msg = await msg.answer(
         f"⏳ <b>Запущена обработка {total} записей</b>\n"

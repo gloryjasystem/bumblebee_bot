@@ -375,8 +375,8 @@ async def _ban_in_all_chats(
 
             except TelegramBadRequest as e:
                 err = str(e).lower()
-                if "user not found" in err or "user_not_participant" in err:
-                    pass  # Пользователь не в чате — ок, запись в ЧС всё равно есть
+                if any(x in err for x in ("user not found", "user_not_participant", "participant_id_invalid")):
+                    pass  # Пользователь не в чате / никогда не был в чате — ок, запись в ЧС всё равно есть
                 else:
                     logger.error("[BAN] BadRequest user=%d chat=%d: %s", tg_id, chat_id, e)
                 break

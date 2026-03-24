@@ -2053,6 +2053,12 @@ async def on_ga_bl(callback: CallbackQuery, state: FSMContext = None):
         "<i>Управлять ботами — '🗄️ Управление общей базой'</i>"
     )
 
+    from config import settings as _cfg
+    _is_owner_level = callback.from_user.id in (
+        _cfg.owner_telegram_id,
+        _cfg.co_owner_telegram_id,
+    )
+
     kb = [
         [InlineKeyboardButton(text=toggle_text, callback_data=f"ga_bl_master:{owner_id}")],
         [
@@ -2063,10 +2069,14 @@ async def on_ga_bl(callback: CallbackQuery, state: FSMContext = None):
         [InlineKeyboardButton(text="🚀 Добавить через RapidAPI", callback_data="ga_bl_rapidapi_add")],
         [InlineKeyboardButton(text="🗑 Очистить ЧС", callback_data=f"ga_bl_clear_confirm:{owner_id}")],
         [InlineKeyboardButton(text="📥 Скачать ЧС (CSV)", callback_data=f"ga_bl_export_csv:{owner_id}")],
-        # ── Настройки RapidAPI (API ключ, хост, квота) ────────────────────────
-        [InlineKeyboardButton(text="🔑 Настройки RapidAPI", callback_data="rapidapi_settings")],
-        [InlineKeyboardButton(text="◀️ Назад", callback_data=f"ga_main:{owner_id}")]
     ]
+
+    # ── Кнопка настроек RapidAPI — только для Owner и Co-owner ───────────────
+    if _is_owner_level:
+        kb.append([InlineKeyboardButton(text="🔑 Настройки RapidAPI", callback_data="rapidapi_settings")])
+
+    kb.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"ga_main:{owner_id}")])
+
 
     # Если текущее сообщение — документ (например, после загрузки CSV), edit_text недоступен.
     # Проверяем тип и либо редактируем, либо шлём новое сообщение.

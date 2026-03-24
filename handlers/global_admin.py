@@ -713,99 +713,17 @@ async def on_ga_pu_chat_toggle(callback: CallbackQuery):
     chat_row_id, bot_id, target_uid, admin_owner_id = int(parts[1]), int(parts[2]), int(parts[3]), int(parts[4])
 
     async with get_pool().acquire() as conn:
-        # Получаем текущее состояние и chat_id для последующего разбана
         row = await conn.fetchrow(
-            "SELECT is_active, chat_id FROM bot_chats WHERE id=$1",
+            "SELECT is_active FROM bot_chats WHERE id=$1",
             chat_row_id
         )
         current = row["is_active"] if row else True
-        chat_id = row["chat_id"] if row else None
         await conn.execute("UPDATE bot_chats SET is_active=$1 WHERE id=$2", not current, chat_row_id)
 
     await callback.answer("✅ Площадка выключена" if current else "✅ Площадка включена")
-
-    # ── При ВЫКЛЮЧЕНИИ площадки — разбаниваем всех из Глобального ЧС в этом чате ──
-    # Принцип тот же, что у локального тумблера ЧС (on_bs_bl_toggle → sweep_unban_after_disable).
-    # ВАЖНО: Глобальный ЧС хранится под admin_owner_id (владелец платформы /admin),
-    # а НЕ под bot_chats.owner_id (владелец конкретного бота).
-    if current and chat_id:
-        async def _unban_global_bl_in_chat():
-            """Разбанивает всех пользователей Глобального ЧС в одном конкретном чате."""
-            try:
-                async with get_pool().acquire() as conn2:
-                    # Токен дочернего бота для работы с Telegram API
-                    token_row = await conn2.fetchrow(
-                        "SELECT token_encrypted FROM child_bots WHERE id=$1",
-                        bot_id
-                    )
-                    if not token_row:
-                        logger.warning(f"[GA TOGGLE] No token found for bot_id={bot_id}")
-                        return
-                    # ★ Глобальный ЧС ищем по admin_owner_id, а НЕ по bot_chats.owner_id ★
-                    bl_users = await conn2.fetch(
-                        "SELECT user_id FROM blacklist "
-                        "WHERE owner_id=$1 AND child_bot_id IS NULL AND user_id IS NOT NULL",
-                        admin_owner_id
-                    )
-                if not bl_users:
-                    logger.info(f"[GA TOGGLE] Global BL is empty for admin_owner={admin_owner_id}, skip unban")
-                    return
-
-                token = decrypt_token(token_row["token_encrypted"])
-                if not token:
-                    logger.warning(f"[GA TOGGLE] Failed to decrypt token for bot_id={bot_id}")
-                    return
-
-                logger.info(
-                    f"[GA TOGGLE] Starting unban of {len(bl_users)} global BL users "
-                    f"from chat={chat_id} (bot_id={bot_id}, admin_owner={admin_owner_id})"
-                )
-                temp_bot = Bot(token=token)
-                unbanned = 0
-                try:
-                    for user_row in bl_users:
-                        uid = user_row["user_id"]
-                        try:
-                            await temp_bot.unban_chat_member(
-                                chat_id=chat_id,
-                                user_id=uid,
-                                only_if_banned=True  # не падает, если пользователь не забанен
-                            )
-                            unbanned += 1
-                        except TelegramRetryAfter as e:
-                            # FloodWait: ждём и делаем ещё одну попытку
-                            wait = e.retry_after
-                            if wait <= 30:
-                                await asyncio.sleep(wait)
-                                try:
-                                    await temp_bot.unban_chat_member(
-                                        chat_id=chat_id,
-                                        user_id=uid,
-                                        only_if_banned=True
-                                    )
-                                    unbanned += 1
-                                except Exception:
-                                    pass
-                        except (TelegramForbiddenError, TelegramBadRequest):
-                            # Бот не имеет прав или чат недоступен — прекращаем весь цикл
-                            logger.warning(f"[GA TOGGLE] Bot has no rights in chat={chat_id}, stopping unban")
-                            break
-                        except Exception as ex:
-                            logger.debug(f"[GA TOGGLE] Unban uid={uid} in chat={chat_id}: {ex}")
-                        await asyncio.sleep(0.05)  # 20 вызовов/сек — безопасный лимит
-                finally:
-                    await temp_bot.session.close()
-
-                logger.info(
-                    f"[GA TOGGLE] Done: unbanned {unbanned}/{len(bl_users)} users "
-                    f"from chat={chat_id} (admin_owner={admin_owner_id})"
-                )
-            except Exception as e:
-                logger.error(f"[GA TOGGLE] Unban task failed for chat={chat_id}: {e}", exc_info=True)
-
-        task = asyncio.create_task(_unban_global_bl_in_chat())
-        _background_tasks.add(task)
-        task.add_done_callback(_background_tasks.discard)
+    # LAZY PASS: при выключении площадки мы НЕ отправляем unban_chat_member.
+    # Спамеры остаются в нативном бане Telegram — это нормальное состояние.
+    # Если ЧС будет снова включён, они заново не пройдут при попытке вступить.
 
     # refresh the page
     fake_cb = callback.model_copy(update={"data": f"ga_pu_bot_detail:{bot_id}:{target_uid}:{admin_owner_id}"})
@@ -1913,10 +1831,8 @@ async def _mass_kick_unban_list(owner_id: int, target_user_ids: list, turn_on: b
                                 UPDATE bot_users SET is_active=false, left_at=now()
                                 WHERE owner_id=$1 AND chat_id=$2 AND user_id=$3
                             """, owner_id, chat_id, target_id)
-                    else:
-                        await temp_bot.unban_chat_member(chat_id=chat_id, user_id=target_id)
-                        # Синхронизация: если юзера разбанили глобально, можно считать его снова `is_active=true`
-                        # Но пока не будем трогать, т.к. он сам должен зайти.
+                        # LAZY PASS: We do not unban users globally when they are removed from the blacklist.
+                        # They remain in the native Telegram ban list.
                 except Exception:
                     pass
                 await asyncio.sleep(0.05)
@@ -2002,10 +1918,11 @@ async def _sweep_single_bot(owner_id: int, child_bot_id: int, turn_on: bool) -> 
                         try:
                             if turn_on:
                                 await temp_bot.ban_chat_member(chat_id=chat_id, user_id=uid)
+                                success += 1
+                                break  # успех → выходим из retry-цикла
                             else:
-                                await temp_bot.unban_chat_member(chat_id=chat_id, user_id=uid)
-                            success += 1
-                            break  # успех → выходим из retry-цикла
+                                # LAZY PASS: We do not unban users when a bot is removed from global coverage.
+                                break
 
                         except TelegramRetryAfter as e:
                             logger.warning("[SWEEP] Flood Wait %ds (chat=%s uid=%s)",
@@ -2207,10 +2124,10 @@ async def on_ga_bl(callback: CallbackQuery, state: FSMContext = None):
                  "❎ Выборка пуста. Перейдите в '🗄️ Управление общей базой'")
 
     if bl_active:
-        shield = "🛡️ <b>Защита АКТИВНА</b> — записи ЧС блокируют вход"
+        shield = "🛡️ <b>Защита АКТИВНА</b> — блокирует вход и кикает юзеров из базы ЧС"
         toggle_text = "✅ ЧС: Включён 🟢"
     else:
-        shield = "⚠️ <b>Защита ВЫКЛЮЧЕНА</b> — пользователи из ЧС могут входить"
+        shield = "⚠️ <b>Защита НЕАКТИВНА</b> — база ЧС приостановлена и пропускает всех"
         toggle_text = "☑️ ЧС: Выключен 🔴"
 
     text = (
@@ -2349,15 +2266,13 @@ async def on_ga_bl_master_toggle(callback: CallbackQuery):
             json.dumps({"info": "Blacklist ENABLED" if new_val else "Blacklist DISABLED"}))
 
     try:
-        await callback.answer()   # тихо, без попапа
+        await callback.answer("✅ ЧС включён" if new_val else "⚪️ ЧС выключен")
     except Exception:
         pass
-    
-    import asyncio
-    task = asyncio.create_task(mass_sync_blacklist(owner_id, turn_on=new_val, admin_id=callback.from_user.id, bot=callback.bot))
-    _background_tasks.add(task)
-    task.add_done_callback(_background_tasks.discard)
-    
+    # LAZY PASS: тумблер только меняет флаг в БД — никаких фоновых банов/разбанов.
+    # Когда ЧС выключен — фильтр на входе просто пропускает пользователя без проверки.
+    # Когда ЧС включён — новые входящие снова проверяются по таблице blacklist.
+
     # Сразу обновляем экран, передав управление в on_ga_bl
     await on_ga_bl(callback)
 
@@ -2705,11 +2620,8 @@ async def process_ga_bl_del(message: Message, state: FSMContext, bot: Bot):
 
     kb = [[InlineKeyboardButton(text="◀️ Вернуться", callback_data=f"ga_bl:{owner_id}")]]
     text_res = f"✅ <b>Операция завершена!</b>\n\nОчищено записей из ЧС: <b>{deleted_count}</b> / {len(targets)}"
-    if target_ids_to_unban:
-        text_res += f"\n⏳ <i>Запущен процесс разблокировки {len(target_ids_to_unban)} пользователей по всем выбранным проектам...</i>"
-        import asyncio
-        asyncio.create_task(_mass_kick_unban_list(owner_id, target_ids_to_unban, turn_on=False))
-        
+    text_res = f"✅ <b>Операция завершена!</b>\n\nОчищено записей из ЧС: <b>{deleted_count}</b> / {len(targets)}"
+    # LAZY PASS: We no longer trigger a mass unban task after deleting blacklist records.
     await status_msg.edit_text(text_res, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
 
 
@@ -3275,10 +3187,10 @@ async def on_ga_bot_select_toggle(callback: CallbackQuery):
 
     await callback.answer(status)
 
-    # Авто-рейд: при добавлении бота — банить всех из глобального ЧС в его каналах.
-    # При удалении — разбанить (чтобы глобальный ЧС не давил на чужие проекты).
+    # Авто-рейд: при добавлении бота — баним всех из глобального ЧС в его каналах.
+    # ЛЕНИВЫЙ ПРОПУСК (Lazy Pass): При удалении бота из выборки мы НЕ делаем массовый разбан. 
     # GC-safe: сохраняем сильную ссылку в _background_tasks до завершения задачи.
-    if bl_active:
+    if bl_active and newly_added:
         task = asyncio.create_task(_sweep_single_bot(
             owner_id=owner_id,
             child_bot_id=child_bot_id,

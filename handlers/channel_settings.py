@@ -4094,13 +4094,14 @@ async def on_bs_bl_toggle(callback: CallbackQuery, platform_user: dict | None):
         )
         await callback.answer("✅ ВКЛ" if new_val else "🔴 ВЫКЛ")
         
-        # Trigger background sweeps
-        from services.blacklist import sweep_after_import, sweep_unban_after_disable
+        # Trigger background sweep (ban-only, Lazy Pass architecture)
+        from services.blacklist import sweep_after_import
         import asyncio
         if new_val:
+            # BL включили — баним нарушителей, которые уже в чате
             asyncio.create_task(sweep_after_import(owner_id, child_bot_id=child_bot_id))
-        else:
-            asyncio.create_task(sweep_unban_after_disable(owner_id))
+        # BL выключили — LAZY PASS: не трогаем нативный бан Telegram.
+        # Фильтр на входе просто пропустит новых пользователей без проверки.
             
     except Exception:
         await callback.answer("⚠️ Ошибка обновления", show_alert=True)
@@ -4202,11 +4203,8 @@ async def on_bs_bl_clear_do(callback: CallbackQuery, platform_user: dict | None)
         owner_id, int(child_bot_id),
     ) or 0
     
-    # 3. Запускаем фоновую задачу разбана
-    import asyncio
-    from services.blacklist import sweep_unban_records
-    if records:
-        asyncio.create_task(sweep_unban_records(owner_id, [dict(r) for r in records], child_bot_id=int(child_bot_id)))
+    # LAZY PASS: после очистки черного списка не отправляем unban_chat_member.
+    # Спамеры остаются в нативном бане Telegram.
 
     await callback.message.edit_text(
         f"⏳ <b>Процесс запущен!</b>\n\n"

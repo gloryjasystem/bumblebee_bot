@@ -409,9 +409,8 @@ async def on_bs_bl_text(message: Message, state: FSMContext, platform_user: dict
                 [InlineKeyboardButton(text="◀️ Назад к ЧС", callback_data=f"bs_blacklist:{child_bot_id}")]
             ])
         )
-        if newly_removed:
-            from services.blacklist import sweep_unban_records
-            asyncio.create_task(sweep_unban_records(owner_id, newly_removed, child_bot_id=child_bot_id))
+        # LAZY PASS: после удаления из ЧС не отправляем unban_chat_member.
+        # Спамеры остаются в нативном бане канала; если надо — админ разбанит вручную.
 
 
 # ══════════════════════════════════════════════════════════════
@@ -573,7 +572,6 @@ async def on_bs_bl_file(message: Message, bot: Bot, state: FSMContext,
                 )],
             ]),
         )
-        if newly_removed:
-            from services.blacklist import sweep_unban_records
-            asyncio.create_task(sweep_unban_records(owner_id, newly_removed, child_bot_id=child_bot_id))
+        # LAZY PASS: после удаления из ЧС не отправляем unban_chat_member.
+        # Спамеры остаются в нативном бане канала; если надо — админ разбанит вручную.
 

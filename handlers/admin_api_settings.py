@@ -45,14 +45,14 @@ class AdminApiSettingsFSM(StatesGroup):
 
 # ── Клавиатуры ────────────────────────────────────────────────────────────────
 
-def _kb_api_settings() -> InlineKeyboardMarkup:
+def _kb_api_settings(owner_id: int) -> InlineKeyboardMarkup:
     """Главная клавиатура панели настроек RapidAPI."""
     return InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(text="🔑 Изменить Key",  callback_data="api_set_key"),
             InlineKeyboardButton(text="✏️ Изменить Host", callback_data="api_set_host"),
         ],
-        [InlineKeyboardButton(text="◀️ Назад", callback_data="platform_settings")],
+        [InlineKeyboardButton(text="◀️ Назад", callback_data=f"ga_bl:{owner_id}")],
     ])
 
 
@@ -125,17 +125,18 @@ async def on_rapidapi_settings(call: CallbackQuery, platform_user: dict | None):
         return await call.answer("⛔️ Доступ запрещён.", show_alert=True)
 
     text = await _render_settings_text()
+    owner_id = platform_user["user_id"]
     try:
         await call.message.edit_text(
             text,
             parse_mode="HTML",
-            reply_markup=_kb_api_settings(),
+            reply_markup=_kb_api_settings(owner_id),
         )
     except Exception:
         await call.message.answer(
             text,
             parse_mode="HTML",
-            reply_markup=_kb_api_settings(),
+            reply_markup=_kb_api_settings(owner_id),
         )
 
 
@@ -217,13 +218,14 @@ async def on_save_key(msg: Message, state: FSMContext, platform_user: dict | Non
     logger.info("[ADMIN API] API Key updated by user=%d", msg.from_user.id)
 
     # 5. Показываем обновлённую панель настроек
+    owner_id = platform_user["user_id"]
     text = await _render_settings_text()
     await msg.answer(
         f"✅ <b>API Key сохранён</b>\n"
         f"<i>Сообщение с ключом удалено из чата.</i>\n\n"
         + text,
         parse_mode="HTML",
-        reply_markup=_kb_api_settings(),
+        reply_markup=_kb_api_settings(owner_id),
     )
 
 
@@ -261,9 +263,10 @@ async def on_save_host(msg: Message, state: FSMContext, platform_user: dict | No
     logger.info("[ADMIN API] API Host updated to '%s' by user=%d", new_host, msg.from_user.id)
 
     # 4. Показываем обновлённую панель настроек
+    owner_id = platform_user["user_id"]
     text = await _render_settings_text()
     await msg.answer(
         f"✅ <b>API Host сохранён:</b> <code>{new_host}</code>\n\n" + text,
         parse_mode="HTML",
-        reply_markup=_kb_api_settings(),
+        reply_markup=_kb_api_settings(owner_id),
     )

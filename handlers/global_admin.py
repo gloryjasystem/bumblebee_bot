@@ -2182,12 +2182,12 @@ async def on_ga_bl(callback: CallbackQuery, state: FSMContext = None):
 
 
     # Если текущее сообщение — документ (например, после загрузки CSV), edit_text недоступен.
-    # Проверяем тип и либо редактируем, либо шлём новое сообщение.
+    # Проверяем тип и либо редактируем, либо удаляем старое и шлём новое сообщение.
     try:
-        if callback.message.text or callback.message.caption:
+        if callback.message.text and not callback.message.document and not callback.message.photo:
             await callback.message.edit_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
         else:
-            # Сообщение без текста (документ/фото) — удаляем и отправляем новое
+            # Сообщение с медиа (документ/фото) — удаляем и отправляем новое текстовое
             try:
                 await callback.message.delete()
             except Exception:

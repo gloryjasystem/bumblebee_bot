@@ -70,7 +70,45 @@ async def create_pool() -> asyncpg.Pool:
                ON blacklist(owner_id, child_bot_id, lower(username))
                WHERE username IS NOT NULL AND child_bot_id IS NOT NULL"""
         )
+
+        # ── Новые колонки blacklist для трекинга RapidAPI-резолва ─────────────
+        # source_username — оригинальный @username до конвертации в ID
+        await conn.execute(
+            "ALTER TABLE blacklist ADD COLUMN IF NOT EXISTS source_username TEXT"
+        )
+        # resolve_error — причина, по которой RapidAPI не смог найти пользователя
+        await conn.execute(
+            "ALTER TABLE blacklist ADD COLUMN IF NOT EXISTS resolve_error TEXT"
+        )
+
+        # ── Таблица platform_settings (key-value настройки платформы) ─────────
+        # Используется для хранения RapidAPI ключей и остатка квоты без хардкода.
+        # IF NOT EXISTS — безопасно запускать повторно при каждом старте бота.
+        await conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS platform_settings (
+                key        TEXT PRIMARY KEY,
+                value      TEXT NOT NULL,
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+            """
+        )
+        # Начальные значения RapidAPI — вставляем только если строки ещё нет.
+        # Администратор заменит их через Admin UI без перезапуска бота.
+        await conn.execute(
+            """
+            INSERT INTO platform_settings (key, value) VALUES
+                ('rapidapi_key',              'YOUR_KEY_HERE'),
+                ('rapidapi_host',             'telegram124.p.rapidapi.com'),
+                ('rapidapi_url',              'https://telegram124.p.rapidapi.com/telegram/api/userInfo'),
+                ('rapidapi_quota_remaining',  '-1')
+            ON CONFLICT (key) DO NOTHING
+            """
+        )
+        logger.info("[DB] platform_settings table ready")
+
     return _pool
+
 
 
 async def close_pool():

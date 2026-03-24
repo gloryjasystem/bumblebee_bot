@@ -1,6 +1,8 @@
+import asyncio
 import json
 import logging
 from aiogram import Router, F, Bot
+from aiogram.exceptions import TelegramRetryAfter, TelegramForbiddenError, TelegramBadRequest
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
@@ -12,6 +14,12 @@ from services.security import decrypt_token
 
 logger = logging.getLogger(__name__)
 router = Router()
+
+# ── Защита фоновых задач от GC (Garbage Collector Kill) ──────────────────────
+# asyncio.create_task возвращает «слабую» ссылку. Если её не сохранить,
+# сборщик мусора Python уничтожит задачу прямо во время выполнения.
+# Добавляем сильную ссылку в этот сет — задача живёт до завершения.
+_background_tasks: set = set()
 
 class BroadcastFSM(StatesGroup):
     waiting_message = State()
@@ -1840,14 +1848,20 @@ class GlobalBlacklistFSM(StatesGroup):
     add_user = State()
     del_user = State()
 
-async def _sweep_single_bot(owner_id: int, child_bot_id: int, turn_on: bool, admin_id: int, bot: Bot):
+async def _sweep_single_bot(owner_id: int, child_bot_id: int, turn_on: bool) -> None:
     """
-    Целевой рейд при добавлении/удалении одного бота из глобальной выборки.
-    Работает полностью в фоне — никаких сообщений администратору.
-    """
-    from services.security import decrypt_token
-    import asyncio
+    Фоновый рейд при добавлении/удалении одного бота из глобальной выборки.
 
+    Архитектура:
+    - Один Bot-объект создаётся на токен, а не на каждый вызов API.
+    - Порядок цикла: токен → чаты этого бота → юзеры из ЧС.
+    - asyncio.sleep(0.05) после каждого вызова = ~20 req/s (лимит Telegram).
+    - TelegramRetryAfter обрабатывается локально (sleep + retry).
+    - TelegramForbiddenError — бот удалён из чата, пропускаем.
+    - Соединение с asyncpg-пулом: два коротких аквайра (чаты + юзеры),
+      не удерживаем соединение на время всего рейда, чтобы не блокировать пул.
+    """
+    # ── 1. Забираем нужные данные из БД и сразу освобождаем соединение ─────────
     try:
         async with get_pool().acquire() as conn:
             chats = await conn.fetch("""
@@ -1857,33 +1871,77 @@ async def _sweep_single_bot(owner_id: int, child_bot_id: int, turn_on: bool, adm
                 WHERE bc.child_bot_id = $1 AND bc.owner_id = $2 AND bc.is_active = true
             """, child_bot_id, owner_id)
 
-            users = await conn.fetch(
-                "SELECT user_id FROM blacklist WHERE owner_id=$1 AND child_bot_id IS NULL AND user_id IS NOT NULL",
-                owner_id
-            )
-
-        if not chats or not users:
-            return
-
-        for user_row in users:
-            uid = user_row["user_id"]
-            for chat_row in chats:
-                token = decrypt_token(chat_row["token_encrypted"])
-                if not token:
-                    continue
-                temp_bot = Bot(token=token)
-                try:
-                    if turn_on:
-                        await temp_bot.ban_chat_member(chat_id=chat_row["chat_id"], user_id=uid)
-                    else:
-                        await temp_bot.unban_chat_member(chat_id=chat_row["chat_id"], user_id=uid)
-                except Exception:
-                    pass
-                finally:
-                    await temp_bot.session.close()
-                await asyncio.sleep(0.05)
+            user_ids: list[int] = [
+                r["user_id"] for r in await conn.fetch(
+                    "SELECT user_id FROM blacklist "
+                    "WHERE owner_id=$1 AND child_bot_id IS NULL AND user_id IS NOT NULL",
+                    owner_id,
+                )
+            ]
     except Exception:
-        pass
+        logger.exception("[SWEEP] DB error fetching data for child_bot_id=%s", child_bot_id)
+        return
+
+    if not chats or not user_ids:
+        logger.debug("[SWEEP] Nothing to sweep for child_bot_id=%s (chats=%d, users=%d)",
+                     child_bot_id, len(chats), len(user_ids))
+        return
+
+    action = "ban" if turn_on else "unban"
+    logger.info("[SWEEP] Starting %s sweep: child_bot_id=%s, chats=%d, users=%d",
+                action, child_bot_id, len(chats), len(user_ids))
+
+    # ── 2. Группируем чаты по токену, чтобы создавать Bot ровно 1 раз ─────────
+    from collections import defaultdict
+    chats_by_token: dict[str, list[int]] = defaultdict(list)
+    for row in chats:
+        token = decrypt_token(row["token_encrypted"])
+        if token:
+            chats_by_token[token].append(row["chat_id"])
+
+    success = 0
+    # ── 3. Основной цикл: токен → чаты → юзеры ──────────────────────────────
+    for token, chat_ids in chats_by_token.items():
+        temp_bot = Bot(token=token)
+        try:
+            for chat_id in chat_ids:
+                for uid in user_ids:
+                    for attempt in range(2):   # макс 1 retry после Flood Wait
+                        try:
+                            if turn_on:
+                                await temp_bot.ban_chat_member(chat_id=chat_id, user_id=uid)
+                            else:
+                                await temp_bot.unban_chat_member(chat_id=chat_id, user_id=uid)
+                            success += 1
+                            break  # успех → выходим из retry-цикла
+
+                        except TelegramRetryAfter as e:
+                            logger.warning("[SWEEP] Flood Wait %ds (chat=%s uid=%s)",
+                                           e.retry_after, chat_id, uid)
+                            await asyncio.sleep(e.retry_after)
+                            # attempt 1 → повторим автоматически
+
+                        except TelegramForbiddenError:
+                            # Бот удалён из чата или нет прав — пропускаем весь чат
+                            logger.info("[SWEEP] Forbidden in chat=%s, skipping", chat_id)
+                            break
+
+                        except TelegramBadRequest as e:
+                            # Юзер не найден, уже забанен и т.п. — не критично
+                            logger.debug("[SWEEP] BadRequest chat=%s uid=%s: %s", chat_id, uid, e)
+                            break
+
+                        except Exception as e:
+                            logger.warning("[SWEEP] Unexpected error chat=%s uid=%s: %s",
+                                           chat_id, uid, e)
+                            break
+
+                    await asyncio.sleep(0.05)  # ~20 req/s — безопасно для лимитов Telegram
+        finally:
+            await temp_bot.session.close()  # гарантированное закрытие сессии
+
+    logger.info("[SWEEP] Done %s sweep: child_bot_id=%s, success=%d/%d",
+                action, child_bot_id, success, len(chats) * len(user_ids))
 
 
 async def mass_sync_blacklist(owner_id: int, turn_on: bool, admin_id: int, bot: Bot):
@@ -3105,17 +3163,17 @@ async def on_ga_bot_select_toggle(callback: CallbackQuery):
 
     await callback.answer(status)
 
-    # Авто-рейд: при добавлении бота — банить всех из глобального ЧС в его каналах
-    # При удалении — разбанить (чтобы глобальный ЧС не давил на чужие проекты)
+    # Авто-рейд: при добавлении бота — банить всех из глобального ЧС в его каналах.
+    # При удалении — разбанить (чтобы глобальный ЧС не давил на чужие проекты).
+    # GC-safe: сохраняем сильную ссылку в _background_tasks до завершения задачи.
     if bl_active:
-        import asyncio
-        asyncio.create_task(_sweep_single_bot(
+        task = asyncio.create_task(_sweep_single_bot(
             owner_id=owner_id,
             child_bot_id=child_bot_id,
             turn_on=newly_added,
-            admin_id=callback.from_user.id,
-            bot=callback.bot,
         ))
+        _background_tasks.add(task)
+        task.add_done_callback(_background_tasks.discard)
 
     await _show_bots_network_page(callback, owner_id, page)
 

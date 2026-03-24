@@ -262,10 +262,22 @@ async def on_save_host(msg: Message, state: FSMContext, platform_user: dict | No
             parse_mode="HTML",
         )
 
-    # 1. Сохраняем в БД
+    # 1. Сохраняем новый Host в БД
     await set_setting("rapidapi_host", new_host)
 
-    # 2. КРИТИЧНО: инвалидируем кэш
+    # 2. Автоматически пересчитываем URL: заменяем хост в URL, путь остаётся прежним
+    from urllib.parse import urlparse, urlunparse
+    old_url = await get_setting("rapidapi_url", f"https://{new_host}/")
+    try:
+        parsed = urlparse(old_url)
+        # Подставляем новый хост, сохраняя путь и параметры
+        new_url = urlunparse(parsed._replace(netloc=new_host))
+    except Exception:
+        new_url = f"https://{new_host}/"
+    await set_setting("rapidapi_url", new_url)
+    logger.info("[ADMIN API] API URL auto-updated to '%s'", new_url)
+
+    # 3. КРИТИЧНО: инвалидируем кэш
     invalidate_api_cache()
 
     # 3. Удаляем сообщение-запрос "Введите хост"
@@ -286,7 +298,8 @@ async def on_save_host(msg: Message, state: FSMContext, platform_user: dict | No
     owner_id = platform_user["user_id"]
     text = await _render_settings_text()
     await msg.answer(
-        f"✅ <b>API Host сохранён:</b> <code>{new_host}</code>\n\n" + text,
+        f"✅ <b>API Host сохранён:</b> <code>{new_host}</code>\n"
+        f"🔗 <b>URL обновлён автоматически.</b>\n\n" + text,
         parse_mode="HTML",
         reply_markup=_kb_api_settings(owner_id),
     )

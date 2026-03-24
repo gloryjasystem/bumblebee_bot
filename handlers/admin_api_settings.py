@@ -153,13 +153,14 @@ async def on_api_set_key(call: CallbackQuery, state: FSMContext, platform_user: 
         return await call.answer("⛔️ Доступ запрещён.", show_alert=True)
 
     await state.set_state(AdminApiSettingsFSM.waiting_key)
-    await call.message.edit_text(
+    prompt_msg = await call.message.edit_text(
         "🔑 <b>Введите новый API Key</b>\n\n"
         "Скопируйте ключ из вашего аккаунта RapidAPI и отправьте его сюда.\n\n"
         "⚠️ <i>Сообщение с ключом будет автоматически удалено из чата после сохранения.</i>",
         parse_mode="HTML",
         reply_markup=_kb_cancel_api(),
     )
+    await state.update_data(prompt_msg_id=prompt_msg.message_id)
 
 
 # ── Нажатие «Изменить Host» ───────────────────────────────────────────────────
@@ -175,13 +176,14 @@ async def on_api_set_host(call: CallbackQuery, state: FSMContext, platform_user:
         return await call.answer("⛔️ Доступ запрещён.", show_alert=True)
 
     await state.set_state(AdminApiSettingsFSM.waiting_host)
-    await call.message.edit_text(
+    prompt_msg = await call.message.edit_text(
         "✏️ <b>Введите новый API Host</b>\n\n"
         "Пример: <code>telegram124.p.rapidapi.com</code>\n\n"
         "<i>Вводите только хост, без https:// и слешей.</i>",
         parse_mode="HTML",
         reply_markup=_kb_cancel_api(),
     )
+    await state.update_data(prompt_msg_id=prompt_msg.message_id)
 
 
 # ── Приём нового Key ──────────────────────────────────────────────────────────
@@ -206,10 +208,19 @@ async def on_save_key(msg: Message, state: FSMContext, platform_user: dict | Non
     # 2. КРИТИЧНО: инвалидируем кэш — новый ключ подхватится немедленно
     invalidate_api_cache()
 
-    # 3. Очищаем состояние
+    # 3. Удаляем сообщение-запрос "Введите ключ" (если записали его)
+    data = await state.get_data()
+    prompt_msg_id = data.get("prompt_msg_id")
+    if prompt_msg_id:
+        try:
+            await msg.bot.delete_message(chat_id=msg.chat.id, message_id=prompt_msg_id)
+        except Exception:
+            pass
+
+    # 4. Очищаем состояние
     await state.clear()
 
-    # 4. Удаляем сообщение с секретным ключом из истории чата
+    # 5. Удаляем ответ пользователя с секретным ключом из истории чата
     try:
         await msg.delete()
     except Exception:
@@ -257,12 +268,21 @@ async def on_save_host(msg: Message, state: FSMContext, platform_user: dict | No
     # 2. КРИТИЧНО: инвалидируем кэш
     invalidate_api_cache()
 
-    # 3. Очищаем состояние
+    # 3. Удаляем сообщение-запрос "Введите хост"
+    data = await state.get_data()
+    prompt_msg_id = data.get("prompt_msg_id")
+    if prompt_msg_id:
+        try:
+            await msg.bot.delete_message(chat_id=msg.chat.id, message_id=prompt_msg_id)
+        except Exception:
+            pass
+
+    # 4. Очищаем состояние
     await state.clear()
 
     logger.info("[ADMIN API] API Host updated to '%s' by user=%d", new_host, msg.from_user.id)
 
-    # 4. Показываем обновлённую панель настроек
+    # 5. Показываем обновлённую панель настроек
     owner_id = platform_user["user_id"]
     text = await _render_settings_text()
     await msg.answer(

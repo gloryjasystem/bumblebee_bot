@@ -711,10 +711,91 @@ async def on_ga_pu_noop(callback: CallbackQuery):
 async def on_ga_pu_chat_toggle(callback: CallbackQuery):
     parts = callback.data.split(":")
     chat_row_id, bot_id, target_uid, admin_owner_id = int(parts[1]), int(parts[2]), int(parts[3]), int(parts[4])
+
     async with get_pool().acquire() as conn:
-        current = await conn.fetchval("SELECT is_active FROM bot_chats WHERE id=$1", chat_row_id)
+        # Получаем текущее состояние + chat_id и owner_id нужные для разбана
+        row = await conn.fetchrow(
+            "SELECT is_active, chat_id, owner_id FROM bot_chats WHERE id=$1",
+            chat_row_id
+        )
+        current = row["is_active"] if row else True
+        chat_id = row["chat_id"] if row else None
+        owner_id = row["owner_id"] if row else None
         await conn.execute("UPDATE bot_chats SET is_active=$1 WHERE id=$2", not current, chat_row_id)
+
     await callback.answer("✅ Площадка выключена" if current else "✅ Площадка включена")
+
+    # ── При ВЫКЛЮЧЕНИИ площадки — разбаниваем всех из Глобального ЧС в этом чате ──
+    # Принцип тот же, что у локального тумблера ЧС (on_bs_bl_toggle → sweep_unban_after_disable).
+    # Только здесь мы работаем с одним конкретным chat_id, а не со всеми чатами сразу.
+    if current and chat_id and owner_id:
+        async def _unban_global_bl_in_chat():
+            """Разбанивает всех пользователей Глобального ЧС в одном конкретном чате."""
+            try:
+                async with get_pool().acquire() as conn2:
+                    # Токен бота для работы с Telegram API
+                    token_row = await conn2.fetchrow(
+                        "SELECT token_encrypted FROM child_bots WHERE id=$1",
+                        bot_id
+                    )
+                    if not token_row:
+                        return
+                    # Все user_id из Глобального ЧС (child_bot_id IS NULL = глобальный)
+                    bl_users = await conn2.fetch(
+                        "SELECT user_id FROM blacklist "
+                        "WHERE owner_id=$1 AND child_bot_id IS NULL AND user_id IS NOT NULL",
+                        owner_id
+                    )
+                if not bl_users:
+                    return
+
+                token = decrypt_token(token_row["token_encrypted"])
+                if not token:
+                    return
+
+                temp_bot = Bot(token=token)
+                try:
+                    for user_row in bl_users:
+                        uid = user_row["user_id"]
+                        try:
+                            await temp_bot.unban_chat_member(
+                                chat_id=chat_id,
+                                user_id=uid,
+                                only_if_banned=True  # не падает, если пользователь не забанен
+                            )
+                        except TelegramRetryAfter as e:
+                            # FloodWait: ждём и делаем ещё одну попытку
+                            wait = e.retry_after
+                            if wait <= 30:
+                                await asyncio.sleep(wait)
+                                try:
+                                    await temp_bot.unban_chat_member(
+                                        chat_id=chat_id,
+                                        user_id=uid,
+                                        only_if_banned=True
+                                    )
+                                except Exception:
+                                    pass
+                        except (TelegramForbiddenError, TelegramBadRequest):
+                            # Бот не имеет прав или чат недоступен — прекращаем
+                            break
+                        except Exception:
+                            pass  # Любые другие ошибки — молча пропускаем
+                        await asyncio.sleep(0.05)  # 20 вызовов/сек — безопасный лимит
+                finally:
+                    await temp_bot.session.close()
+
+                logger.info(
+                    f"[GA TOGGLE] Unbanned {len(bl_users)} global BL users "
+                    f"from chat={chat_id} (bot_id={bot_id}, owner={owner_id})"
+                )
+            except Exception as e:
+                logger.error(f"[GA TOGGLE] Unban task failed for chat={chat_id}: {e}", exc_info=True)
+
+        task = asyncio.create_task(_unban_global_bl_in_chat())
+        _background_tasks.add(task)
+        task.add_done_callback(_background_tasks.discard)
+
     # refresh the page
     fake_cb = callback.model_copy(update={"data": f"ga_pu_bot_detail:{bot_id}:{target_uid}:{admin_owner_id}"})
     await on_ga_pu_bot_detail(fake_cb)

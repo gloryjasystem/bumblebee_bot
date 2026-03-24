@@ -90,7 +90,7 @@ async def username_to_id(
         InvalidApiKeyError — HTTP 403, ключ невалиден
         aiohttp.ClientError — сетевые ошибки, таймауты
     """
-    api_key, api_host, api_url = await get_api_config()
+    api_key, api_host, api_url, api_param = await get_api_config()
 
     # Защита от случайно сохранённого placeholder-значения
     if not api_key or api_key == "YOUR_KEY_HERE":
@@ -104,9 +104,10 @@ async def username_to_id(
         "x-rapidapi-key":  api_key,
         "x-rapidapi-host": api_host,
     }
-    params = {"username": clean_username}
+    # api_param — динамическое имя параметра ('username', 'peer', и т.д.)
+    params = {api_param: clean_username}
 
-    logger.debug("[RAPIDAPI] Resolving @%s via %s", clean_username, api_host)
+    logger.debug("[RAPIDAPI] Resolving @%s via %s (param=%s)", clean_username, api_host, api_param)
 
     async with session.get(
         api_url,

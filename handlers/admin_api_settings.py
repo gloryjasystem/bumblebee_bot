@@ -245,16 +245,21 @@ async def on_save_key(msg: Message, state: FSMContext, platform_user: dict | Non
 @router.message(AdminApiSettingsFSM.waiting_host)
 async def on_save_host(msg: Message, state: FSMContext, platform_user: dict | None):
     """
-    Сохраняет новый API Host в platform_settings и инвалидирует кэш.
-    Host не является секретом — сообщение не удаляется.
+    Сохраняет новый API Host и автоматически обновляет URL + query-параметр.
+
+    Логика:
+      - Если хост известен (есть в KNOWN_PROVIDERS) — берём готовые URL и param.
+      - Если хост неизвестен — сохраняем путь из старого URL, меняем только хост.
     """
     if not platform_user:
         return
 
-    new_host = (msg.text or "").strip().lower()
+    from urllib.parse import urlparse, urlunparse
+    from services.settings import resolve_provider
 
-    # Базовая валидация: хост не должен содержать схему или слеши
+    new_host = (msg.text or "").strip().lower()
     new_host = new_host.removeprefix("https://").removeprefix("http://").rstrip("/")
+
     if not new_host or "." not in new_host:
         return await msg.answer(
             "⚠️ Некорректный хост. Введите только доменное имя, без https://.\n"
@@ -262,25 +267,34 @@ async def on_save_host(msg: Message, state: FSMContext, platform_user: dict | No
             parse_mode="HTML",
         )
 
-    # 1. Сохраняем новый Host в БД
+    # 1. Сохраняем Host
     await set_setting("rapidapi_host", new_host)
 
-    # 2. Автоматически пересчитываем URL: заменяем хост в URL, путь остаётся прежним
-    from urllib.parse import urlparse, urlunparse
-    old_url = await get_setting("rapidapi_url", f"https://{new_host}/")
-    try:
-        parsed = urlparse(old_url)
-        # Подставляем новый хост, сохраняя путь и параметры
-        new_url = urlunparse(parsed._replace(netloc=new_host))
-    except Exception:
-        new_url = f"https://{new_host}/"
-    await set_setting("rapidapi_url", new_url)
-    logger.info("[ADMIN API] API URL auto-updated to '%s'", new_url)
+    # 2. Подбираем URL и param
+    provider = resolve_provider(new_host)
+    if provider:
+        # Известный провайдер — берём готовые значения из реестра
+        new_url   = provider.url
+        new_param = provider.param
+        provider_note = f"✅ Провайдер распознан автоматически (параметр: <code>{new_param}</code>)"
+    else:
+        # Неизвестный провайдер — подменяем хост в URL, сохраняем путь
+        old_url = await get_setting("rapidapi_url", f"https://{new_host}/")
+        try:
+            parsed  = urlparse(old_url)
+            new_url = urlunparse(parsed._replace(netloc=new_host))
+        except Exception:
+            new_url = f"https://{new_host}/"
+        new_param = "username"  # дефолт для неизвестных
+        provider_note = "⚠️ Провайдер не распознан — URL обновлён, параметр: <code>username</code>"
 
-    # 3. КРИТИЧНО: инвалидируем кэш
+    await set_setting("rapidapi_url",   new_url)
+    await set_setting("rapidapi_param", new_param)
+
+    # 3. Инвалидируем кэш — новые настройки сразу подхватятся пайплайном
     invalidate_api_cache()
 
-    # 3. Удаляем сообщение-запрос "Введите хост"
+    # 4. Удаляем сообщение-запрос «Введите хост»
     data = await state.get_data()
     prompt_msg_id = data.get("prompt_msg_id")
     if prompt_msg_id:
@@ -289,17 +303,18 @@ async def on_save_host(msg: Message, state: FSMContext, platform_user: dict | No
         except Exception:
             pass
 
-    # 4. Очищаем состояние
+    # 5. Сбрасываем FSM
     await state.clear()
 
-    logger.info("[ADMIN API] API Host updated to '%s' by user=%d", new_host, msg.from_user.id)
+    logger.info("[ADMIN API] Host=%s URL=%s param=%s (user=%d)",
+                new_host, new_url, new_param, msg.from_user.id)
 
-    # 5. Показываем обновлённую панель настроек
+    # 6. Показываем обновлённую панель
     owner_id = platform_user["user_id"]
     text = await _render_settings_text()
     await msg.answer(
         f"✅ <b>API Host сохранён:</b> <code>{new_host}</code>\n"
-        f"🔗 <b>URL обновлён автоматически.</b>\n\n" + text,
+        f"{provider_note}\n\n" + text,
         parse_mode="HTML",
         reply_markup=_kb_api_settings(owner_id),
     )

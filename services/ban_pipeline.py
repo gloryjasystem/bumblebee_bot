@@ -176,25 +176,37 @@ async def start_ban_pipeline(
 
 
     # ── Финальное сообщение ───────────────────────────────────────────────────
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    
+    # Формируем кнопку возврата: в локальный ЧС бота или в глобальный ЧС владельца
+    back_cb = f"bs_blacklist:{child_bot_id}" if child_bot_id else f"ga_bl:{owner_id}"
+    back_markup = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="◀️ Назад в ЧС", callback_data=back_cb)]
+    ])
+
     if stop_event.is_set():
-        done = results["ok"] + results["not_found"] + results["error"]
+        done = results["ok"] + results["not_found"] + results["error"] + results["already_in_bl"]
         await _edit_status(
             bot, notify_chat_id, status_msg_id,
             f"⚠️ <b>Процесс прерван</b> вручную.\n"
-            f"Успело обработаться: <b>{done}/{total}</b>\n"
-            f"✅ Забанено: {results['ok']} | "
-            f"❓ Не найдено: {results['not_found']} | "
-            f"⚠️ Ошибки: {results['error']}",
+            f"Успело обработаться: <b>{done}/{total}</b>\n\n"
+            f"✅ Новых забанено: <b>{results['ok']}</b>\n"
+            f"🔄 Уже в базе: <b>{results['already_in_bl']}</b>\n"
+            f"❓ Не найдено: <b>{results['not_found']}</b>\n"
+            f"⚠️ Ошибки: <b>{results['error']}</b>",
             show_stop=False,
+            markup=back_markup,
         )
     else:
         await _edit_status(
             bot, notify_chat_id, status_msg_id,
-            f"✅ <b>Готово!</b>\n"
-            f"├ Забанено: <b>{results['ok']}</b>\n"
+            f"✅ <b>Готово!</b>\n\n"
+            f"├ Новых забанено: <b>{results['ok']}</b>\n"
+            f"├ Уже в базе: <b>{results['already_in_bl']}</b>\n"
             f"├ Не найдено: <b>{results['not_found']}</b>\n"
             f"└ Ошибки: <b>{results['error']}</b>",
             show_stop=False,
+            markup=back_markup,
         )
 
 
@@ -264,7 +276,6 @@ async def _worker(
                         worker_id, username, resolved_id,
                     )
                     results["already_in_bl"] += 1
-                    results["ok"] += 1  # считаем как успех в итоговых счётчиках
                     _handled = True
                 elif local_id is not None:
                     # Шаг 2 сработал: ID найден в локальных таблицах, API не трогаем
@@ -593,7 +604,7 @@ def _report_progress(
     TelegramRetryAfter при быстрой обработке числовых ID (без API-вызовов).
     """
     now  = time.monotonic()
-    done = results["ok"] + results["not_found"] + results["error"]
+    done = results["ok"] + results["not_found"] + results["error"] + results["already_in_bl"]
     total = results["total"]
 
     last = _last_report.get(status_msg_id, 0.0)
@@ -606,6 +617,7 @@ def _report_progress(
             bot, notify_chat_id, status_msg_id,
             f"⏳ Обработано <b>{done}/{total}</b>\n"
             f"✅ Забанено: {results['ok']} | "
+            f"🔄 Уже в ЧС: {results['already_in_bl']}\n"
             f"❓ Не найдено: {results['not_found']} | "
             f"⚠️ Ошибки: {results['error']}",
             show_stop=True,
@@ -619,13 +631,18 @@ async def _edit_status(
     msg_id:    int,
     text:      str,
     show_stop: bool = True,
+    markup:    Optional['InlineKeyboardMarkup'] = None,
 ) -> None:
     """
     Редактирует сообщение-статус с прогрессом.
     При show_stop=True прикрепляет кнопку «Остановить».
+    Если show_stop=False и передан markup, использует его.
     Ошибки редактирования игнорируются (сообщение могло быть удалено).
     """
     from keyboards.stop_pipeline import stop_keyboard  # импорт здесь избегает цикла
+    from aiogram.types import InlineKeyboardMarkup
+
+    final_markup = stop_keyboard(msg_id) if show_stop else markup
 
     try:
         await bot.edit_message_text(
@@ -633,7 +650,7 @@ async def _edit_status(
             message_id=msg_id,
             text=text,
             parse_mode="HTML",
-            reply_markup=stop_keyboard(msg_id) if show_stop else None,
+            reply_markup=final_markup,
         )
     except Exception:
         pass  # Сообщение удалено или не изменилось — тихо игнорируем

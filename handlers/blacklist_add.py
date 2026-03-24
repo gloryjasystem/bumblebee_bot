@@ -1,15 +1,21 @@
 """
-handlers/blacklist_add.py — Обработчики RapidAPI-пайплайна для добавления в ЧС.
+handlers/blacklist_add.py — Универсальный хэндлер добавления в ЧС через RapidAPI-пайплайн.
 
 Точки входа:
-  - Глобальный Администратор: callback_data="ga_bl_rapidapi_add"
+  - Глобальный Администратор: callback_data="ga_bl_rapidapi_add"  (кнопка "➕ Добавить в ЧС")
   - Локальный владелец:       callback_data="bl_rapidapi_add:{chat_id}"
 
+Поддерживает три режима ввода:
+  - Текст: @username, цифровой ID, ссылки t.me, списки через запятую/новую строку
+  - Файл: .txt / .csv со списком
+  - Forward: пересланное сообщение от целевого пользователя (без API, квота не тратится)
+
 Дополнительно:
-  - cancel_pipeline:      — Graceful Shutdown активного пайплайна.
+  - cancel_pipeline — Graceful Shutdown активного пайплайна.
 """
 import asyncio
 import logging
+from typing import Optional
 
 from aiogram import Bot, F, Router
 from aiogram.fsm.context import FSMContext
@@ -19,6 +25,7 @@ from aiogram.types import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     Message,
+    MessageOriginUser,
 )
 
 from services.ban_pipeline import active_pipelines, start_ban_pipeline
@@ -64,12 +71,13 @@ async def on_ga_rapidapi_add(call: CallbackQuery, state: FSMContext, platform_us
     await state.set_state(RapidApiFSM.waiting_for_input)
 
     prompt_msg = await call.message.edit_text(
-        "🌐 <b>Глобальный ЧС — добавить через RapidAPI</b>\n\n"
-        "Отправьте <b>@username</b>, <b>числовой ID</b>, ссылку <b>t.me/user</b> "
-        "или загрузите файл <b>.txt/.csv</b>.\n"
-        "Несколько записей — каждая с новой строки или через запятую.\n\n"
-        "<i>Пользователи будут конвертированы через RapidAPI и забанены "
-        "во всех подключённых каналах.</i>",
+        "🌐 <b>Добавить в ЧС — Универсальный ввод</b>\n\n"
+        "Отправьте любое из вариантов:\n"
+        "• <b>@username</b>, <b>цифровой ID</b> или ссылку <b>t.me/user</b>\n"
+        "• Файл <b>.txt/.csv</b> со списком\n"
+        "• Пересланное сообщение от нужного пользователя — ITмоментально забаним\n\n"
+        "<i>По юзернеймам бот автоматически получает цифровой ID через RapidAPI.\n"
+        "Цифровые ID банятся мгновенно во всех подключённых каналах.</i>",
         parse_mode="HTML",
         reply_markup=_kb_cancel_input(back_cb),
     )
@@ -94,19 +102,20 @@ async def on_bl_rapidapi_add(call: CallbackQuery, state: FSMContext, platform_us
     await state.set_state(RapidApiFSM.waiting_for_input)
 
     prompt_msg = await call.message.edit_text(
-        "🔑 <b>Добавить в ЧС через RapidAPI</b>\n\n"
-        "Отправьте <b>@username</b>, <b>числовой ID</b>, ссылку <b>t.me/user</b> "
-        "или загрузите файл <b>.txt/.csv</b>.\n"
-        "Несколько записей — каждая с новой строки или через запятую.\n\n"
-        "<i>Пользователи будут конвертированы через RapidAPI и забанены "
-        "в ваших каналах.</i>",
+        "🔑 <b>Добавить в ЧС — Универсальный ввод</b>\n\n"
+        "Отправьте любое из вариантов:\n"
+        "• <b>@username</b>, <b>цифровой ID</b> или ссылку <b>t.me/user</b>\n"
+        "• Файл <b>.txt/.csv</b> со списком\n"
+        "• <b>Пересланное сообщение</b> от нужного пользователя (мгновенно баним по ID)\n\n"
+        "<i>По юзернеймам бот автоматически получает цифровой ID через RapidAPI.\n"
+        "Цифровые ID банятся мгновенно во всех подключённых каналах.</i>",
         parse_mode="HTML",
         reply_markup=_kb_cancel_input(back_cb),
     )
     await state.update_data(prompt_msg_id=prompt_msg.message_id)
 
 
-# ── Приём текста ──────────────────────────────────────────────────────────────
+# ── Приём текста ──────────────────────────────────────────────────────────
 
 @router.message(RapidApiFSM.waiting_for_input, F.text)
 async def on_rapidapi_text_input(
@@ -118,6 +127,47 @@ async def on_rapidapi_text_input(
 
     usernames, numeric_ids = parse_usernames_and_ids(msg.text or "")
     await _kick_off_pipeline(msg, state, bot, platform_user, usernames, numeric_ids)
+
+
+# ── Приём пересланного сообщения (Forward) — без API, квота не тратится ───────────────────
+
+@router.message(RapidApiFSM.waiting_for_input, F.forward_origin)
+async def on_rapidapi_forward_input(
+    msg: Message, state: FSMContext, bot: Bot, platform_user: dict | None
+):
+    """
+    Пересланное сообщение от целевого пользователя.
+
+    aiogram 3.x предоставляет два типа forward_origin:
+      - MessageOriginUser     — ID доступен (пользователь не скрыл профиль).
+      - MessageOriginHiddenUser — ID скрыт, знаем только западное имя.
+    """
+    if not platform_user:
+        return
+
+    origin = msg.forward_origin
+
+    if isinstance(origin, MessageOriginUser):
+        # Пользователь не скрыл профиль — ID есть
+        user_id: int = origin.sender_user.id
+        logger.info(
+            "[BL ADD] Forward from user=%d, username=%s",
+            user_id, origin.sender_user.username,
+        )
+        await _kick_off_pipeline(
+            msg, state, bot, platform_user,
+            usernames=[],
+            numeric_ids=[user_id],
+        )
+    else:
+        # HiddenUser / Channel / Bot — ID недоступен
+        await msg.answer(
+            "❌ <b>ID скрыт настройками приватности юзера.</b>\n\n"
+            "Пользователь запретил пересылки своего идентификатора.\n"
+            "Пришлите его <b>@username</b> или ссылку <b>t.me/юзернейм</b>.",
+            parse_mode="HTML",
+        )
+
 
 
 # ── Приём файла ───────────────────────────────────────────────────────────────

@@ -2062,11 +2062,10 @@ async def on_ga_bl(callback: CallbackQuery, state: FSMContext = None):
     kb = [
         [InlineKeyboardButton(text=toggle_text, callback_data=f"ga_bl_master:{owner_id}")],
         [
-            InlineKeyboardButton(text="➕ Добавить в ЧС", callback_data=f"ga_bl_add:{owner_id}"),
-            InlineKeyboardButton(text="➖ Удалить из ЧС", callback_data=f"ga_bl_del:{owner_id}")
+            # ➕ Единая умная точка входа: @username/ID/ссылки/файлы — всё через пайплайн
+            InlineKeyboardButton(text="➕ Добавить в ЧС", callback_data="ga_bl_rapidapi_add"),
+            InlineKeyboardButton(text="➖ Удалить из ЧС", callback_data=f"ga_bl_del:{owner_id}"),
         ],
-        # ── RapidAPI пайплайн: массовый бан через конвертацию @username → ID ──
-        [InlineKeyboardButton(text="🚀 Добавить через RapidAPI", callback_data="ga_bl_rapidapi_add")],
         [InlineKeyboardButton(text="🗑 Очистить ЧС", callback_data=f"ga_bl_clear_confirm:{owner_id}")],
         [InlineKeyboardButton(text="📥 Скачать ЧС (CSV)", callback_data=f"ga_bl_export_csv:{owner_id}")],
     ]

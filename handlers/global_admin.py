@@ -2308,17 +2308,8 @@ async def _export_bl_csv(bot, chat_id: int, admin_id: int, owner_id: int, msg_to
         )
         selected_bot_ids = [r['child_bot_id'] for r in sel_bots]
 
-        if not selected_bot_ids:
-            kb = [[InlineKeyboardButton(text="◀️ Назад", callback_data=f"ga_bl:{owner_id}")]]
-            if msg_to_edit:
-                try:
-                    await msg_to_edit.edit_text(
-                        "⚠️ Выборка ботов пуста. Отметьте боты в '🗄️ Управление общей базой'",
-                        reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
-                    )
-                except Exception:
-                    pass
-            return
+        # (Мы больше не блокируем скачивание при пустом списке selected_bot_ids, 
+        # так как иначе мы не сможем скачать записи из глобального ЧС)
 
         # 2. Читаем ЧС из выбранных ботов + глобальные записи платформы (child_bot_id IS NULL)
         rows = await conn.fetch("""

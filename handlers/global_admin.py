@@ -1949,6 +1949,20 @@ async def _sweep_single_bot(owner_id: int, child_bot_id: int, turn_on: bool) -> 
         finally:
             await temp_bot.session.close()  # гарантированное закрытие сессии
 
+    if success > 0 and turn_on:
+        try:
+            async with get_pool().acquire() as conn:
+                await conn.execute(
+                    "UPDATE platform_users SET blocked_count = blocked_count + $1 WHERE user_id = $2",
+                    success, owner_id
+                )
+                await conn.execute(
+                    "UPDATE child_bots SET blocked_count = blocked_count + $1, global_blocked_count = global_blocked_count + $1 WHERE id = $2",
+                    success, child_bot_id
+                )
+        except Exception as e:
+            logger.error("[SWEEP] Failed to update analytics for child_bot_id=%s: %s", child_bot_id, e)
+
     logger.info("[SWEEP] Done %s sweep: child_bot_id=%s, success=%d/%d",
                 action, child_bot_id, success, len(chats) * len(user_ids))
 

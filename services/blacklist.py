@@ -117,16 +117,32 @@ async def check_blacklist(owner_id: int, user_id: int, username: str | None, chi
     # мы гарантированно забираем его точный Телеграм ID навсегда:
     if row is not None and username:
         import asyncio
-        asyncio.create_task(db.execute(
-            """
-            UPDATE blacklist 
-            SET user_id = $2
-            WHERE owner_id = $1 
-              AND lower(username) = lower($3) 
-              AND user_id IS NULL
-            """,
-            owner_id, user_id, username
-        ))
+        async def _heal_blacklist_record():
+            import asyncpg
+            try:
+                await db.execute(
+                    """
+                    UPDATE blacklist 
+                    SET user_id = $2
+                    WHERE owner_id = $1 
+                      AND lower(username) = lower($3) 
+                      AND user_id IS NULL
+                    """,
+                    owner_id, user_id, username
+                )
+            except asyncpg.UniqueViolationError:
+                # Если такой user_id уже есть в базе (кто-то добавил его по ID),
+                # то UPDATE упадёт с ошибкой. В этом случае "безымянную" запись можно просто удалить.
+                await db.execute(
+                    """
+                    DELETE FROM blacklist
+                    WHERE owner_id = $1 
+                      AND lower(username) = lower($2) 
+                      AND user_id IS NULL
+                    """,
+                    owner_id, username
+                )
+        asyncio.create_task(_heal_blacklist_record())
 
     return row is not None
 

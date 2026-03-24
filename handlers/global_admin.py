@@ -2059,8 +2059,12 @@ async def on_ga_bl(callback: CallbackQuery, state: FSMContext = None):
             InlineKeyboardButton(text="➕ Добавить в ЧС", callback_data=f"ga_bl_add:{owner_id}"),
             InlineKeyboardButton(text="➖ Удалить из ЧС", callback_data=f"ga_bl_del:{owner_id}")
         ],
+        # ── RapidAPI пайплайн: массовый бан через конвертацию @username → ID ──
+        [InlineKeyboardButton(text="🚀 Добавить через RapidAPI", callback_data="ga_bl_rapidapi_add")],
         [InlineKeyboardButton(text="🗑 Очистить ЧС", callback_data=f"ga_bl_clear_confirm:{owner_id}")],
         [InlineKeyboardButton(text="📥 Скачать ЧС (CSV)", callback_data=f"ga_bl_export_csv:{owner_id}")],
+        # ── Настройки RapidAPI (API ключ, хост, квота) ────────────────────────
+        [InlineKeyboardButton(text="🔑 Настройки RapidAPI", callback_data="rapidapi_settings")],
         [InlineKeyboardButton(text="◀️ Назад", callback_data=f"ga_main:{owner_id}")]
     ]
 

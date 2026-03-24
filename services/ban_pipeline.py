@@ -427,11 +427,12 @@ async def _save_resolve_error(
     await db.execute(
         """
         INSERT INTO blacklist (owner_id, username, source_username, resolve_error, child_bot_id)
-        VALUES ($1, $2, $2, $3, $4)
+        VALUES ($1, $2, $3, $4, $5)
         ON CONFLICT DO NOTHING
         """,
         owner_id,
-        username.lower().lstrip("@"),
+        username.lower().lstrip("@"),  # username (VARCHAR)
+        username,                      # source_username (TEXT)
         error,
         child_bot_id,
     )

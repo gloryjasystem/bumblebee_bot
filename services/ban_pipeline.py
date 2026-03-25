@@ -1,489 +1,575 @@
 """
-services/ban_pipeline.py — Главный асинхронный конвейер бана пользователей.
+services/ban_pipeline.py — Enterprise-grade dual-lane async ban pipeline.
 
-Архитектура (Producer-Consumer pattern + Smart Resolver):
-  ┌──────────────────────────────────────────────────────┐
-  │  start_ban_pipeline()                                │
-  │  ├─ Дедупликация входных данных (set())              │
-  │  ├─ Наполняет asyncio.Queue парами (username, id)   │
-  │  ├─ Запускает N воркеров (_worker)                  │
-  │  ├─ Регистрирует stop_event в active_pipelines       │
-  │  └─ В finally: сохраняет квоту, чистит реестр        │
-  │                                                      │
-  │  _worker() × CONCURRENCY — 4-шаговый Smart Resolver │
-  │  ├─ Шаг 1: Deduplication — уже есть в ЧС? → skip   │
-  │  ├─ Шаг 2: Local DB Resolution — UNION ALL query    │
-  │  ├─ Шаг 3: External API (RapidAPI) — только fallback│
-  │  └─ Шаг 4: Background Sweep — бан + сохранение      │
-  │                                                      │
-  │  _ban_in_all_chats()                                │
-  │  ├─ До 3 попыток при TelegramRetryAfter             │
-  │  └─ Микро-пауза BAN_DELAY между каждым баном        │
-  └──────────────────────────────────────────────────────┘
+Architecture (Producer-Consumer + Strategy + Circuit Breaker):
 
-Graceful Shutdown:
-  active_pipelines[status_msg_id] = asyncio.Event()
-  Handler кнопки «Стоп» вызывает event.set() и сливает очередь.
-  Воркеры проверяют is_set() и выходят без deadlock на queue.join().
+  ┌──────────────────────────────────────────────────────────────────────┐
+  │  start_ban_pipeline()                                                │
+  │  ├─ Splits input into FastQueue (IDs) and SlowQueue (usernames)     │
+  │  ├─ FastWorkers: use TokenBucket for Telegram (≤20 req/s)           │
+  │  ├─ SlowWorkers: use provider's RPM limiter + local DB first        │
+  │  ├─ Global FloodWait event: pauses ALL Telegram calls               │
+  │  └─ Circuit Breaker: disables SlowQueue on API key error            │
+  │                                                                      │
+  │  BaseUsernameResolver (Strategy Pattern)                             │
+  │  └─ RapidApiResolver (concrete): dynamic rpm_limit, host, key       │
+  │                                                                      │
+  │  TokenBucket: thread-safe, async-native rate limiter                │
+  └──────────────────────────────────────────────────────────────────────┘
 
-Rate Limiting:
-  - RapidAPI: DELAY_BETWEEN = 0.3s между запросами внутри воркера.
-  - Telegram:  BAN_DELAY    = 0.05s между ban_chat_member + retry при 429.
-  - Прогресс-бар: не чаще PROGRESS_INTERVAL = 3.0s.
+Rate Limits (configurable):
+  - Telegram Ban API:  TG_BAN_RPS = 20 req/s  (stays under 30 req/s hard cap)
+  - RapidAPI:          rpm_limit from DB config (e.g. 15 req/min)
+  - Jitter:            ±20% on all sleeps to avoid thundering herd
+
+Reliability:
+  - TelegramRetryAfter: global pause, respects exact timeout + jitter
+  - RateLimitError:     returns item to SlowQueue, pauses that worker
+  - InvalidApiKeyError: circuit breaker opens, stops all slow workers
+  - Empty task guard:   queue.task_done() always called (deadlock-free)
 """
+from __future__ import annotations
+
 import asyncio
 import logging
+import random
 import time
+from abc import ABC, abstractmethod
 from typing import Optional
 
 import aiohttp
-from aiogram import Bot
-from aiogram.exceptions import (
-    TelegramBadRequest,
-    TelegramForbiddenError,
-    TelegramRetryAfter,
-)
+from aiogram import Bot as AioBot
+from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError, TelegramRetryAfter
 
 import db.pool as db
+from services.blacklist import _get_chats_with_tokens
 from services.rapidapi_client import (
     InvalidApiKeyError,
     RateLimitError,
     UserNotFoundError,
     username_to_id,
 )
-from services.settings import save_quota
-from services.blacklist import _get_chats_with_tokens  # переиспользуем существующую логику
+from services.settings import get_api_config, save_quota
 
 logger = logging.getLogger(__name__)
 
-# ── Настраиваемые константы ───────────────────────────────────────────────────
-CONCURRENCY      = 5    # параллельных воркеров (ограничивает нагрузку на RapidAPI)
-DELAY_BETWEEN    = 0.3  # секунд между запросами к RapidAPI внутри одного воркера
-BAN_DELAY        = 0.05 # секунд между отдельными вызовами ban_chat_member
-BAN_MAX_RETRIES  = 3    # максимум попыток при TelegramRetryAfter
-PROGRESS_INTERVAL = 3.0 # минимальный интервал обновления прогресс-бара (секунды)
 
-# ── Реестр активных пайплайнов для Graceful Shutdown ─────────────────────────
-# Ключ: message_id сообщения с прогресс-баром (уникален в пределах чата).
-# Значение: asyncio.Event — handler кнопки «Стоп» взведёт его через .set().
+# ── Глобальные настройки ───────────────────────────────────────────────────────
+
+# Telegram
+TG_BAN_RPS: float = 20.0          # Макс. банов/сек (ниже лимита Telegram 30 req/s)
+TG_BAN_JITTER: float = 0.2        # ±20% джиттер для каждого sleep
+
+# Воркеры
+FAST_WORKERS: int = 4             # Для числовых ID (без API)
+SLOW_WORKERS: int = 1             # Для @username (с API — ограничен RPM)
+
+# Прогресс-бар
+PROGRESS_INTERVAL: float = 3.0   # Минимальный интервал обновления (сек)
+
+# Реестр активных пайплайнов для Graceful Shutdown
 active_pipelines: dict[int, asyncio.Event] = {}
+_last_report: dict[int, float] = {}
 
 
-# ── Точка входа ───────────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# TOKEN BUCKET — async-native rate limiter с джиттером
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TokenBucket:
+    """
+    Классический Token Bucket для ограничения throughput.
+
+    Потокобезопасен для asyncio (использует asyncio.Lock).
+    Поддерживает динамическое обновление rate без перезапуска.
+    """
+
+    def __init__(self, rate: float, capacity: float | None = None) -> None:
+        """
+        Args:
+            rate:     Токенов в секунду (максимальный throughput).
+            capacity: Максимальный «бурст» токенов (default = rate * 2).
+        """
+        self._rate: float = rate
+        self._capacity: float = capacity or rate * 2.0
+        self._tokens: float = self._capacity
+        self._last_refill: float = time.monotonic()
+        self._lock: asyncio.Lock = asyncio.Lock()
+
+    def update_rate(self, new_rate: float) -> None:
+        """Динамически обновить лимит без пересоздания объекта."""
+        self._rate = new_rate
+        self._capacity = new_rate * 2.0
+
+    async def acquire(self, jitter: float = TG_BAN_JITTER) -> None:
+        """
+        Ждёт, пока не появится доступный токен.
+        Применяет джиттер ±jitter к паузам, чтобы избежать синхронных волн.
+        """
+        while True:
+            async with self._lock:
+                now = time.monotonic()
+                elapsed = now - self._last_refill
+                refill = elapsed * self._rate
+                self._tokens = min(self._capacity, self._tokens + refill)
+                self._last_refill = now
+
+                if self._tokens >= 1.0:
+                    self._tokens -= 1.0
+                    return
+
+                wait = (1.0 - self._tokens) / self._rate
+
+            # Добавляем джиттер: случайное смещение ±jitter*wait
+            jitter_wait = wait * (1.0 + random.uniform(-jitter, jitter))
+            await asyncio.sleep(max(0.001, jitter_wait))
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ABSTRACT RESOLVER — Strategy Pattern
+# ══════════════════════════════════════════════════════════════════════════════
+
+class BaseUsernameResolver(ABC):
+    """
+    Абстрактный провайдер конвертации @username → Telegram ID.
+
+    Все провайдеры реализуют этот интерфейс — swap без изменения воркеров.
+    """
+
+    @abstractmethod
+    async def resolve(
+        self,
+        session: aiohttp.ClientSession,
+        username: str,
+    ) -> tuple[int, Optional[int]]:
+        """
+        Returns:
+            (tg_id, quota_remaining)
+
+        Raises:
+            UserNotFoundError, RateLimitError, InvalidApiKeyError, aiohttp.ClientError
+        """
+        ...
+
+    @property
+    @abstractmethod
+    def rpm_limit(self) -> float:
+        """Максимальное количество запросов в минуту для этого провайдера."""
+        ...
+
+
+class RapidApiResolver(BaseUsernameResolver):
+    """
+    Конкретный провайдер через RapidAPI.
+
+    Параметры (key, host, url, param, rpm_limit) подтягиваются из БД
+    через get_api_config() с TTL-кэшем — смена ключей/хостов без перезапуска.
+    """
+
+    _DEFAULT_RPM: float = 15.0  # Conservative default (fits free/basic plans)
+
+    async def resolve(
+        self,
+        session: aiohttp.ClientSession,
+        username: str,
+    ) -> tuple[int, Optional[int]]:
+        return await username_to_id(session, username)
+
+    @property
+    def rpm_limit(self) -> float:
+        return self._DEFAULT_RPM
+
+    def update_rpm(self, new_rpm: float) -> None:
+        """Обновить лимит в runtime (например, после обнаружения нового тарифа)."""
+        self._DEFAULT_RPM = new_rpm
+
+
+# Синглтон провайдера — создаётся один раз, доступен для обновления извне
+_default_resolver: RapidApiResolver = RapidApiResolver()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ГЛОБАЛЬНЫЕ ОБЪЕКТЫ RATE LIMITING И CIRCUIT BREAKER
+# ══════════════════════════════════════════════════════════════════════════════
+
+# Telegram Token Bucket — общий для ВСЕХ воркеров (FastQueue + SlowQueue),
+# чтобы суммарный RPS никогда не превышал TG_BAN_RPS.
+_tg_bucket: TokenBucket = TokenBucket(rate=TG_BAN_RPS)
+
+# Global FloodWait event:
+# Когда Telegram возвращает RetryAfter, этот event устанавливается.
+# ВСЕ воркеры проверяют его перед каждым ban_chat_member.
+# После истечения таймаута — сбрасывается.
+_tg_flood_wait_until: float = 0.0  # monotonic timestamp, когда снова можно
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ТОЧКА ВХОДА
+# ══════════════════════════════════════════════════════════════════════════════
 
 async def start_ban_pipeline(
-    bot:             Bot,
+    bot:             AioBot,
     owner_id:        int,
     usernames:       list[str],
     numeric_ids:     list[int],
     notify_chat_id:  int,
     status_msg_id:   int,
     child_bot_id:    Optional[int] = None,
+    resolver:        BaseUsernameResolver | None = None,
 ) -> None:
     """
-    Запускает асинхронный конвейер бана.
+    Запускает enterprise-grade dual-lane конвейер бана.
 
-    Вызывать через asyncio.create_task() из handler'а, чтобы не блокировать
-    event loop бота на время обработки тысяч записей.
+    FastLane: numeric_ids → сразу в _ban_in_all_chats (без API, пейсинг TokenBucket)
+    SlowLane: usernames → резолв (локальная БД → провайдер) → _ban_in_all_chats
 
     Args:
-        bot:            Экземпляр главного бота (для редактирования статус-сообщения).
-        owner_id:       Telegram ID владельца / администратора.
-        usernames:      Список @username для конвертации через RapidAPI.
-        numeric_ids:    Список числовых ID (идут в обход API напрямую к бану).
-        notify_chat_id: ID чата, в котором обновляем прогресс-бар.
-        status_msg_id:  ID сообщения с прогресс-баром (привязка Graceful Shutdown).
-        child_bot_id:   None → глобальный ЧС (все боты), int → конкретный бот.
+        bot:            Главный bot (для прогресс-бара).
+        owner_id:       ID владельца/администратора сети.
+        usernames:      @username-список.
+        numeric_ids:    Цифровые Telegram ID (минуют API полностью).
+        notify_chat_id: Чат для прогресс-бара.
+        status_msg_id:  ID сообщения прогресс-бара (ключ graceful shutdown).
+        child_bot_id:   None → глобальный ЧС. int → локальный per-bot.
+        resolver:       Провайдер резолва (default: RapidApiResolver).
     """
-    # ── Шаг 0: Дедупликация на входе (устраняет Race Condition внутри батча) ────
-    # set() убирает дубли прямо в памяти, до попадания в очередь.
-    # Если 5 воркеров одновременно взяли бы одинаковый username — было бы 5 API-вызовов.
-    # Теперь каждый уникальный username войдёт в очередь РОВНО 1 РАЗ.
-    unique_usernames: list[str] = list(dict.fromkeys(u.lower().lstrip("@") for u in usernames))
-    unique_ids:       list[int] = list(dict.fromkeys(numeric_ids))
+    if resolver is None:
+        resolver = _default_resolver
 
+    # ── Дедупликация ───────────────────────────────────────────────────────
+    unique_usernames: list[str] = list(dict.fromkeys(
+        u.lower().lstrip("@") for u in usernames
+    ))
+    unique_ids: list[int] = list(dict.fromkeys(numeric_ids))
     total = len(unique_usernames) + len(unique_ids)
-    queue: asyncio.Queue[tuple[Optional[str], Optional[int]]] = asyncio.Queue()
-    stop_event = asyncio.Event()
 
-    # Счётчики прогресса (разделяемый dict между воркерами без локов — GIL защищает)
+    # ── Результаты (разделяемый dict, защищён GIL) ───────────────────────
     results: dict[str, int] = {
-        "ok":         0,
-        "not_found":  0,
-        "error":      0,
-        "already_in_bl": 0,
-        "total":      total,
+        "ok": 0, "not_found": 0, "error": 0,
+        "already_in_bl": 0, "total": total,
     }
-    # Последний известный остаток квоты RapidAPI — обновляется из каждого ответа
     quota_box: dict[str, Optional[int]] = {"remaining": None}
 
-    # ── Регистрируем пайплайн в реестре graceful shutdown ─────────────────────
+    # ── Очереди ───────────────────────────────────────────────────────────
+    fast_queue: asyncio.Queue[tuple[None, int]] = asyncio.Queue()
+    slow_queue: asyncio.Queue[tuple[str, None]] = asyncio.Queue()
+
+    for uid in unique_ids:
+        await fast_queue.put((None, uid))
+    for uname in unique_usernames:
+        await slow_queue.put((uname, None))
+
+    # ── Stop / Circuit Breaker events ────────────────────────────────────
+    stop_event     = asyncio.Event()
+    api_dead_event = asyncio.Event()   # Circuit Breaker: API ключ мёртв
     active_pipelines[status_msg_id] = stop_event
 
-    # Наполняем очередь: (username, None) или (None, numeric_id)
-    for u in unique_usernames:
-        await queue.put((u, None))
-    for uid in unique_ids:
-        await queue.put((None, uid))
-
     logger.info(
-        "[PIPELINE] Started: owner=%d total=%d (usernames=%d, ids=%d, dupes_skipped=%d)",
-        owner_id, total, len(unique_usernames), len(unique_ids),
+        "[PIPELINE] Started: owner=%d fast=%d slow=%d (dupes_skipped=%d)",
+        owner_id, len(unique_ids), len(unique_usernames),
         (len(usernames) + len(numeric_ids)) - total,
     )
 
     connector = aiohttp.TCPConnector(limit=10, ttl_dns_cache=300, ssl=True)
     try:
         async with aiohttp.ClientSession(connector=connector) as session:
-            workers = [
-                asyncio.create_task(
-                    _worker(
+            # ── RPM лимитер для SlowQueue (один на всех slow-воркеров) ──
+            rpm = resolver.rpm_limit
+            slow_bucket = TokenBucket(rate=rpm / 60.0)   # rpm → rps
+
+            workers: list[asyncio.Task] = []
+
+            # Fast workers — цифровые ID
+            for i in range(FAST_WORKERS):
+                workers.append(asyncio.create_task(
+                    _fast_worker(
                         worker_id=i,
-                        queue=queue,
-                        session=session,
-                        bot=bot,
+                        queue=fast_queue,
                         owner_id=owner_id,
                         child_bot_id=child_bot_id,
                         stop_event=stop_event,
                         results=results,
-                        quota_box=quota_box,
+                        bot=bot,
                         notify_chat_id=notify_chat_id,
                         status_msg_id=status_msg_id,
                     )
-                )
-                for i in range(CONCURRENCY)
-            ]
-            await queue.join()
+                ))
+
+            # Slow workers — @usernames
+            for i in range(SLOW_WORKERS):
+                workers.append(asyncio.create_task(
+                    _slow_worker(
+                        worker_id=i,
+                        queue=slow_queue,
+                        session=session,
+                        resolver=resolver,
+                        slow_bucket=slow_bucket,
+                        owner_id=owner_id,
+                        child_bot_id=child_bot_id,
+                        stop_event=stop_event,
+                        api_dead_event=api_dead_event,
+                        results=results,
+                        quota_box=quota_box,
+                        bot=bot,
+                        notify_chat_id=notify_chat_id,
+                        status_msg_id=status_msg_id,
+                    )
+                ))
+
+            await asyncio.gather(fast_queue.join(), slow_queue.join())
             for w in workers:
                 w.cancel()
 
     finally:
-        # ── Сохраняем квоту ОДИН РАЗ — не при каждом API-запросе ─────────────
         if quota_box["remaining"] is not None:
             await save_quota(quota_box["remaining"])
 
-        # ── Чистим реестр — защита от утечки памяти ───────────────────────────
         active_pipelines.pop(status_msg_id, None)
-        # Чистим таймштамп прогресс-бара — он больше не нужен
         _last_report.pop(status_msg_id, None)
 
         logger.info(
-            "[PIPELINE] Done: owner=%d ok=%d not_found=%d error=%d quota=%s",
-            owner_id,
-            results["ok"], results["not_found"], results["error"],
-            quota_box["remaining"],
+            "[PIPELINE] Done: owner=%d ok=%d not_found=%d error=%d already=%d quota=%s",
+            owner_id, results["ok"], results["not_found"],
+            results["error"], results["already_in_bl"], quota_box["remaining"],
         )
 
-
-    # ── Финальное сообщение ───────────────────────────────────────────────────
+    # ── Финальное сообщение ───────────────────────────────────────────────
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-    
-    # Формируем кнопку возврата: в локальный ЧС бота или в глобальный ЧС владельца
     back_cb = f"bs_blacklist:{child_bot_id}" if child_bot_id else f"ga_bl:{owner_id}"
     back_markup = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="◀️ Назад в ЧС", callback_data=back_cb)]
     ])
-
     if stop_event.is_set():
-        done = results["ok"] + results["not_found"] + results["error"] + results["already_in_bl"]
-        await _edit_status(
-            bot, notify_chat_id, status_msg_id,
+        done = sum(results[k] for k in ("ok", "not_found", "error", "already_in_bl"))
+        text = (
             f"⚠️ <b>Процесс прерван</b> вручную.\n"
             f"Успело обработаться: <b>{done}/{total}</b>\n\n"
             f"✅ Новых забанено: <b>{results['ok']}</b>\n"
             f"🔄 Уже в базе: <b>{results['already_in_bl']}</b>\n"
             f"❓ Не найдено: <b>{results['not_found']}</b>\n"
-            f"⚠️ Ошибки: <b>{results['error']}</b>",
-            show_stop=False,
-            markup=back_markup,
+            f"⚠️ Ошибки: <b>{results['error']}</b>"
         )
     else:
-        await _edit_status(
-            bot, notify_chat_id, status_msg_id,
+        text = (
             f"✅ <b>Готово!</b>\n\n"
             f"├ Новых забанено: <b>{results['ok']}</b>\n"
             f"├ Уже в базе: <b>{results['already_in_bl']}</b>\n"
             f"├ Не найдено: <b>{results['not_found']}</b>\n"
-            f"└ Ошибки: <b>{results['error']}</b>",
-            show_stop=False,
-            markup=back_markup,
+            f"└ Ошибки: <b>{results['error']}</b>"
         )
+    await _edit_status(bot, notify_chat_id, status_msg_id, text, show_stop=False, markup=back_markup)
 
 
-# ── Воркер ────────────────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# FAST WORKER — для числовых ID (без API)
+# ══════════════════════════════════════════════════════════════════════════════
 
-async def _worker(
+async def _fast_worker(
     worker_id:      int,
     queue:          asyncio.Queue,
-    session:        aiohttp.ClientSession,
-    bot:            Bot,
     owner_id:       int,
     child_bot_id:   Optional[int],
     stop_event:     asyncio.Event,
     results:        dict[str, int],
-    quota_box:      dict[str, Optional[int]],
+    bot:            AioBot,
     notify_chat_id: int,
     status_msg_id:  int,
 ) -> None:
-    """
-    Один воркер конвейера. Работает в бесконечном цикле до опустошения очереди.
-
-    На каждой итерации:
-      1. Проверяет stop_event — если взведён, сливает очередь и выходит.
-      2. Берёт задание из очереди.
-      3. Если задание — username: конвертирует через RapidAPI.
-      4. Банит в все активные чаты владельца.
-      5. Записывает результат в БД (blacklist).
-    """
     while True:
-        # ── Проверка сигнала остановки ─────────────────────────────────────────
         if stop_event.is_set():
-            # Сливаем оставшиеся задания, чтобы queue.join() не завис
-            while not queue.empty():
-                try:
-                    queue.get_nowait()
-                    queue.task_done()
-                except asyncio.QueueEmpty:
-                    break
-            logger.info("[WORKER %d] Stop signal received, exiting", worker_id)
+            _drain_queue(queue)
             return
 
-        # Берём следующее задание (блокирующий await)
         try:
-            username, numeric_id = await asyncio.wait_for(queue.get(), timeout=1.0)
+            _, numeric_id = await asyncio.wait_for(queue.get(), timeout=1.0)
         except asyncio.TimeoutError:
-            # Очередь временно пуста, проверим stop_event снова
             continue
 
-        # task_done() вызывается ВСЕГДА через finally — защита от deadlock queue.join()
-        _handled = False
         try:
-            resolved_id: Optional[int] = numeric_id
-
-            # ── Шаг 1 & 2: Smart Resolve (Dedup + Local DB) ───────────────────
-            # Проверяем: юзер уже в ЧС? Знаем его ID без API?
-            already = False
-            if username or resolved_id:
-                already, local_id = await _smart_resolve(
-                    owner_id=owner_id,
-                    username=username,
-                    numeric_id=resolved_id,
-                    child_bot_id=child_bot_id,
-                )
-                if already:
-                    # Шаг 1 сработал: дубликат — отмечаем, но НЕ пропускаем бан!
-                    logger.info(
-                        "[WORKER %d] %s/%s already in blacklist, enforcing ban...",
-                        worker_id, username, resolved_id,
-                    )
-                    results["already_in_bl"] += 1
-                
-                if local_id is not None:
-                    # Шаг 2 сработал: ID найден в локальных таблицах, API не трогаем
-                    logger.info(
-                        "[WORKER %d] @%s → %d (resolved locally, no API call)",
-                        worker_id, username, local_id,
-                    )
-                    resolved_id = local_id
-
-            # ── Шаг 3: External API (только если не удалось разрешить локально) ─
-            if not _handled and username and resolved_id is None:
-                try:
-                    tg_id, quota = await username_to_id(session, username)
-                    resolved_id = tg_id
-
-                    # Обновляем последнее известное значение квоты
-                    if quota is not None:
-                        quota_box["remaining"] = quota
-
-                    logger.info("[WORKER %d] @%s → %d (via RapidAPI)", worker_id, username, tg_id)
-
-                except UserNotFoundError:
-                    logger.info("[WORKER %d] @%s not found", worker_id, username)
-                    await _save_resolve_error(owner_id, username, child_bot_id, "not_found")
-                    results["not_found"] += 1
-                    _report_progress(bot, results, notify_chat_id, status_msg_id)
-                    _handled = True
-
-                except RateLimitError as e:
-                    logger.warning("[WORKER %d] Rate limit 429, sleep %ds", worker_id, e.retry_after)
-                    await asyncio.sleep(e.retry_after)
-                    # Возвращаем задание в очередь для повторной попытки
-                    await queue.put((username, None))
-                    _handled = True
-
-                except InvalidApiKeyError:
-                    logger.error("[WORKER %d] Invalid API key — stopping pipeline", worker_id)
-                    results["error"] += 1
-                    stop_event.set()  # Останавливаем весь пайплайн
-                    asyncio.create_task(_send_key_error(bot, notify_chat_id, status_msg_id))
-                    _handled = True
-
-                except aiohttp.ClientError as e:
-                    logger.warning("[WORKER %d] Network error for @%s: %s", worker_id, username, e)
-                    results["error"] += 1
-                    _handled = True
-
-            # ── Шаг 4: Ban Sweep + сохранение в БД ────────────────────────────
-            if not _handled:
-                if resolved_id:
-                    banned_by_bot = await _ban_in_all_chats(owner_id, resolved_id, child_bot_id)
-
-                    # Сохраняем запись в blacklist (ON CONFLICT DO NOTHING — безопасно)
-                    await _save_to_blacklist(
-                        owner_id, resolved_id, username, child_bot_id
-                    )
-
-                    total_banned = sum(banned_by_bot.values())
-                    # Обновляем счётчик blocked_count для аналитики
-                    if total_banned > 0:
-                        await _increment_blocked_count(owner_id, banned_by_bot, is_global=(child_bot_id is None))
-
-                    if not already:
-                        results["ok"] += 1
-                    logger.info(
-                        "[WORKER %d] Banned user=%d in %d chats",
-                        worker_id, resolved_id, total_banned,
-                    )
-                else:
-                    # Пришёл None numeric_id и None username — не должно случиться
-                    logger.warning("[WORKER %d] Empty task received, skipping", worker_id)
-                    results["error"] += 1
-
-        except Exception as e:
-            logger.exception(
-                "[WORKER %d] Unexpected error for %s/%s: %s",
-                worker_id, username, numeric_id, e,
+            already, local_id = await _smart_resolve(
+                owner_id=owner_id,
+                username=None,
+                numeric_id=numeric_id,
+                child_bot_id=child_bot_id,
             )
-            results["error"] += 1
+            if already:
+                logger.info("[FAST %d] id=%d already in BL, enforcing ban...", worker_id, numeric_id)
+                results["already_in_bl"] += 1
 
+            banned = await _ban_in_all_chats(owner_id, numeric_id, child_bot_id)
+            total_banned = sum(banned.values())
+            if total_banned > 0:
+                await _increment_blocked_count(owner_id, banned, is_global=(child_bot_id is None))
+            if not already:
+                results["ok"] += 1
+                await _save_to_blacklist(owner_id, numeric_id, None, child_bot_id)
+            logger.info("[FAST %d] Banned user=%d in %d chats", worker_id, numeric_id, total_banned)
+
+        except Exception:
+            logger.exception("[FAST %d] Unexpected error for id=%s", worker_id, numeric_id)
+            results["error"] += 1
         finally:
-            # КРИТИЧНО: task_done() должен вызываться ВСЕГДА для каждого queue.get()
-            # Без этого queue.join() зависнет при любом continue/break выше.
             queue.task_done()
 
-        # Микро-пауза и обновление прогресс-бара — вне try/finally
-        await asyncio.sleep(DELAY_BETWEEN)
         _report_progress(bot, results, notify_chat_id, status_msg_id)
 
 
-# ── Smart Resolver — 4-шаговое разрешение без API ────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# SLOW WORKER — для @username (с API, RPM-лимитером и circuit breaker)
+# ══════════════════════════════════════════════════════════════════════════════
 
-async def _smart_resolve(
-    owner_id:     int,
-    username:     Optional[str],
-    numeric_id:   Optional[int],
-    child_bot_id: Optional[int],
-) -> tuple[bool, Optional[int]]:
-    """
-    Шаг 1 + Шаг 2 умного резолвера.
+async def _slow_worker(
+    worker_id:      int,
+    queue:          asyncio.Queue,
+    session:        aiohttp.ClientSession,
+    resolver:       BaseUsernameResolver,
+    slow_bucket:    TokenBucket,
+    owner_id:       int,
+    child_bot_id:   Optional[int],
+    stop_event:     asyncio.Event,
+    api_dead_event: asyncio.Event,
+    results:        dict[str, int],
+    quota_box:      dict[str, Optional[int]],
+    bot:            AioBot,
+    notify_chat_id: int,
+    status_msg_id:  int,
+) -> None:
+    while True:
+        if stop_event.is_set():
+            _drain_queue(queue)
+            return
 
-    Returns:
-        (already_in_bl, local_id)
-        - already_in_bl: True  → запись уже есть в blacklist → пропустить обработку
-        - local_id:      int   → ID найден в локальных таблицах → API не нужен
-                         None  → нужен внешний RapidAPI вызов
-    """
-    clean_username = username.lower().lstrip("@") if username else None
-    already_in_bl = False
+        if api_dead_event.is_set():
+            # Circuit Breaker OPEN: дропаем все оставшиеся задачи
+            try:
+                while True:
+                    queue.get_nowait()
+                    results["error"] += 1
+                    queue.task_done()
+            except asyncio.QueueEmpty:
+                pass
+            return
 
-    async with db.get_pool().acquire() as conn:
-        # ── Шаг 1: Deduplication Check ────────────────────────────────────────
-        # Проверяем, есть ли user_id ИЛИ username в целевом ЧС.
-        # child_bot_id IS NOT DISTINCT FROM $3 корректно сравнивает NULL = NULL (ANSI SQL).
-        if numeric_id:
-            dup_row = await conn.fetchrow(
-                """
-                SELECT 1 FROM blacklist
-                WHERE owner_id = $1
-                  AND user_id = $2
-                  AND child_bot_id IS NOT DISTINCT FROM $3
-                LIMIT 1
-                """,
-                owner_id, numeric_id, child_bot_id,
+        try:
+            username, _ = await asyncio.wait_for(queue.get(), timeout=1.0)
+        except asyncio.TimeoutError:
+            continue
+
+        try:
+            already, local_id = await _smart_resolve(
+                owner_id=owner_id,
+                username=username,
+                numeric_id=None,
+                child_bot_id=child_bot_id,
             )
-        elif clean_username:
-            dup_row = await conn.fetchrow(
-                """
-                SELECT 1 FROM blacklist
-                WHERE owner_id = $1
-                  AND LOWER(username) = $2
-                  AND child_bot_id IS NOT DISTINCT FROM $3
-                LIMIT 1
-                """,
-                owner_id, clean_username, child_bot_id,
-            )
-        else:
-            return False, None
+            if already:
+                logger.info("[SLOW %d] @%s already in BL, enforcing ban...", worker_id, username)
+                results["already_in_bl"] += 1
 
-        if dup_row:
-            already_in_bl = True
+            resolved_id: Optional[int] = local_id
 
-        # ── Шаг 2: Local DB Resolution (только если username, без ID) ────────
-        # Одно обращение к БД: UNION ALL по трём таблицам + LIMIT 1.
-        # ВАЖНО: для оптимальной производительности на больших данных необходимы
-        # функциональные индексы: CREATE INDEX ON bot_users (LOWER(username));
-        if not clean_username or numeric_id:
-            # ID уже известен или username не предоставлен — пропускаем локальный поиск
-            return already_in_bl, numeric_id
+            # Если ID не нашли локально — идём в внешний API
+            if resolved_id is None:
+                # Арендуем токен RPM bucket перед запросом к API
+                await slow_bucket.acquire(jitter=TG_BAN_JITTER)
+                try:
+                    tg_id, quota = await resolver.resolve(session, username)
+                    resolved_id = tg_id
+                    if quota is not None:
+                        quota_box["remaining"] = quota
+                    logger.info("[SLOW %d] @%s → %d (via provider)", worker_id, username, tg_id)
 
-        local_row = await conn.fetchrow(
-            """
-            SELECT user_id FROM (
-                SELECT user_id FROM bot_users
-                WHERE LOWER(username) = $1 AND user_id IS NOT NULL
-                UNION ALL
-                SELECT user_id FROM platform_users
-                WHERE LOWER(username) = $1 AND user_id IS NOT NULL
-                UNION ALL
-                SELECT user_id FROM blacklist
-                WHERE LOWER(username) = $1 AND user_id IS NOT NULL
-            ) src
-            LIMIT 1
-            """,
-            clean_username,
-        )
+                except UserNotFoundError:
+                    logger.info("[SLOW %d] @%s not found", worker_id, username)
+                    await _save_resolve_error(owner_id, username, child_bot_id, "not_found")
+                    results["not_found"] += 1
+                    queue.task_done()
+                    _report_progress(bot, results, notify_chat_id, status_msg_id)
+                    continue
 
-        if local_row:
-            return already_in_bl, int(local_row["user_id"])
+                except RateLimitError as e:
+                    # Circuit breaker HALF-OPEN: пауза + джиттер + вернуть в очередь
+                    wait = e.retry_after * (1.0 + random.uniform(0.0, 0.3))
+                    logger.warning("[SLOW %d] Rate limit 429, sleeping %.1fs + jitter", worker_id, wait)
+                    queue.task_done()
+                    await asyncio.sleep(wait)
+                    await queue.put((username, None))   # повторная попытка
+                    continue
 
-    return already_in_bl, None
+                except InvalidApiKeyError:
+                    logger.error("[SLOW %d] Invalid API key — opening circuit breaker!", worker_id)
+                    results["error"] += 1
+                    api_dead_event.set()
+                    stop_event.set()
+                    asyncio.create_task(_send_key_error(bot, notify_chat_id, status_msg_id))
+                    queue.task_done()
+                    return
+
+                except aiohttp.ClientError as e:
+                    logger.warning("[SLOW %d] Network error for @%s: %s", worker_id, username, e)
+                    results["error"] += 1
+                    queue.task_done()
+                    continue
+
+            if resolved_id:
+                banned = await _ban_in_all_chats(owner_id, resolved_id, child_bot_id)
+                total_banned = sum(banned.values())
+                if total_banned > 0:
+                    await _increment_blocked_count(owner_id, banned, is_global=(child_bot_id is None))
+                await _save_to_blacklist(owner_id, resolved_id, username, child_bot_id)
+                if not already:
+                    results["ok"] += 1
+                logger.info("[SLOW %d] Banned user=%d in %d chats", worker_id, resolved_id, total_banned)
+            else:
+                results["error"] += 1
+
+        except Exception:
+            logger.exception("[SLOW %d] Unexpected error for @%s", worker_id, username)
+            results["error"] += 1
+        finally:
+            queue.task_done()
+
+        _report_progress(bot, results, notify_chat_id, status_msg_id)
 
 
-
-# ── Бан в чатах ───────────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# BAN ENGINE — с Global FloodWait и TokenBucket
+# ══════════════════════════════════════════════════════════════════════════════
 
 async def _ban_in_all_chats(
     owner_id:     int,
     tg_id:        int,
     child_bot_id: Optional[int],
+    max_retries:  int = 3,
 ) -> dict[int, int]:
     """
-    Банит tg_id во всех активных чатах владельца (согласно scope).
-
-    Переиспользует _get_chats_with_tokens из services.blacklist — там уже
-    реализована вся логика получения токенов дочерних ботов и соблюдения ga_selected_bots.
-
-    Защита от Telegram flood:
-      - Микро-пауза BAN_DELAY после каждого бана.
-      - TelegramRetryAfter перехватывается с повтором до BAN_MAX_RETRIES раз.
-
-    Returns:
-        Словарь { child_bot_id: количество_успешных_банов }
+    Банит tg_id во всех активных чатах с соблюдением:
+    - Глобального TokenBucket (TG_BAN_RPS)
+    - Глобального FloodWait event (пауза для ВСЕХ воркеров)
+    - Exponential backoff при RetryAfter
     """
-    from aiogram import Bot as AioBot
     from collections import defaultdict
+    global _tg_flood_wait_until
 
     chats = await _get_chats_with_tokens(owner_id, child_bot_id)
-    banned_by_bot = defaultdict(int)
+    banned_by_bot: dict[int, int] = defaultdict(int)
 
     for chat in chats:
-        chat_id: int   = chat["chat_id"]
-        token:   str   = chat["token"]
-        bot_id:  int   = chat.get("child_bot_id")
+        chat_id: int = chat["chat_id"]
+        token: str   = chat["token"]
+        bot_id: int  = chat.get("child_bot_id")
 
-        attempt = 0
-        while attempt < BAN_MAX_RETRIES:
+        for attempt in range(max_retries):
+            # ── Глобальный FloodWait: ждём если Telegram просил паузу ─────
+            now = time.monotonic()
+            if _tg_flood_wait_until > now:
+                wait = _tg_flood_wait_until - now
+                logger.warning("[BAN] Global FloodWait active, sleeping %.1fs", wait)
+                await asyncio.sleep(wait)
+
+            # ── TokenBucket: арендуем слот перед каждым API-вызовом ───────
+            await _tg_bucket.acquire()
+
             try:
                 async with AioBot(token=token).context() as child_bot:
                     await child_bot.ban_chat_member(
@@ -494,26 +580,26 @@ async def _ban_in_all_chats(
                 if bot_id:
                     banned_by_bot[bot_id] += 1
                 logger.debug("[BAN] user=%d → chat=%d ✓", tg_id, chat_id)
-                break  # успех — следующий чат
+                break  # Успех
 
             except TelegramRetryAfter as e:
-                wait = e.retry_after + 1
+                # Устанавливаем глобальную паузу (защищает ВСЕ воркеры)
+                jitter = random.uniform(1.0, 3.0)
+                _tg_flood_wait_until = time.monotonic() + e.retry_after + jitter
                 logger.warning(
-                    "[BAN] RetryAfter %ds for user=%d chat=%d (attempt %d/%d)",
-                    wait, tg_id, chat_id, attempt + 1, BAN_MAX_RETRIES,
+                    "[BAN] FloodWait %ds+%.1f jitter for user=%d chat=%d (attempt %d/%d)",
+                    e.retry_after, jitter, tg_id, chat_id, attempt + 1, max_retries,
                 )
-                await asyncio.sleep(wait)
-                attempt += 1
+                await asyncio.sleep(e.retry_after + jitter)
 
             except TelegramForbiddenError:
-                # Бот более не является администратором — пропускаем
-                logger.warning("[BAN] Bot is not admin in chat=%d, skipping", chat_id)
+                logger.warning("[BAN] Not admin in chat=%d, skipping", chat_id)
                 break
 
             except TelegramBadRequest as e:
                 err = str(e).lower()
                 if any(x in err for x in ("user not found", "user_not_participant", "participant_id_invalid")):
-                    pass  # Пользователь не в чате / никогда не был в чате — ок, запись в ЧС всё равно есть
+                    pass  # Не в чате — нормально, запись в BL всё равно сохраняется
                 else:
                     logger.error("[BAN] BadRequest user=%d chat=%d: %s", tg_id, chat_id, e)
                 break
@@ -522,56 +608,100 @@ async def _ban_in_all_chats(
                 logger.exception("[BAN] Error user=%d chat=%d: %s", tg_id, chat_id, e)
                 break
 
-        # Микро-пауза между банами: 5 воркеров × 20 чатов × 0.05s = 5 req/s — безопасно
-        await asyncio.sleep(BAN_DELAY)
-
     return dict(banned_by_bot)
 
 
-# ── Вспомогательные DB-функции ────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# SMART RESOLVER — локальная БД перед API (экономим квоту)
+# ══════════════════════════════════════════════════════════════════════════════
+
+async def _smart_resolve(
+    owner_id:     int,
+    username:     Optional[str],
+    numeric_id:   Optional[int],
+    child_bot_id: Optional[int],
+) -> tuple[bool, Optional[int]]:
+    """
+    Возвращает (already_in_bl, local_id).
+    already_in_bl = True  → уже в ЧС (но ban sweep всё равно запустится)
+    local_id      = int   → ID найден в локальных таблицах, API не нужен
+    """
+    clean_username = username.lower().lstrip("@") if username else None
+    already_in_bl = False
+
+    async with db.get_pool().acquire() as conn:
+        # Шаг 1: есть ли уже в blacklist?
+        if numeric_id:
+            dup = await conn.fetchrow(
+                "SELECT 1 FROM blacklist WHERE owner_id=$1 AND user_id=$2 "
+                "AND child_bot_id IS NOT DISTINCT FROM $3 LIMIT 1",
+                owner_id, numeric_id, child_bot_id,
+            )
+        elif clean_username:
+            dup = await conn.fetchrow(
+                "SELECT 1 FROM blacklist WHERE owner_id=$1 AND LOWER(username)=$2 "
+                "AND child_bot_id IS NOT DISTINCT FROM $3 LIMIT 1",
+                owner_id, clean_username, child_bot_id,
+            )
+        else:
+            return False, None
+
+        if dup:
+            already_in_bl = True
+
+        # Шаг 2: если ID уже есть — нет смысла искать дальше
+        if not clean_username or numeric_id:
+            return already_in_bl, numeric_id
+
+        # Шаг 3: ищем ID в локальных таблицах (бесплатно, без API)
+        local = await conn.fetchrow(
+            """
+            SELECT user_id FROM (
+                SELECT user_id FROM bot_users
+                    WHERE LOWER(username)=$1 AND user_id IS NOT NULL
+                UNION ALL
+                SELECT user_id FROM platform_users
+                    WHERE LOWER(username)=$1 AND user_id IS NOT NULL
+                UNION ALL
+                SELECT user_id FROM blacklist
+                    WHERE LOWER(username)=$1 AND user_id IS NOT NULL
+            ) src LIMIT 1
+            """,
+            clean_username,
+        )
+        if local:
+            return already_in_bl, int(local["user_id"])
+
+    return already_in_bl, None
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# DB HELPERS
+# ══════════════════════════════════════════════════════════════════════════════
 
 async def _save_to_blacklist(
-    owner_id:     int,
-    tg_id:        int,
-    source_username: Optional[str],
-    child_bot_id: Optional[int],
+    owner_id: int, tg_id: int, source_username: Optional[str], child_bot_id: Optional[int],
 ) -> None:
-    """
-    Сохраняет или обновляет запись в таблице blacklist.
-    Если запись с user_id уже существует — дополняем source_username.
-    """
     await db.execute(
         """
         INSERT INTO blacklist (owner_id, user_id, username, source_username, child_bot_id)
         VALUES ($1, $2, $3, $4, $5)
         ON CONFLICT DO NOTHING
         """,
-        owner_id,
-        tg_id,
-        source_username,
-        source_username,
-        child_bot_id,
+        owner_id, tg_id, source_username, source_username, child_bot_id,
     )
 
 
 async def _save_resolve_error(
-    owner_id:     int,
-    username:     str,
-    child_bot_id: Optional[int],
-    error:        str,
+    owner_id: int, username: str, child_bot_id: Optional[int], error: str,
 ) -> None:
-    """Сохраняет запись о неудачном резолве (username не найден в Telegram)."""
     await db.execute(
         """
         INSERT INTO blacklist (owner_id, username, source_username, resolve_error, child_bot_id)
         VALUES ($1, $2, $3, $4, $5)
         ON CONFLICT DO NOTHING
         """,
-        owner_id,
-        username.lower().lstrip("@"),  # username (VARCHAR)
-        username,                      # source_username (TEXT)
-        error,
-        child_bot_id,
+        owner_id, username.lower().lstrip("@"), username, error, child_bot_id,
     )
 
 
@@ -580,26 +710,21 @@ async def _increment_blocked_count(
     banned_by_bot: dict[int, int],
     is_global:     bool,
 ) -> None:
-    """Инкрементирует счётчики blocked_count для аналитики (с учётом выборки ботов)."""
     total_count = sum(banned_by_bot.values())
     if total_count == 0:
         return
 
-    # Обновляем общую статистику владельца на платформе
     await db.execute(
         "UPDATE platform_users SET blocked_count = blocked_count + $1 WHERE user_id = $2",
         total_count, owner_id,
     )
 
-    # Массово обновляем статистику всех участвовавших в бане ботов
-    # Если это глобальный ЧС (is_global=True), то обновляем И global_blocked_count тоже
     updates = [(count, bot_id) for bot_id, count in banned_by_bot.items() if bot_id]
     if not updates:
         return
 
     if is_global:
-        # Глобальный ЧС: обновляем ТОЛЬКО global_blocked_count.
-        # blocked_count — это счётчик ЛОКАЛЬНОГО ЧС бота, его не трогаем.
+        # Глобальный ЧС: только global_blocked_count, NOT local blocked_count
         await db.executemany(
             "UPDATE child_bots SET global_blocked_count = global_blocked_count + $1 WHERE id = $2",
             updates,
@@ -611,83 +736,65 @@ async def _increment_blocked_count(
         )
 
 
-# ── Прогресс-бар ──────────────────────────────────────────────────────────────
-
-# Таймштамп последнего обновления прогресс-бара (per message_id)
-_last_report: dict[int, float] = {}
-
+# ══════════════════════════════════════════════════════════════════════════════
+# PROGRESS BAR & STATUS EDIT
+# ══════════════════════════════════════════════════════════════════════════════
 
 def _report_progress(
-    bot:            Bot,
-    results:        dict[str, int],
-    notify_chat_id: int,
-    status_msg_id:  int,
+    bot: AioBot, results: dict, notify_chat_id: int, status_msg_id: int,
 ) -> None:
-    """
-    Планирует обновление прогресс-бара не чаще PROGRESS_INTERVAL секунд.
-
-    Используется time.monotonic() вместо счётчика итераций — защита от
-    TelegramRetryAfter при быстрой обработке числовых ID (без API-вызовов).
-    """
     now  = time.monotonic()
-    done = results["ok"] + results["not_found"] + results["error"] + results["already_in_bl"]
-    total = results["total"]
-
+    done = sum(results[k] for k in ("ok", "not_found", "error", "already_in_bl"))
     last = _last_report.get(status_msg_id, 0.0)
-    if (now - last) < PROGRESS_INTERVAL and done < total:
+    if (now - last) < PROGRESS_INTERVAL and done < results["total"]:
         return
-
     _last_report[status_msg_id] = now
-    asyncio.create_task(
-        _edit_status(
-            bot, notify_chat_id, status_msg_id,
-            f"⏳ Обработано <b>{done}/{total}</b>\n"
-            f"✅ Забанено: {results['ok']} | "
-            f"🔄 Уже в ЧС: {results['already_in_bl']}\n"
-            f"❓ Не найдено: {results['not_found']} | "
-            f"⚠️ Ошибки: {results['error']}",
-            show_stop=True,
-        )
-    )
+    asyncio.create_task(_edit_status(
+        bot, notify_chat_id, status_msg_id,
+        f"⏳ Обработано <b>{done}/{results['total']}</b>\n"
+        f"✅ Забанено: {results['ok']} | "
+        f"🔄 Уже в ЧС: {results['already_in_bl']}\n"
+        f"❓ Не найдено: {results['not_found']} | "
+        f"⚠️ Ошибки: {results['error']}",
+        show_stop=True,
+    ))
 
 
 async def _edit_status(
-    bot:       Bot,
+    bot:       AioBot,
     chat_id:   int,
     msg_id:    int,
     text:      str,
     show_stop: bool = True,
-    markup:    Optional['InlineKeyboardMarkup'] = None,
+    markup:    Optional["InlineKeyboardMarkup"] = None,
 ) -> None:
-    """
-    Редактирует сообщение-статус с прогрессом.
-    При show_stop=True прикрепляет кнопку «Остановить».
-    Если show_stop=False и передан markup, использует его.
-    Ошибки редактирования игнорируются (сообщение могло быть удалено).
-    """
-    from keyboards.stop_pipeline import stop_keyboard  # импорт здесь избегает цикла
+    from keyboards.stop_pipeline import stop_keyboard
     from aiogram.types import InlineKeyboardMarkup
-
     final_markup = stop_keyboard(msg_id) if show_stop else markup
-
     try:
         await bot.edit_message_text(
-            chat_id=chat_id,
-            message_id=msg_id,
-            text=text,
-            parse_mode="HTML",
-            reply_markup=final_markup,
+            chat_id=chat_id, message_id=msg_id,
+            text=text, parse_mode="HTML", reply_markup=final_markup,
         )
     except Exception:
-        pass  # Сообщение удалено или не изменилось — тихо игнорируем
+        pass
 
 
-async def _send_key_error(bot: Bot, chat_id: int, msg_id: int) -> None:
-    """Отправляет уведомление об ошибке API-ключа и снимает кнопку Стоп."""
+async def _send_key_error(bot: AioBot, chat_id: int, msg_id: int) -> None:
     await _edit_status(
         bot, chat_id, msg_id,
         "❌ <b>Ошибка API-ключа</b>\n"
         "RapidAPI вернул 403 Forbidden.\n"
-        "Обновите ключ в <b>Настройки платформы → RapidAPI</b>.",
+        "Обновите ключ в <b>Настройки → RapidAPI</b>.",
         show_stop=False,
     )
+
+
+def _drain_queue(queue: asyncio.Queue) -> None:
+    """Быстро сливает очередь без deadlock на queue.join()."""
+    while not queue.empty():
+        try:
+            queue.get_nowait()
+            queue.task_done()
+        except asyncio.QueueEmpty:
+            break

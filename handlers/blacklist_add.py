@@ -55,7 +55,7 @@ def _kb_cancel_input(back_cb: str) -> InlineKeyboardMarkup:
 
 # ── Глобальная точка входа (Главный Администратор) ────────────────────────────
 
-@router.callback_query(F.data == "ga_bl_rapidapi_add")
+@router.callback_query(F.data.startswith("ga_bl_rapidapi_add:"))
 async def on_ga_rapidapi_add(call: CallbackQuery, state: FSMContext, platform_user: dict | None):
     """
     Вход с уровня Глобального Администратора.
@@ -64,10 +64,10 @@ async def on_ga_rapidapi_add(call: CallbackQuery, state: FSMContext, platform_us
     if not platform_user:
         return
 
-    owner_id = platform_user["user_id"]
+    owner_id = int(call.data.split(":")[1])
     back_cb  = f"ga_bl:{owner_id}"
 
-    await state.update_data(child_bot_id=None, back_cb=back_cb)
+    await state.update_data(child_bot_id=None, back_cb=back_cb, pipeline_owner_id=owner_id)
     await state.set_state(RapidApiFSM.waiting_for_input)
 
     prompt_msg = await call.message.edit_text(
@@ -98,7 +98,8 @@ async def on_bl_rapidapi_add(call: CallbackQuery, state: FSMContext, platform_us
     child_bot_id = int(call.data.split(":")[1])
     back_cb = f"bs_blacklist:{child_bot_id}"
 
-    await state.update_data(child_bot_id=child_bot_id, back_cb=back_cb)
+    pipeline_owner_id = platform_user["user_id"]
+    await state.update_data(child_bot_id=child_bot_id, back_cb=back_cb, pipeline_owner_id=pipeline_owner_id)
     await state.set_state(RapidApiFSM.waiting_for_input)
 
     prompt_msg = await call.message.edit_text(
@@ -227,7 +228,7 @@ async def _kick_off_pipeline(
     data          = await state.get_data()
     child_bot_id  = data.get("child_bot_id")
     prompt_msg_id = data.get("prompt_msg_id")
-    owner_id      = platform_user["user_id"]
+    owner_id      = data.get("pipeline_owner_id", platform_user["user_id"])
 
     await state.set_state(RapidApiFSM.processing)
 

@@ -2167,7 +2167,7 @@ async def on_ga_bl(callback: CallbackQuery, state: FSMContext = None):
         [InlineKeyboardButton(text=toggle_text, callback_data=f"ga_bl_master:{owner_id}")],
         [
             # ➕ Единая умная точка входа: @username/ID/ссылки/файлы — всё через пайплайн
-            InlineKeyboardButton(text="➕ Добавить в ЧС", callback_data="ga_bl_rapidapi_add"),
+            InlineKeyboardButton(text="➕ Добавить в ЧС", callback_data=f"ga_bl_rapidapi_add:{owner_id}"),
             InlineKeyboardButton(text="➖ Удалить из ЧС", callback_data=f"ga_bl_del:{owner_id}"),
         ],
         [InlineKeyboardButton(text="🗑 Очистить ЧС", callback_data=f"ga_bl_clear_confirm:{owner_id}")],

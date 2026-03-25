@@ -10,6 +10,9 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
 
+from aiogram.types import ErrorEvent
+from aiogram.exceptions import TelegramBadRequest
+
 from config import settings
 from db.pool import create_pool, close_pool
 
@@ -47,6 +50,16 @@ def build_dispatcher() -> Dispatcher:
     dp = Dispatcher(storage=MemoryStorage())
     dp.message.middleware(OwnerMiddleware())
     dp.callback_query.middleware(OwnerMiddleware())
+
+    @dp.errors()
+    async def global_error_handler(event: ErrorEvent):
+        if isinstance(event.exception, TelegramBadRequest):
+            msg = str(event.exception).lower()
+            if "message to edit not found" in msg or "query is too old" in msg:
+                logger.warning(f"Ignored benign Telegram API Error: {event.exception}")
+                return True
+        logger.error(f"Unhandled exception: {event.exception}", exc_info=event.exception)
+
     # !! global_admin_router ПЕРВЫМ — Command()-фильтры должны срабатывать
     # до catch-all хендлеров в messages_router
     dp.include_router(global_admin_router)

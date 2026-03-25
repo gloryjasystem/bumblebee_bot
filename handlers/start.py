@@ -203,6 +203,7 @@ async def on_language_select(callback: CallbackQuery, platform_user: dict | None
 # ── Главное меню ──────────────────────────────────────────────
 @router.callback_query(F.data == "menu:main")
 async def on_main_menu(callback: CallbackQuery, platform_user: dict | None):
+    await callback.answer()
     tariff = platform_user["tariff"] if platform_user else "free"
     tariff_labels = {
         "free":     "🆓 Free",
@@ -222,7 +223,6 @@ async def on_main_menu(callback: CallbackQuery, platform_user: dict | None):
         f"⇨ Главное меню",
         reply_markup=kb_main_menu(),
     )
-    await callback.answer()
 
 
 async def _show_main_menu(message: Message, platform_user: dict | None):

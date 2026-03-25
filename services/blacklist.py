@@ -224,7 +224,7 @@ async def _get_chats_with_tokens(owner_id: int, child_bot_id: int | None = None)
             FROM bot_chats bc
             JOIN child_bots cb ON cb.id = bc.child_bot_id
             JOIN ga_selected_bots gsb ON gsb.child_bot_id = cb.id AND gsb.owner_id = $1
-            WHERE bc.owner_id = $1 AND bc.is_active = true
+            WHERE bc.is_active = true
             """,
             owner_id,
         )

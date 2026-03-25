@@ -75,7 +75,7 @@ async def on_ga_rapidapi_add(call: CallbackQuery, state: FSMContext, platform_us
         "Отправьте любое из вариантов:\n"
         "• <b>@username</b>, <b>цифровой ID</b> или ссылку <b>t.me/user</b>\n"
         "• Файл <b>.txt/.csv</b> со списком\n"
-        "• Пересланное сообщение от нужного пользователя — ITмоментально забаним\n\n"
+        "• <b>Пересланное сообщение</b> от нужного пользователя — мгновенно забаним\n\n"
         "<i>По юзернеймам бот автоматически получает цифровой ID через RapidAPI.\n"
         "Цифровые ID банятся мгновенно во всех подключённых каналах.</i>",
         parse_mode="HTML",
@@ -130,9 +130,9 @@ async def on_rapidapi_text_input(
     await _kick_off_pipeline(msg, state, bot, platform_user, usernames, numeric_ids)
 
 
-# ── Приём пересланного сообщения (Forward) — без API, квота не тратится ───────────────────
+# ── Приём пересланного сообщения (Forward) — без API, квота не тратится ─────
 
-@router.message(RapidApiFSM.waiting_for_input, F.forward_origin)
+@router.message(RapidApiFSM.waiting_for_input, F.forward_origin | F.forward_from)
 async def on_rapidapi_forward_input(
     msg: Message, state: FSMContext, bot: Bot, platform_user: dict | None
 ):
@@ -142,19 +142,30 @@ async def on_rapidapi_forward_input(
     aiogram 3.x предоставляет два типа forward_origin:
       - MessageOriginUser     — ID доступен (пользователь не скрыл профиль).
       - MessageOriginHiddenUser — ID скрыт, знаем только западное имя.
+    Также обрабатываем устаревший forward_from для совместимости.
     """
     if not platform_user:
         return
 
     origin = msg.forward_origin
+    user_id: int | None = None
 
+    # Новый aiogram 3.x API
     if isinstance(origin, MessageOriginUser):
-        # Пользователь не скрыл профиль — ID есть
-        user_id: int = origin.sender_user.id
+        user_id = origin.sender_user.id
         logger.info(
             "[BL ADD] Forward from user=%d, username=%s",
             user_id, origin.sender_user.username,
         )
+    # Фолбэк на старый формат (forward_from)
+    elif msg.forward_from:
+        user_id = msg.forward_from.id
+        logger.info(
+            "[BL ADD] Forward (legacy) from user=%d",
+            user_id,
+        )
+
+    if user_id:
         await _kick_off_pipeline(
             msg, state, bot, platform_user,
             usernames=[],
@@ -163,7 +174,7 @@ async def on_rapidapi_forward_input(
     else:
         # HiddenUser / Channel / Bot — ID недоступен
         await msg.answer(
-            "❌ <b>ID скрыт настройками приватности юзера.</b>\n\n"
+            "❌ <b>ID скрыт настройками приватности пользователя.</b>\n\n"
             "Пользователь запретил пересылки своего идентификатора.\n"
             "Пришлите его <b>@username</b> или ссылку <b>t.me/юзернейм</b>.",
             parse_mode="HTML",

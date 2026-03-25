@@ -262,6 +262,7 @@ async def _worker(
 
             # ── Шаг 1 & 2: Smart Resolve (Dedup + Local DB) ───────────────────
             # Проверяем: юзер уже в ЧС? Знаем его ID без API?
+            already = False
             if username or resolved_id:
                 already, local_id = await _smart_resolve(
                     owner_id=owner_id,
@@ -270,14 +271,14 @@ async def _worker(
                     child_bot_id=child_bot_id,
                 )
                 if already:
-                    # Шаг 1 сработал: дубликат — пропускаем без API
+                    # Шаг 1 сработал: дубликат — отмечаем, но НЕ пропускаем бан!
                     logger.info(
-                        "[WORKER %d] %s/%s already in blacklist, skipping",
+                        "[WORKER %d] %s/%s already in blacklist, enforcing ban...",
                         worker_id, username, resolved_id,
                     )
                     results["already_in_bl"] += 1
-                    _handled = True
-                elif local_id is not None:
+                
+                if local_id is not None:
                     # Шаг 2 сработал: ID найден в локальных таблицах, API не трогаем
                     logger.info(
                         "[WORKER %d] @%s → %d (resolved locally, no API call)",
@@ -338,7 +339,8 @@ async def _worker(
                     if total_banned > 0:
                         await _increment_blocked_count(owner_id, banned_by_bot, is_global=(child_bot_id is None))
 
-                    results["ok"] += 1
+                    if not already:
+                        results["ok"] += 1
                     logger.info(
                         "[WORKER %d] Banned user=%d in %d chats",
                         worker_id, resolved_id, total_banned,
@@ -383,6 +385,7 @@ async def _smart_resolve(
                          None  → нужен внешний RapidAPI вызов
     """
     clean_username = username.lower().lstrip("@") if username else None
+    already_in_bl = False
 
     async with db.get_pool().acquire() as conn:
         # ── Шаг 1: Deduplication Check ────────────────────────────────────────
@@ -414,7 +417,7 @@ async def _smart_resolve(
             return False, None
 
         if dup_row:
-            return True, None  # Дубликат — пропускаем
+            already_in_bl = True
 
         # ── Шаг 2: Local DB Resolution (только если username, без ID) ────────
         # Одно обращение к БД: UNION ALL по трём таблицам + LIMIT 1.
@@ -422,7 +425,7 @@ async def _smart_resolve(
         # функциональные индексы: CREATE INDEX ON bot_users (LOWER(username));
         if not clean_username or numeric_id:
             # ID уже известен или username не предоставлен — пропускаем локальный поиск
-            return False, numeric_id
+            return already_in_bl, numeric_id
 
         local_row = await conn.fetchrow(
             """
@@ -442,9 +445,9 @@ async def _smart_resolve(
         )
 
         if local_row:
-            return False, int(local_row["user_id"])
+            return already_in_bl, int(local_row["user_id"])
 
-    return False, None  # Нужен внешний API-запрос
+    return already_in_bl, None
 
 
 

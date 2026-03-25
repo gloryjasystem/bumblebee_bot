@@ -1872,6 +1872,7 @@ async def _sweep_single_bot(owner_id: int, child_bot_id: int, turn_on: bool) -> 
     # ── 1. Забираем нужные данные из БД и сразу освобождаем соединение ─────────
     try:
         async with get_pool().acquire() as conn:
+            chats = await conn.fetch("""
                 SELECT bc.chat_id, cb.token_encrypted
                 FROM bot_chats bc
                 JOIN child_bots cb ON cb.id = bc.child_bot_id

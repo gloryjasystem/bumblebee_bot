@@ -598,8 +598,10 @@ async def _increment_blocked_count(
         return
 
     if is_global:
+        # Глобальный ЧС: обновляем ТОЛЬКО global_blocked_count.
+        # blocked_count — это счётчик ЛОКАЛЬНОГО ЧС бота, его не трогаем.
         await db.executemany(
-            "UPDATE child_bots SET blocked_count = blocked_count + $1, global_blocked_count = global_blocked_count + $1 WHERE id = $2",
+            "UPDATE child_bots SET global_blocked_count = global_blocked_count + $1 WHERE id = $2",
             updates,
         )
     else:

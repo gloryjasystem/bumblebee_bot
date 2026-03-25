@@ -116,21 +116,10 @@ async def on_bl_rapidapi_add(call: CallbackQuery, state: FSMContext, platform_us
     await state.update_data(prompt_msg_id=prompt_msg.message_id)
 
 
-# ── Приём текста ──────────────────────────────────────────────────────────
-
-@router.message(RapidApiFSM.waiting_for_input, F.text)
-async def on_rapidapi_text_input(
-    msg: Message, state: FSMContext, bot: Bot, platform_user: dict | None
-):
-    """Принимает текстовый ввод (@username, ID, ссылки — через пробел/запятую)."""
-    if not platform_user:
-        return
-
-    usernames, numeric_ids = parse_usernames_and_ids(msg.text or "")
-    await _kick_off_pipeline(msg, state, bot, platform_user, usernames, numeric_ids)
-
-
-# ── Приём пересланного сообщения (Forward) — без API, квота не тратится ─────
+# ── Приём пересланного сообщения (Forward) — ЗАРЕГИСТРИРОВАН ПЕРВЫМ ────────
+# Это критически важно: aiogram проверяет хэндлеры в порядке регистрации.
+# Форвардное сообщение содержит и forward_origin, и text. Без этого порядка
+# F.text перехватывал бы форварды раньше, что вызывало ошибку "не найдено".
 
 @router.message(RapidApiFSM.waiting_for_input, F.forward_origin | F.forward_from)
 async def on_rapidapi_forward_input(
@@ -138,47 +127,63 @@ async def on_rapidapi_forward_input(
 ):
     """
     Пересланное сообщение от целевого пользователя.
+    Зарегистрирован ДО text-хэндлера — иначе F.text перехватывает форвард первым.
 
-    aiogram 3.x предоставляет два типа forward_origin:
-      - MessageOriginUser     — ID доступен (пользователь не скрыл профиль).
-      - MessageOriginHiddenUser — ID скрыт, знаем только западное имя.
-    Также обрабатываем устаревший forward_from для совместимости.
+    Два типа forward_origin в aiogram 3.x:
+      - MessageOriginUser     — ID доступен (открытый профиль).
+      - MessageOriginHiddenUser — ID скрыт настройками приватности.
+    Также обрабатывает устаревший forward_from для совместимости.
     """
     if not platform_user:
         return
 
-    origin = msg.forward_origin
+    data     = await state.get_data()
+    back_cb  = data.get("back_cb", "ga_bl")
+    back_btn = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="◀️ Назад", callback_data=back_cb)]
+    ])
+
+    origin  = msg.forward_origin
     user_id: int | None = None
 
-    # Новый aiogram 3.x API
     if isinstance(origin, MessageOriginUser):
         user_id = origin.sender_user.id
-        logger.info(
-            "[BL ADD] Forward from user=%d, username=%s",
-            user_id, origin.sender_user.username,
-        )
-    # Фолбэк на старый формат (forward_from)
+        logger.info("[BL ADD] Forward from user=%d, username=%s",
+                    user_id, origin.sender_user.username)
     elif msg.forward_from:
         user_id = msg.forward_from.id
-        logger.info(
-            "[BL ADD] Forward (legacy) from user=%d",
-            user_id,
-        )
+        logger.info("[BL ADD] Forward (legacy) from user=%d", user_id)
 
     if user_id:
         await _kick_off_pipeline(
             msg, state, bot, platform_user,
-            usernames=[],
-            numeric_ids=[user_id],
+            usernames=[], numeric_ids=[user_id],
         )
     else:
-        # HiddenUser / Channel / Bot — ID недоступен
+        # Пользователь скрыл свой ID в настройках приватности Telegram
         await msg.answer(
-            "❌ <b>ID скрыт настройками приватности пользователя.</b>\n\n"
-            "Пользователь запретил пересылки своего идентификатора.\n"
-            "Пришлите его <b>@username</b> или ссылку <b>t.me/юзернейм</b>.",
+            "⚠️ <b>Невозможно определить ID пользователя.</b>\n\n"
+            "Этот аккаунт запретил пересылку своего идентификатора (настройки приватности).\n"
+            "Пришлите его <b>@username</b> или ссылку <b>t.me/никнейм</b>.",
             parse_mode="HTML",
+            reply_markup=back_btn,
         )
+
+
+# ── Приём текста — зарегистрирован ПОСЛЕ forward-хэндлера ─────────────────
+# ~F.forward_origin и ~F.forward_from исключают форвардные сообщения явно.
+
+@router.message(RapidApiFSM.waiting_for_input, F.text, ~F.forward_origin, ~F.forward_from)
+async def on_rapidapi_text_input(
+    msg: Message, state: FSMContext, bot: Bot, platform_user: dict | None
+):
+    """Принимает текстовый ввод (@username, ID, ссылки). Не срабатывает на форварды."""
+    if not platform_user:
+        return
+
+    usernames, numeric_ids = parse_usernames_and_ids(msg.text or "")
+    await _kick_off_pipeline(msg, state, bot, platform_user, usernames, numeric_ids)
+
 
 
 
@@ -229,10 +234,20 @@ async def _kick_off_pipeline(
     """
     total = len(usernames) + len(numeric_ids)
     if total == 0:
+        data     = await state.get_data()
+        back_cb  = data.get("back_cb", "ga_bl")
+        back_btn = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="◀️ Назад", callback_data=back_cb)]
+        ])
         await msg.answer(
-            "⚠️ Не найдено ни одного валидного @username или числового ID.\n\n"
-            "<i>Убедитесь, что юзернейм содержит от 5 до 32 символов и начинается с буквы.</i>",
+            "⚠️ <b>Не найдено ни одного валидного значения.</b>\n\n"
+            "Проверьте формат ввода:\n"
+            "• <b>@username</b> — начинается с буквы, 5–32 символа\n"
+            "• <b>Цифровой ID</b> — только цифры, например 123456789\n"
+            "• <b>Переслать сообщение</b> — самый надёжный способ\n"
+            "• <b>Ссылка</b> — t.me/никнейм",
             parse_mode="HTML",
+            reply_markup=back_btn,
         )
         return
 

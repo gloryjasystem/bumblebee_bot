@@ -886,7 +886,7 @@ async def _show_channel_detail(callback: CallbackQuery, platform_user: dict, ch_
     ch_id_b = ch["id"]
     cbot_id = ch["child_bot_id"]
 
-    await navigate(
+    msg = await navigate(
         callback,
         text,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
@@ -908,6 +908,13 @@ async def _show_channel_detail(callback: CallbackQuery, platform_user: dict, ch_
             [InlineKeyboardButton(text="◀️ Назад",               callback_data=f"bot_chats_list:{cbot_id}")],
         ]),
     )
+    # Сохраняем ID этого сообщения, чтобы уведомления о правах могли редактировать его
+    # на месте вместо отправки нового сообщения снизу.
+    if msg:
+        await db.execute(
+            "UPDATE platform_users SET last_channels_menu_id=$1 WHERE user_id=$2",
+            msg.message_id, owner_id,
+        )
 
 
 @router.callback_query(F.data.startswith("channel:"))

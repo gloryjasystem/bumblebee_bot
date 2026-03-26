@@ -612,7 +612,7 @@ async def on_mailing_bot_start(callback: CallbackQuery, state: FSMContext,
     await state.update_data(child_bot_id=child_bot_id, chat_id=None, owner_id=owner_id)
     await state.set_state(MailingFSM.waiting_for_text)
 
-    await navigate(
+    prompt_msg = await navigate(
         callback,
         f"📨 Отправьте сообщение для рассылки.\n\n"
         f"<b>Переменные:</b>\n"
@@ -628,6 +628,8 @@ async def on_mailing_bot_start(callback: CallbackQuery, state: FSMContext,
                                    callback_data=f"bs_mailing:{child_bot_id}")],
         ]),
     )
+    if prompt_msg and hasattr(prompt_msg, 'message_id'):
+        await state.update_data(prompt_msg_id=prompt_msg.message_id)
 
 
 @router.callback_query(F.data.startswith("mailing_bot_scheduled:"))
@@ -1117,6 +1119,7 @@ async def on_mailing_start(callback: CallbackQuery, state: FSMContext, platform_
             [InlineKeyboardButton(text="◀️ Назад", callback_data=f"ch_mailing:{chat_id}")],
         ]),
     )
+    await state.update_data(prompt_msg_id=callback.message.message_id)
     await callback.answer()
 
 
@@ -1125,11 +1128,12 @@ async def on_mailing_start(callback: CallbackQuery, state: FSMContext, platform_
 # ══════════════════════════════════════════════════════════════
 
 @router.message(MailingFSM.waiting_for_text)
-async def on_mailing_text(message: Message, state: FSMContext):
+async def on_mailing_text(message: Message, state: FSMContext, bot: Bot):
     data = await state.get_data()
     chat_id      = data.get("chat_id")
     owner_id     = data.get("owner_id")
     child_bot_id = data.get("child_bot_id")  # set for bot-level mailing
+    prompt_msg_id = data.get("prompt_msg_id")
 
     logger.info(
         f"[mailing_text] from={message.from_user.id} "
@@ -1163,6 +1167,17 @@ async def on_mailing_text(message: Message, state: FSMContext):
     if not text and not media_file_id:
         await message.answer("⚠️ Пожалуйста, отправьте текст или медиа.")
         return
+
+    # ── Clean UI: удаляем ввод юзера и сообщение-инструкцию бота ──
+    try:
+        await message.delete()
+    except Exception:
+        pass
+    if prompt_msg_id:
+        try:
+            await bot.delete_message(message.chat.id, prompt_msg_id)
+        except Exception:
+            pass
 
     # Создаём черновик
     try:

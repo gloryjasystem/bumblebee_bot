@@ -950,13 +950,14 @@ async def on_channel_in_bot(callback: CallbackQuery, platform_user: dict | None)
     reason = ch.get("deactivation_reason")
     if not ch["is_active"] and reason and reason.startswith("perm:"):
         missing_rights = reason.split("perm:", 1)[1]
-        await callback.answer(
-            f"⚠️ Боту не хватает прав администратора в этом канале/группе!\n\n"
-            f"Необходимые права:\n{missing_rights}\n\n"
-            f"📍 Зайдите в Управление каналом → Администраторы → найдите бота и включите эти галочки.\n"
-            f"Бот подключится автоматически.",
-            show_alert=True
+        msg_text = (
+            f"⚠️ Нет прав администратора!\nОбязательно выдайте:\n{missing_rights}\n\n"
+            f"📍 Управление каналом → Админы → Включить галочки."
         )
+        if len(msg_text) > 195:
+            msg_text = msg_text[:192] + "..."
+            
+        await callback.answer(msg_text, show_alert=True)
         return
 
     # ── Обычный экран ─────────────────────────────────────────────────────────

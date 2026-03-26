@@ -1280,6 +1280,11 @@ async def _handle_my_chat_member(
                 chat_link = f"<b>{chat_title}</b>"
             if _main_bot:
                 try:
+                    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+                    kb = InlineKeyboardMarkup(inline_keyboard=[
+                        [InlineKeyboardButton(text="⚙️ Настройки бота", callback_data=f"bot_settings:{child_bot_id}")],
+                        [InlineKeyboardButton(text="📍 Площадки бота", callback_data=f"bot_chats_list:{child_bot_id}")],
+                    ])
                     sent = await _main_bot.send_message(
                         owner_id,
                         f"⚠️ В вашем канале/группе {chat_link} бот @{bot_username} "
@@ -1289,8 +1294,21 @@ async def _handle_my_chat_member(
                         f"Бот возобновит работу автоматически, как только права появятся.",
                         parse_mode="HTML",
                         disable_web_page_preview=True,
+                        reply_markup=kb,
                     )
-                    asyncio.create_task(_delete_main_bot_msg(sent.chat.id, sent.message_id, 8))
+                    # Удаляем старое меню (если было открыто) и записываем это предупреждение как новое активное меню
+                    last_menu_id = await db.fetchval(
+                        "SELECT last_channels_menu_id FROM platform_users WHERE user_id=$1", owner_id
+                    )
+                    if last_menu_id:
+                        try:
+                            await _main_bot.delete_message(owner_id, last_menu_id)
+                        except Exception:
+                            pass
+                    await db.execute(
+                        "UPDATE platform_users SET last_channels_menu_id=$1 WHERE user_id=$2",
+                        sent.message_id, owner_id
+                    )
                 except Exception as _e:
                     logger.debug(f"[MCM] notify owner failed (rights stripped): {_e}")
             logger.info(f"[MCM] Bot @{bot_username} lost admin in chat={chat.id} — deactivated")
@@ -1354,6 +1372,11 @@ async def _handle_my_chat_member(
             chat_link = f"<b>{chat_title}</b>"
         if _main_bot:
             try:
+                from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+                kb = InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="⚙️ Настройки бота", callback_data=f"bot_settings:{child_bot_id}")],
+                    [InlineKeyboardButton(text="📍 Площадки бота", callback_data=f"bot_chats_list:{child_bot_id}")],
+                ])
                 sent = await _main_bot.send_message(
                     owner_id,
                     f"⚠️ В вашем канале/группе {chat_link} боту @{bot_username} "
@@ -1364,8 +1387,21 @@ async def _handle_my_chat_member(
                     f"Бот подключится автоматически, как только вы сохраните изменения.",
                     parse_mode="HTML",
                     disable_web_page_preview=True,
+                    reply_markup=kb,
                 )
-                asyncio.create_task(_delete_main_bot_msg(sent.chat.id, sent.message_id, 8))
+                # Удаляем старое меню (если было открыто) и записываем это предупреждение как новое активное меню
+                last_menu_id = await db.fetchval(
+                    "SELECT last_channels_menu_id FROM platform_users WHERE user_id=$1", owner_id
+                )
+                if last_menu_id:
+                    try:
+                        await _main_bot.delete_message(owner_id, last_menu_id)
+                    except Exception:
+                        pass
+                await db.execute(
+                    "UPDATE platform_users SET last_channels_menu_id=$1 WHERE user_id=$2",
+                    sent.message_id, owner_id
+                )
             except Exception as _e:
                 logger.debug(f"[MCM] notify owner failed (missing perms): {_e}")
         logger.warning(

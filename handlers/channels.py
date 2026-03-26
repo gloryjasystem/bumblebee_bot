@@ -100,6 +100,7 @@ async def on_bot_settings(callback: CallbackQuery, platform_user: dict | None):
         return
     child_bot_id = int(callback.data.split(":")[1])
     user_id = platform_user["user_id"]
+    await db.execute("UPDATE platform_users SET last_channels_menu_id=NULL WHERE user_id=$1", user_id)
 
     # Разрешаем доступ владельцу ИЛИ активному admin
     bot = await db.fetchrow(
@@ -371,7 +372,7 @@ async def on_bot_chats_list(callback: CallbackQuery, platform_user: dict | None)
         "</blockquote>"
     )
     count = len(chats)
-    await navigate(
+    msg = await navigate(
         callback,
         f"📍 <b>Площадки @{username}</b>\n\n"
         f"{hint}\n\n"
@@ -383,6 +384,11 @@ async def on_bot_chats_list(callback: CallbackQuery, platform_user: dict | None)
         "Нажмите <b>Подключение</b> чтобы добавить.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
     )
+    if msg:
+        await db.execute(
+            "UPDATE platform_users SET last_channels_menu_id=$1 WHERE user_id=$2",
+            msg.message_id, owner_id
+        )
 
 
 # ══════════════════════════════════════════════════════════════
@@ -394,6 +400,7 @@ async def on_bot_connect(callback: CallbackQuery, platform_user: dict | None):
         return
     child_bot_id = int(callback.data.split(":")[1])
     owner_id = platform_user["user_id"]
+    await db.execute("UPDATE platform_users SET last_channels_menu_id=NULL WHERE user_id=$1", owner_id)
 
     bot = await db.fetchrow(
         "SELECT bot_username FROM child_bots WHERE id=$1 AND owner_id=$2",
@@ -918,12 +925,14 @@ async def on_channel_detail(callback: CallbackQuery, platform_user: dict | None)
 # channel_in_bot:{ch_id}:{child_bot_id} — детали площадки из уровня «Площадки бота»
 @router.callback_query(F.data.startswith("channel_in_bot:"))
 async def on_channel_in_bot(callback: CallbackQuery, platform_user: dict | None):
+    """Меню конкретной площадки (канала/группы)."""
     if not platform_user:
         return
     parts = callback.data.split(":")
     ch_id = int(parts[1])
     child_bot_id = int(parts[2]) if len(parts) > 2 and parts[2] else None
     owner_id = platform_user["user_id"]
+    await db.execute("UPDATE platform_users SET last_channels_menu_id=NULL WHERE user_id=$1", owner_id)
 
     ch = await db.fetchrow(
         "SELECT * FROM bot_chats WHERE id=$1 AND owner_id=$2",

@@ -38,6 +38,26 @@ class OwnerMiddleware(BaseMiddleware):
             )
             platform_user = dict(row) if row else None
 
+            # ── Проверка на бан платформенного юзера ──
+            if platform_user and platform_user.get("is_banned"):
+                reason = platform_user.get("ban_reason") or "Нарушение правил"
+                if isinstance(event, Message):
+                    try:
+                        await event.answer(
+                            f"⛔️ <b>Ваш аккаунт заблокирован решением администрации.</b>\n\n"
+                            f"📝 Причина: <i>{reason}</i>\n\n"
+                            f"Если вы считаете это ошибкой, обратитесь в поддержку.",
+                            parse_mode="HTML"
+                        )
+                    except Exception:
+                        pass
+                elif isinstance(event, CallbackQuery):
+                    try:
+                        await event.answer(f"⛔️ Аккаунт заблокирован: {reason}", show_alert=True)
+                    except Exception:
+                        pass
+                return  # Прерываем обработку
+
             # ── Владелец проекта и Совладелец: принудительно business навсегда ──────────────
             username = (user.username or "").lower().lstrip("@")
             is_project_owner = (

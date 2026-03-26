@@ -12,7 +12,10 @@ CREATE TABLE IF NOT EXISTS platform_users (
     tariff          VARCHAR(16) DEFAULT 'free', -- free | start | pro | business
     tariff_until    TIMESTAMPTZ,
     trial_used      BOOLEAN DEFAULT false,
-    created_at      TIMESTAMPTZ DEFAULT now()
+    created_at      TIMESTAMPTZ DEFAULT now(),
+    is_banned       BOOLEAN DEFAULT false,
+    ban_reason      TEXT,
+    banned_at       TIMESTAMPTZ
 );
 
 -- 2. Дочерние боты пользователей (созданные через BotFather)

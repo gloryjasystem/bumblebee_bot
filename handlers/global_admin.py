@@ -12,6 +12,7 @@ from db.pool import get_pool
 from services.discount import get_active_discount, set_discount
 from services.security import decrypt_token
 from utils.nav import navigate
+from scheduler.child_bot_runner import stop_child_bot, start_child_bot
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -32,6 +33,7 @@ class StaffFSM(StatesGroup):
     waiting_set_expire   = State()
     waiting_pm_input     = State()
     waiting_note_input   = State()
+    waiting_ban_reason   = State()
 
 
 # ══════════════════════════════════════════════════════════
@@ -347,10 +349,6 @@ async def _show_platform_user_card(message_or_cb, admin_owner_id: int, row):
         bl_count = await conn.fetchval(
             "SELECT COUNT(*) FROM blacklist WHERE owner_id=$1", uid
         ) or 0
-        is_blocked = await conn.fetchval(
-            "SELECT 1 FROM blacklist WHERE owner_id=$1 AND user_id=$2 AND child_bot_id IS NULL",
-            admin_owner_id, uid
-        )
         note_row = None
         try:
             note_row = await conn.fetchrow(
@@ -360,8 +358,13 @@ async def _show_platform_user_card(message_or_cb, admin_owner_id: int, row):
         except Exception:
             pass
 
+    is_banned = row.get("is_banned", False)
     note_text = f"\n\n📝  <i>{note_row['note']}</i>" if note_row and note_row.get("note") else ""
-    blocked_mark = "\n⛔️ <b>Заблокирован на платформе!</b>" if is_blocked else ""
+    if is_banned:
+        b_reason = row.get("ban_reason", "—")
+        blocked_mark = f"\n⛔️ <b>Заблокирован:</b> <i>{b_reason}</i>"
+    else:
+        blocked_mark = ""
 
     text = (
         "👤 <b>Карточка пользователя платформы</b>\n"
@@ -382,8 +385,8 @@ async def _show_platform_user_card(message_or_cb, admin_owner_id: int, row):
         [InlineKeyboardButton(text="💎 Управление тарифом",   callback_data=f"ga_pu_tariff:{uid}:{admin_owner_id}")],
         [InlineKeyboardButton(text="📈 История покупок",      callback_data=f"ga_pu_history:{uid}:{admin_owner_id}")],
         [InlineKeyboardButton(
-            text="✅ Разблокировать" if is_blocked else "🚫 Заблокировать",
-            callback_data=f"ga_pu_block:{uid}:{admin_owner_id}"
+            text="✅ Разблокировать" if is_banned else "🚫 Заблокировать",
+            callback_data=f"ga_pu_unblock:{uid}:{admin_owner_id}" if is_banned else f"ga_pu_block:{uid}:{admin_owner_id}"
         )],
         [InlineKeyboardButton(text="📝 Добавить заметку",     callback_data=f"ga_pu_note:{uid}:{admin_owner_id}")],
         [InlineKeyboardButton(text="◀️ Назад к поиску",       callback_data=f"ga_manage_users:{admin_owner_id}")],
@@ -408,27 +411,123 @@ async def on_ga_pu_card(callback: CallbackQuery):
 
 
 @router.callback_query(F.data.startswith("ga_pu_block:"))
-async def on_ga_pu_block(callback: CallbackQuery):
+async def on_ga_pu_block(callback: CallbackQuery, state: FSMContext):
     parts = callback.data.split(":")
     target_uid, admin_owner_id = int(parts[1]), int(parts[2])
+    
+    await state.set_state(StaffFSM.waiting_ban_reason)
+    prompt_msg = await navigate(
+        callback,
+        "⛔️ <b>Блокировка аккаунта платформы</b>\n\n"
+        "Напишите текст причины блокировки, которую увидит пользователь:\n"
+        "(Или отправьте <code>-</code> чтобы заблокировать без указания конкретной причины)",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🚫 Отмена", callback_data=f"ga_pu_card:{target_uid}:{admin_owner_id}")]
+        ])
+    )
+    if prompt_msg and hasattr(prompt_msg, 'message_id'):
+        await state.update_data(ban_target_uid=target_uid, owner_id=admin_owner_id, prompt_msg_id=prompt_msg.message_id)
+    else:
+        await state.update_data(ban_target_uid=target_uid, owner_id=admin_owner_id, prompt_msg_id=callback.message.message_id)
+
+
+@router.message(StaffFSM.waiting_ban_reason)
+async def on_ga_pu_block_input(message: Message, state: FSMContext):
+    data = await state.get_data()
+    target_uid = data.get("ban_target_uid")
+    owner_id = data.get("owner_id")
+    prompt_msg_id = data.get("prompt_msg_id")
+    await state.clear()
+    
+    reason = (message.text or "").strip()[:200]
+    if reason == "-":
+        reason = "Нарушение правил платформы"
+        
+    try:
+        await message.delete()
+    except Exception:
+        pass
+    if prompt_msg_id:
+        try:
+            await message.bot.delete_message(chat_id=message.chat.id, message_id=prompt_msg_id)
+        except Exception:
+            pass
+            
     async with get_pool().acquire() as conn:
-        existing = await conn.fetchval(
-            "SELECT 1 FROM blacklist WHERE owner_id=$1 AND user_id=$2 AND child_bot_id IS NULL",
-            admin_owner_id, target_uid
+        # Обновляем статус 
+        await conn.execute(
+            "UPDATE platform_users SET is_banned=true, ban_reason=$1, banned_at=now() WHERE user_id=$2",
+            reason, target_uid
         )
-        if existing:
-            await conn.execute(
-                "DELETE FROM blacklist WHERE owner_id=$1 AND user_id=$2 AND child_bot_id IS NULL",
-                admin_owner_id, target_uid
-            )
-            await callback.answer("✅ Пользователь разблокирован")
-        else:
-            await conn.execute(
-                "INSERT INTO blacklist (owner_id, user_id, reason) VALUES ($1,$2,'Admin block') ON CONFLICT DO NOTHING",
-                admin_owner_id, target_uid
-            )
-            await callback.answer("🚫 Пользователь заблокирован")
+        # Логируем действие
+        await conn.execute(
+            "INSERT INTO audit_log (owner_id, user_id, action, details) VALUES ($1, $2, 'ban_platform_user', $3)",
+            owner_id, message.from_user.id, json.dumps({"target_uid": target_uid, "reason": reason})
+        )
+        
+        # Получаем список дочерних ботов, чтобы их остановить
+        bots = await conn.fetch("SELECT id FROM child_bots WHERE owner_id=$1", target_uid)
+        
         row = await conn.fetchrow("SELECT * FROM platform_users WHERE user_id=$1", target_uid)
+
+    for b in bots:
+        stop_child_bot(b['id'])
+
+    # Отправляем уведомление юзеру
+    try:
+        await message.bot.send_message(
+            target_uid,
+            f"⛔️ <b>Служба безопасности Bumblebee Bot</b>\n\n"
+            f"Ваш аккаунт и предоставляемые услуги были <b>заблокированы</b>.\n"
+            f"📝 Причина: <i>{reason}</i>\n\n"
+            f"Все активные боты вашей сети приостановлены.",
+            parse_mode="HTML"
+        )
+    except Exception as e:
+        logger.warning(f"Could not notify user {target_uid} about ban: {e}")
+
+    await message.answer("✅ Пользователь заблокирован, его боты остановлены.", disable_notification=True)
+    
+    # Возвращаемся в карточку
+    fake_msg = await message.answer("⏳ Обновление...")  # Hack to use navigate
+    await _show_platform_user_card(fake_msg, owner_id, row)
+
+
+@router.callback_query(F.data.startswith("ga_pu_unblock:"))
+async def on_ga_pu_unblock(callback: CallbackQuery):
+    parts = callback.data.split(":")
+    target_uid, admin_owner_id = int(parts[1]), int(parts[2])
+    
+    async with get_pool().acquire() as conn:
+        await conn.execute(
+            "UPDATE platform_users SET is_banned=false, ban_reason=NULL, banned_at=NULL WHERE user_id=$1",
+            target_uid
+        )
+        await conn.execute(
+            "INSERT INTO audit_log (owner_id, user_id, action, details) VALUES ($1, $2, 'unban_platform_user', $3)",
+            admin_owner_id, callback.from_user.id, json.dumps({"target_uid": target_uid})
+        )
+        
+        bots = await conn.fetch("SELECT id, owner_id, bot_username, token_encrypted FROM child_bots WHERE owner_id=$1", target_uid)
+        row = await conn.fetchrow("SELECT * FROM platform_users WHERE user_id=$1", target_uid)
+
+    # Запускаем дочерних ботов обратно
+    for b in bots:
+        await start_child_bot(b['id'], b['owner_id'], b['bot_username'], b['token_encrypted'])
+
+    # Уведомляем пользователя
+    try:
+        await callback.bot.send_message(
+            target_uid,
+            f"✅ <b>Служба поддержки Bumblebee Bot</b>\n\n"
+            f"Ваш аккаунт успешно <b>разблокирован</b>! Все сервисы и боты сети возобновили работу.",
+            parse_mode="HTML"
+        )
+    except Exception as e:
+        logger.warning(f"Could not notify user {target_uid} about unban: {e}")
+
+    await callback.answer("✅ Аккаунт разблокирован, боты запущены.")
     await _show_platform_user_card(callback, admin_owner_id, row)
 
 

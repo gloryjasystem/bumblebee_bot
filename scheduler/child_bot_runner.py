@@ -1165,7 +1165,7 @@ async def _delete_main_bot_msg(chat_id: int, message_id: int, delay_sec: int):
 # ── КРИТИЧЕСКИЕ ПРАВА, необходимые для работы бота ────────────────────────────
 # Минимально достаточный набор для: защиты, заявок, рассылок.
 _REQUIRED_PERMISSIONS = {
-    "can_restrict_members": "Ограничение участников",
+    "can_restrict_members": "Блокировка пользователей / Ограничение участников",
     "can_invite_users":     "Приглашение участников",
     "can_delete_messages":  "Удаление сообщений",
 }
@@ -1257,16 +1257,20 @@ async def _handle_my_chat_member(
 
     # ── Сценарии 1 и 2: бот стал administrator / creator ─────────────────────
     if new_status not in ("administrator", "creator"):
-        # member / restricted — права урезаны до уровня ниже admin
+        # Если статус стал member или restricted — бот не администратор.
+        # Формально ему не хватает ВСЕХ нужных прав одновременно:
+        all_req_perms = ", ".join(_REQUIRED_PERMISSIONS.values())
+        reason_str = f"perm:{all_req_perms}"[:250]
+
         was_active = await db.fetchval(
             "SELECT is_active FROM bot_chats WHERE child_bot_id=$1 AND chat_id=$2",
             child_bot_id, chat.id,
         )
         if was_active:
             await db.execute(
-                "UPDATE bot_chats SET is_active=false, deactivation_reason='permissions' "
+                "UPDATE bot_chats SET is_active=false, deactivation_reason=$3 "
                 "WHERE child_bot_id=$1 AND chat_id=$2",
-                child_bot_id, chat.id,
+                child_bot_id, chat.id, reason_str,
             )
             # Строим ссылку на канал
             chat_username = getattr(chat, "username", None)
@@ -1281,7 +1285,7 @@ async def _handle_my_chat_member(
                         f"⚠️ В вашем канале/группе {chat_link} бот @{bot_username} "
                         f"лишился прав администратора.\n\n"
                         f"📍 Зайдите в {chat_link} → Управление → Администраторы → "
-                        f"@{bot_username} и верните права.\n\n"
+                        f"@{bot_username} и верните все права.\n\n"
                         f"Бот возобновит работу автоматически, как только права появятся.",
                         parse_mode="HTML",
                         disable_web_page_preview=True,
@@ -1324,21 +1328,22 @@ async def _handle_my_chat_member(
     missing_perms = _check_permissions(new_member)
 
     if missing_perms:
+        reason_str = f"perm:{', '.join(missing_perms)}"[:250]
         # Записываем в БД как НЕАКТИВНУЮ площадку — она появится в списке как 🔴.
         # При получении прав придёт новый my_chat_member → активируем автоматически.
         await db.execute(
             """
             INSERT INTO bot_chats (owner_id, child_bot_id, chat_id, chat_title, chat_type,
                                    is_active, captcha_type, deactivation_reason)
-            VALUES ($1, $2, $3, $4, $5, false, 'off', 'permissions')
+            VALUES ($1, $2, $3, $4, $5, false, 'off', $6)
             ON CONFLICT (owner_id, chat_id)
             DO UPDATE SET
-                chat_title         = EXCLUDED.chat_title,
-                child_bot_id       = EXCLUDED.child_bot_id,
-                is_active          = false,
-                deactivation_reason = 'permissions'
+                chat_title          = EXCLUDED.chat_title,
+                child_bot_id        = EXCLUDED.child_bot_id,
+                is_active           = false,
+                deactivation_reason = EXCLUDED.deactivation_reason
             """,
-            owner_id, child_bot_id, chat.id, chat_title, chat_type,
+            owner_id, child_bot_id, chat.id, chat_title, chat_type, reason_str,
         )
         missing_text = "\n".join(f"  • {p}" for p in missing_perms)
         # Строим кликабельную ссылку на канал/группу

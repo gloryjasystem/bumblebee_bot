@@ -938,27 +938,15 @@ async def on_channel_in_bot(callback: CallbackQuery, platform_user: dict | None)
     back_cb = f"bot_chats_list:{child_bot_id}" if child_bot_id else "menu:channels"
 
     # ── Особый экран: не хватает прав администратора ──────────────────────────
-    if not ch["is_active"] and ch.get("deactivation_reason") == "permissions":
-        chat_username = ch.get("chat_username")  # может быть NULL — тогда просто bold
-        if chat_username:
-            chat_link = f'<a href="https://t.me/{chat_username}">{title}</a>'
-        else:
-            chat_link = f"<b>{title}</b>"
-        await navigate(
-            callback,
-            f"🔴 {type_icon} {chat_link}\n\n"
-            f"⚠️ <b>Боту не хватает прав администратора</b> в этом канале/группе.\n\n"
-            f"Необходимые права:\n"
-            f"  • Ограничение участников\n"
-            f"  • Приглашение участников\n"
-            f"  • Удаление сообщений\n\n"
-            f"📍 <b>Как исправить:</b> зайдите в канал/группу → Управление → "
-            f"Администраторы → найдите бота → включите галочки выше.\n\n"
-            f"Бот подключится автоматически, как только вы сохраните изменения.",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="🗑 Удалить площадку", callback_data=f"ch_delete:{ch_id}:{child_bot_id or ''}")],
-                [InlineKeyboardButton(text="◀️ Назад",            callback_data=back_cb)],
-            ]),
+    reason = ch.get("deactivation_reason")
+    if not ch["is_active"] and reason and reason.startswith("perm:"):
+        missing_rights = reason.split("perm:", 1)[1]
+        await callback.answer(
+            f"⚠️ Боту не хватает прав администратора в этом канале/группе!\n\n"
+            f"Необходимые права:\n{missing_rights}\n\n"
+            f"📍 Зайдите в Управление каналом → Администраторы → найдите бота и включите эти галочки.\n"
+            f"Бот подключится автоматически.",
+            show_alert=True
         )
         return
 

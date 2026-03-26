@@ -362,7 +362,7 @@ async def _handle_child_update(
             else:
                 await _handle_chat_member(bot, child_bot_id, update.chat_member)
 
-        # ── Сообщение пользователя ──────────────────────────────────
+        # ── Сообщение пользователя + миграция группы ────────────────────────────
         elif update.message and update.message.from_user:
             chat_type = update.message.chat.type if update.message.chat else "private"
             if chat_type in ("group", "supergroup", "channel"):
@@ -371,6 +371,27 @@ async def _handle_child_update(
             else:
                 # Личное сообщение (/start и др.)
                 await _handle_message(bot, child_bot_id, owner_id, update.message)
+
+        # ── Миграция группы → супергруппа ───────────────────────────────────────
+        # Telegram присылает service-сообщение migrate_to_chat_id когда
+        # обычная группа конвертируется в супергруппу. Старый chat_id становится
+        # недействительным — обновляем запись в БД на новый chat_id «на лету».
+        elif update.message and update.message.migrate_to_chat_id:
+            old_chat_id = update.message.chat.id
+            new_chat_id = update.message.migrate_to_chat_id
+            await db.execute(
+                """
+                UPDATE bot_chats
+                SET chat_id   = $1,
+                    chat_type = 'supergroup'
+                WHERE child_bot_id = $2
+                  AND chat_id      = $3
+                """,
+                new_chat_id, child_bot_id, old_chat_id,
+            )
+            logger.info(
+                f"[MIGRATE] child_bot={child_bot_id}: chat_id {old_chat_id} → {new_chat_id} (group→supergroup)"
+            )
 
     except Exception as e:
         logger.error(f"Child bot @{bot_username} update error: {e}")
@@ -1131,79 +1152,208 @@ async def _handle_message(bot: Bot, child_bot_id: int, owner_id: int, message):
 
 
 
+# ── КРИТИЧЕСКИЕ ПРАВА, необходимые для работы бота ────────────────────────────
+# Минимально достаточный набор для: защиты, заявок, рассылок.
+_REQUIRED_PERMISSIONS = {
+    "can_restrict_members": "Ограничение участников",
+    "can_invite_users":     "Приглашение участников",
+    "can_delete_messages":  "Удаление сообщений",
+}
+
+
+def _check_permissions(member) -> list[str]:
+    """
+    Проверяет наличие критических прав у бота.
+    Возвращает список ОТСУТСТВУЮЩИХ прав (пустой → всё OK).
+    Для creator-статуса права не нужны — он главный.
+    """
+    if member.status == "creator":
+        return []
+    missing = []
+    for attr, label in _REQUIRED_PERMISSIONS.items():
+        if not getattr(member, attr, False):
+            missing.append(label)
+    return missing
+
+
 async def _handle_my_chat_member(
     bot: Bot, child_bot_id: int, owner_id: int, bot_username: str, event: ChatMemberUpdated
 ):
-    """Бот добавлен как администратор — сохраняем площадку и уведомляем владельца."""
-    new_status = event.new_chat_member.status
+    """
+    Event-driven обработчик жизненного цикла бота в чате.
 
-    if new_status in ("administrator", "creator"):
-        chat = event.chat
-        chat_type = chat.type  # channel | supergroup | group
+    Сценарии:
+      1. ПЕРВИЧНОЕ ДОБАВЛЕНИЕ  — anti-spam guard → проверка прав → регистрация/уведомление.
+      2. ИЗМЕНЕНИЕ ПРАВ        — ребот стал admin снова или потерял права → обновляем is_active.
+      3. УДАЛЕНИЕ (kicked/left)— мягкая деактивация (is_active=False), запись сохраняется.
+      4. PM-блокировка         — пользователь заблокировал бота в личке.
+    """
+    new_member = event.new_chat_member
+    old_member = event.old_chat_member
+    new_status  = new_member.status
+    old_status  = old_member.status
+    chat        = event.chat
+    chat_type   = chat.type  # channel | supergroup | group | private
+    chat_title  = chat.title or str(chat.id)
+    from_user   = event.from_user  # кто изменил права
 
-        # Сохраняем в bot_chats
-        await db.execute(
-            """
-            INSERT INTO bot_chats (owner_id, child_bot_id, chat_id, chat_title, chat_type, is_active, captcha_type)
-            VALUES ($1, $2, $3, $4, $5, true, 'off')
-            ON CONFLICT (owner_id, chat_id)
-            DO UPDATE SET chat_title=EXCLUDED.chat_title,
-                          child_bot_id=EXCLUDED.child_bot_id,
-                          is_active=true
-            """,
-            owner_id, child_bot_id, chat.id,
-            chat.title or f"chat_{chat.id}", chat_type,
-        )
-
-
-        # Уведомляем владельца через главный бот
-        if _main_bot:
-            type_icon = "📢" if chat_type == "channel" else "👥"
-            try:
-                from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-                await _main_bot.send_message(
-                    owner_id,
-                    f"✅ {type_icon} <b>{chat.title}</b> подключён!\n\n"
-                    f"Бот @{bot_username} добавлен как администратор и готов к работе.",
-                    reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                        [InlineKeyboardButton(text="📍 Площадки бота", callback_data=f"bot_chats_list:{child_bot_id}")],
-                        [InlineKeyboardButton(text="⚙️ Настройки бота", callback_data=f"bot_settings:{child_bot_id}")],
-                    ]),
-                    parse_mode="HTML",
-                )
-            except Exception as e:
-                logger.error(f"Failed to notify owner {owner_id}: {e}")
-
-        logger.info(f"Child bot @{bot_username} added to {chat.title} ({chat.id}) as {new_status}")
-
-    elif new_status in ("kicked", "left"):
-        chat_type = event.chat.type
-        if chat_type == "private":
-            # Пользователь заблокировал бота в личке (PM)
+    # ── Личка: пользователь заблокировал бота ─────────────────────────────────
+    if chat_type == "private":
+        if new_status in ("kicked", "left"):
             await db.execute(
                 "UPDATE bot_users SET is_active=false, left_at=now() "
-                "WHERE child_bot_id=$1 AND user_id=$2",
-                child_bot_id, event.chat.id,
+                "WHERE owner_id=$1 AND user_id=$2",
+                owner_id, event.from_user.id,
             )
-            logger.info(f"User {event.chat.id} blocked child bot {child_bot_id}")
-            return
+            logger.info(f"[MCM] User {event.from_user.id} blocked child bot {child_bot_id}")
+        return
 
-        # Бот удалён из группы/канала — удаляем площадку из базы
+    # ── Сценарий 3: бот удалён (kicked / left) ────────────────────────────────
+    if new_status in ("kicked", "left"):
+        # Мягкая деактивация — НЕ удаляем запись и настройки из БД.
+        # При повторном добавлении бота все конфиги сохранятся (Seamless Flow).
         await db.execute(
-            "DELETE FROM bot_chats WHERE child_bot_id=$1 AND chat_id=$2",
-            child_bot_id, event.chat.id,
+            "UPDATE bot_chats SET is_active=false WHERE child_bot_id=$1 AND chat_id=$2",
+            child_bot_id, chat.id,
         )
         if _main_bot:
             try:
-                chat_title = event.chat.title or str(event.chat.id)
                 await _main_bot.send_message(
                     owner_id,
                     f"⚠️ Бот @{bot_username} удалён из <b>{chat_title}</b>.\n"
-                    f"Площадка деактивирована.",
+                    f"Площадка деактивирована. Настройки сохранены — добавьте бота обратно, чтобы всё восстановить.",
                     parse_mode="HTML",
                 )
-            except Exception:
-                pass
+            except Exception as _e:
+                logger.debug(f"[MCM] notify owner failed (kicked): {_e}")
+        logger.info(f"[MCM] Bot @{bot_username} removed from chat={chat.id} (soft-deactivated)")
+        return
+
+    # ── Сценарии 1 и 2: бот стал administrator / creator ─────────────────────
+    if new_status not in ("administrator", "creator"):
+        # member / restricted — значит права существенно урезаны
+        # Проверяем, была ли площадка активна
+        was_active = await db.fetchval(
+            "SELECT is_active FROM bot_chats WHERE child_bot_id=$1 AND chat_id=$2",
+            child_bot_id, chat.id,
+        )
+        if was_active:
+            await db.execute(
+                "UPDATE bot_chats SET is_active=false WHERE child_bot_id=$1 AND chat_id=$2",
+                child_bot_id, chat.id,
+            )
+            if _main_bot:
+                try:
+                    await _main_bot.send_message(
+                        owner_id,
+                        f"⚠️ Работа в <b>{chat_title}</b> приостановлена.\n\n"
+                        f"Бот @{bot_username} потерял права администратора. "
+                        f"Верните права — защита включится автоматически.",
+                        parse_mode="HTML",
+                    )
+                except Exception as _e:
+                    logger.debug(f"[MCM] notify owner failed (rights stripped): {_e}")
+            logger.info(f"[MCM] Bot @{bot_username} lost admin in chat={chat.id} — deactivated")
+        return
+
+    # ── Дальше new_status in ("administrator", "creator") ────────────────────
+
+    # Шаг 1 (Anti-Spam): from_user добавил бота — проверяем, наш ли он клиент.
+    # Исключение: если is_active уже false в БД (бот возвращается в знакомый чат),
+    # то владелец уже прошёл проверку — пропускаем anti-spam.
+    existing_chat = await db.fetchrow(
+        "SELECT is_active FROM bot_chats WHERE child_bot_id=$1 AND chat_id=$2",
+        child_bot_id, chat.id,
+    )
+    is_returning = existing_chat is not None  # чат уже был в БД ранее
+
+    if not is_returning and from_user:
+        # Первичное добавление: проверяем, есть ли from_user в нашей системе
+        is_our_client = await db.fetchval(
+            "SELECT 1 FROM platform_users WHERE user_id=$1", from_user.id,
+        )
+        if not is_our_client:
+            # Посторонний добавил бота в свой канал — немедленно покидаем
+            logger.warning(
+                f"[MCM] ANTI-SPAM: bot @{bot_username} added to chat={chat.id} by unknown "
+                f"user={from_user.id} (@{from_user.username}) — leaving immediately"
+            )
+            try:
+                await bot.leave_chat(chat.id)
+            except Exception as _e:
+                logger.debug(f"[MCM] leave_chat failed: {_e}")
+            return
+
+    # Шаг 2: Проверка критических прав
+    missing_perms = _check_permissions(new_member)
+
+    if missing_perms:
+        # Прав не хватает — НЕ создаём запись в БД, сообщаем владельцу что нужно исправить.
+        # Когда права будут выданы — придёт ещё один my_chat_member и мы зарегистрируем чат.
+        missing_text = "\n".join(f"  • {p}" for p in missing_perms)
+        if _main_bot:
+            try:
+                await _main_bot.send_message(
+                    owner_id,
+                    f"❌ Бот @{bot_username} добавлен в <b>{chat_title}</b>, "
+                    f"но не хватает прав:\n{missing_text}\n\n"
+                    f"Выдайте их в настройках канала/группы — "
+                    f"бот подключится автоматически, как только права появятся.",
+                    parse_mode="HTML",
+                )
+            except Exception as _e:
+                logger.debug(f"[MCM] notify owner failed (missing perms): {_e}")
+        logger.warning(
+            f"[MCM] Bot @{bot_username} in chat={chat.id} missing perms: {missing_perms}"
+        )
+        return
+
+    # Шаг 3: Все права есть — регистрируем/активируем площадку атомарно.
+    await db.execute(
+        """
+        INSERT INTO bot_chats (owner_id, child_bot_id, chat_id, chat_title, chat_type, is_active, captcha_type)
+        VALUES ($1, $2, $3, $4, $5, true, 'off')
+        ON CONFLICT (owner_id, chat_id)
+        DO UPDATE SET
+            chat_title   = EXCLUDED.chat_title,
+            child_bot_id = EXCLUDED.child_bot_id,
+            is_active    = true
+        """,
+        owner_id, child_bot_id,
+        chat.id, chat_title, chat_type,
+    )
+
+    # Шаг 4: Уведомляем владельца с контекстом (первичное vs. возврат прав)
+    if _main_bot:
+        type_icon = "📢" if chat_type == "channel" else "👥"
+        from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📍 Площадки бота", callback_data=f"bot_chats_list:{child_bot_id}")],
+            [InlineKeyboardButton(text="⚙️ Настройки бота", callback_data=f"bot_settings:{child_bot_id}")],
+        ])
+        if is_returning and existing_chat and not existing_chat["is_active"]:
+            # Права возвращены — чат снова в работе
+            msg_text = (
+                f"✅ Права обновлены! {type_icon} <b>{chat_title}</b> снова в работе.\n\n"
+                f"Бот @{bot_username} восстановил защиту автоматически."
+            )
+        else:
+            # Первичное подключение
+            msg_text = (
+                f"✅ {type_icon} <b>{chat_title}</b> успешно подключён!\n\n"
+                f"Бот @{bot_username} готов к работе."
+            )
+        try:
+            await _main_bot.send_message(
+                owner_id, msg_text, parse_mode="HTML", reply_markup=kb,
+            )
+        except Exception as _e:
+            logger.debug(f"[MCM] notify owner failed (success): {_e}")
+
+    logger.info(
+        f"[MCM] Bot @{bot_username} {'reactivated' if is_returning else 'registered'} "
+        f"in chat={chat.id} ({chat_type}) by user={getattr(from_user, 'id', '?')}"
+    )
 
 
 async def _check_join_limit(

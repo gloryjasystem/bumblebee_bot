@@ -11,6 +11,7 @@ from aiogram.fsm.state import State, StatesGroup
 from db.pool import get_pool
 from services.discount import get_active_discount, set_discount
 from services.security import decrypt_token
+from utils.nav import navigate
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -240,10 +241,7 @@ async def _show_admin_panel(message_or_cb, role: str, owner_id: int, admin_id: i
     if isinstance(message_or_cb, Message):
         await message_or_cb.answer(header, reply_markup=markup, parse_mode="HTML")
     else:
-        try:
-            await message_or_cb.message.edit_text(header, reply_markup=markup, parse_mode="HTML")
-        except Exception:
-            await message_or_cb.message.answer(header, reply_markup=markup, parse_mode="HTML")
+        await navigate(message_or_cb, header, reply_markup=markup, parse_mode="HTML")
 
 
 @router.callback_query(F.data.startswith("ga_main:"))
@@ -272,8 +270,8 @@ async def on_ga_manage_users(callback: CallbackQuery, state: FSMContext):
     if not role:
         return await callback.answer("❌ Нет прав", show_alert=True)
     await state.set_state(StaffFSM.waiting_user_search)
-    await state.update_data(owner_id=owner_id, prompt_msg_id=callback.message.message_id)
-    await callback.message.edit_text(
+    prompt_msg = await navigate(
+        callback,
         "⚙️ <b>Управление пользователями</b>\n"
         "──────────────────────────────\n\n"
         "Введите <b>@username</b> или <b>Telegram ID</b> клиента платформы,\n"
@@ -284,7 +282,10 @@ async def on_ga_manage_users(callback: CallbackQuery, state: FSMContext):
             [InlineKeyboardButton(text="🚫 Отмена", callback_data=f"ga_main:{owner_id}")]
         ])
     )
-    await callback.answer()
+    if prompt_msg and hasattr(prompt_msg, 'message_id'):
+        await state.update_data(owner_id=owner_id, prompt_msg_id=prompt_msg.message_id)
+    else:
+        await state.update_data(owner_id=owner_id, prompt_msg_id=callback.message.message_id)
 
 
 @router.message(StaffFSM.waiting_user_search)
@@ -391,7 +392,7 @@ async def _show_platform_user_card(message_or_cb, admin_owner_id: int, row):
     if isinstance(message_or_cb, Message):
         await message_or_cb.answer(text, parse_mode="HTML", reply_markup=markup)
     else:
-        await message_or_cb.message.edit_text(text, parse_mode="HTML", reply_markup=markup)
+        await navigate(message_or_cb, text, reply_markup=markup, parse_mode="HTML")
 
 
 @router.callback_query(F.data.startswith("ga_pu_card:"))
@@ -435,7 +436,8 @@ async def on_ga_pu_block(callback: CallbackQuery):
 async def on_ga_pu_delete(callback: CallbackQuery):
     parts = callback.data.split(":")
     target_uid, admin_owner_id = int(parts[1]), int(parts[2])
-    await callback.message.edit_text(
+    await navigate(
+        callback,
         f"⚠️ <b>Подтверждение удаления</b>\n\n"
         f"Вы собираетесь полностью удалить аккаунт <code>{target_uid}</code>.\n"
         "Действие необратимо!",
@@ -445,7 +447,6 @@ async def on_ga_pu_delete(callback: CallbackQuery):
             [InlineKeyboardButton(text="❌ Нет, отмена",  callback_data=f"ga_pu_card:{target_uid}:{admin_owner_id}")],
         ])
     )
-    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("ga_pu_delete_confirm:"))
@@ -454,14 +455,14 @@ async def on_ga_pu_delete_confirm(callback: CallbackQuery):
     target_uid, admin_owner_id = int(parts[1]), int(parts[2])
     async with get_pool().acquire() as conn:
         await conn.execute("DELETE FROM platform_users WHERE user_id=$1", target_uid)
-    await callback.message.edit_text(
+    await navigate(
+        callback,
         f"✅ Аккаунт <code>{target_uid}</code> удалён.",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="◀️ Назад", callback_data=f"ga_manage_users:{admin_owner_id}")]
         ])
     )
-    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("ga_pu_pm:"))
@@ -469,8 +470,8 @@ async def on_ga_pu_pm(callback: CallbackQuery, state: FSMContext):
     parts = callback.data.split(":")
     target_uid, admin_owner_id = int(parts[1]), int(parts[2])
     await state.set_state(StaffFSM.waiting_pm_input)
-    await state.update_data(pm_target_uid=target_uid, owner_id=admin_owner_id)
-    await callback.message.edit_text(
+    prompt_msg = await navigate(
+        callback,
         "📢 <b>Отправка сообщения</b>\n\n"
         "Напишите текст, который будет отправлен пользователю\n"
         "в личные сообщения через основного бота.",
@@ -479,7 +480,10 @@ async def on_ga_pu_pm(callback: CallbackQuery, state: FSMContext):
             [InlineKeyboardButton(text="🚫 Отмена", callback_data=f"ga_pu_card:{target_uid}:{admin_owner_id}")]
         ])
     )
-    await callback.answer()
+    if prompt_msg and hasattr(prompt_msg, 'message_id'):
+        await state.update_data(pm_target_uid=target_uid, owner_id=admin_owner_id, prompt_msg_id=prompt_msg.message_id)
+    else:
+        await state.update_data(pm_target_uid=target_uid, owner_id=admin_owner_id, prompt_msg_id=callback.message.message_id)
 
 
 @router.message(StaffFSM.waiting_pm_input)
@@ -487,11 +491,17 @@ async def on_ga_pu_pm_input(message: Message, state: FSMContext):
     data = await state.get_data()
     target_uid = data.get("pm_target_uid")
     owner_id = data.get("owner_id")
+    prompt_msg_id = data.get("prompt_msg_id")
     await state.clear()
     try:
         await message.delete()
     except Exception:
         pass
+    if prompt_msg_id:
+        try:
+            await message.bot.delete_message(chat_id=message.chat.id, message_id=prompt_msg_id)
+        except Exception:
+            pass
     try:
         await message.bot.send_message(target_uid, message.text or "", parse_mode="HTML")
         await message.answer(
@@ -522,7 +532,8 @@ async def on_ga_pu_note(callback: CallbackQuery, state: FSMContext):
         )
     
     if existing_note:
-        await callback.message.edit_text(
+        await navigate(
+            callback,
             "📝 <b>Заметка пользователя</b>\n\n"
             "Статус: 🟢 Активна\n\n"
             f"<i>{existing_note}</i>",
@@ -533,11 +544,10 @@ async def on_ga_pu_note(callback: CallbackQuery, state: FSMContext):
                 [InlineKeyboardButton(text="◀️ Назад", callback_data=f"ga_pu_card:{target_uid}:{admin_owner_id}")]
             ])
         )
-        await callback.answer()
     else:
         await state.set_state(StaffFSM.waiting_note_input)
-        await state.update_data(note_target_uid=target_uid, owner_id=admin_owner_id)
-        await callback.message.edit_text(
+        prompt_msg = await navigate(
+            callback,
             "📝 <b>Добавить заметку</b>\n\n"
             "Напишите приватную заметку об этом пользователе\n"
             "(видите только вы, до 500 символов):",
@@ -546,7 +556,10 @@ async def on_ga_pu_note(callback: CallbackQuery, state: FSMContext):
                 [InlineKeyboardButton(text="🚫 Отмена", callback_data=f"ga_pu_card:{target_uid}:{admin_owner_id}")]
             ])
         )
-        await callback.answer()
+        if prompt_msg and hasattr(prompt_msg, 'message_id'):
+            await state.update_data(note_target_uid=target_uid, owner_id=admin_owner_id, prompt_msg_id=prompt_msg.message_id)
+        else:
+            await state.update_data(note_target_uid=target_uid, owner_id=admin_owner_id, prompt_msg_id=callback.message.message_id)
 
 
 @router.callback_query(F.data.startswith("ga_pu_note_edit:"))
@@ -555,8 +568,8 @@ async def on_ga_pu_note_edit(callback: CallbackQuery, state: FSMContext):
     target_uid, admin_owner_id = int(parts[1]), int(parts[2])
     
     await state.set_state(StaffFSM.waiting_note_input)
-    await state.update_data(note_target_uid=target_uid, owner_id=admin_owner_id)
-    await callback.message.edit_text(
+    prompt_msg = await navigate(
+        callback,
         "📝 <b>Изменить заметку</b>\n\n"
         "Напишите новую приватную заметку об этом пользователе\n"
         "(видите только вы, до 500 символов):",
@@ -565,7 +578,10 @@ async def on_ga_pu_note_edit(callback: CallbackQuery, state: FSMContext):
             [InlineKeyboardButton(text="🚫 Отмена", callback_data=f"ga_pu_note:{target_uid}:{admin_owner_id}")]
         ])
     )
-    await callback.answer()
+    if prompt_msg and hasattr(prompt_msg, 'message_id'):
+        await state.update_data(note_target_uid=target_uid, owner_id=admin_owner_id, prompt_msg_id=prompt_msg.message_id)
+    else:
+        await state.update_data(note_target_uid=target_uid, owner_id=admin_owner_id, prompt_msg_id=callback.message.message_id)
 
 
 @router.callback_query(F.data.startswith("ga_pu_note_del:"))
@@ -589,12 +605,18 @@ async def on_ga_pu_note_input(message: Message, state: FSMContext):
     data = await state.get_data()
     target_uid = data.get("note_target_uid")
     owner_id = data.get("owner_id")
+    prompt_msg_id = data.get("prompt_msg_id")
     await state.clear()
     note = (message.text or "").strip()[:500]
     try:
         await message.delete()
     except Exception:
         pass
+    if prompt_msg_id:
+        try:
+            await message.bot.delete_message(chat_id=message.chat.id, message_id=prompt_msg_id)
+        except Exception:
+            pass
     async with get_pool().acquire() as conn:
         try:
             await conn.execute(
@@ -628,13 +650,15 @@ async def on_ga_pu_bots(callback: CallbackQuery):
         pu = await conn.fetchrow("SELECT username, first_name FROM platform_users WHERE user_id=$1", target_uid)
     uname = f"@{pu['username']}" if pu and pu.get('username') else str(target_uid)
     if not bots:
-        return await callback.message.edit_text(
+        await navigate(
+            callback,
             f"🤖 <b>Боты {uname}</b>\n\nУ пользователя нет подключённых ботов.",
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="◀️ Назад к карточке", callback_data=f"ga_pu_card:{target_uid}:{admin_owner_id}")]
             ])
         )
+        return
     async with get_pool().acquire() as conn:
         chat_counts = {}
         for b in bots:
@@ -649,12 +673,12 @@ async def on_ga_pu_bots(callback: CallbackQuery):
         kb.append([InlineKeyboardButton(text=f"🤖 @{b['bot_username']} ({cnt} пл.)",
                                         callback_data=f"ga_pu_bot_detail:{b['id']}:{target_uid}:{admin_owner_id}")])
     kb.append([InlineKeyboardButton(text="◀️ Назад к карточке", callback_data=f"ga_pu_card:{target_uid}:{admin_owner_id}")])
-    await callback.message.edit_text(
+    await navigate(
+        callback,
         f"🤖 <b>Боты {uname}</b>\n──────────────────────────",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
     )
-    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("ga_pu_bot_detail:"))
@@ -692,14 +716,14 @@ async def on_ga_pu_bot_detail(callback: CallbackQuery):
     kb.append([InlineKeyboardButton(text="🗑 Удалить бот целиком", callback_data=f"ga_pu_bot_del:{bot_id}:{target_uid}:{admin_owner_id}")])
     kb.append([InlineKeyboardButton(text="◀️ Назад к ботам",       callback_data=f"ga_pu_bots:{target_uid}:{admin_owner_id}")])
     total_subs = sum(ch['subs'] or 0 for ch in chats)
-    await callback.message.edit_text(
+    await navigate(
+        callback,
         f"📡 <b>Площадки {bname}</b>\n"
         f"──────────────────────────\n"
         f"Всего площадок: {len(chats)}  ·  Подписчиков: {total_subs:,}",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
     )
-    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("ga_pu_noop"))
@@ -780,12 +804,12 @@ async def on_ga_pu_tariff(callback: CallbackQuery):
         row_btns.append(InlineKeyboardButton(text=TARIFF_LABELS[t], callback_data=f"ga_pu_tariff_pick:{t}:{target_uid}:{admin_owner_id}"))
     kb.append(row_btns)  # all tariff buttons in one row
     kb.append([InlineKeyboardButton(text="◀️ Назад к карточке", callback_data=f"ga_pu_card:{target_uid}:{admin_owner_id}")])
-    await callback.message.edit_text(
+    await navigate(
+        callback,
         f"💎 <b>Управление тарифом</b> {uname}\n\n{tariff_line}\n\nСмените тариф:",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
     )
-    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("ga_pu_tariff_pick:"))
@@ -803,12 +827,12 @@ async def on_ga_pu_tariff_pick(callback: CallbackQuery):
     ]
     kb.append(dur_row)  # all durations in one row
     kb.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"ga_pu_tariff:{target_uid}:{admin_owner_id}")])
-    await callback.message.edit_text(
+    await navigate(
+        callback,
         f"💎 <b>Тариф: {label}</b>\n\nВыберите срок:",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
     )
-    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("ga_pu_tariff_dur:"))
@@ -829,7 +853,8 @@ async def on_ga_pu_tariff_dur(callback: CallbackQuery):
     async with get_pool().acquire() as conn:
         pu = await conn.fetchrow("SELECT username FROM platform_users WHERE user_id=$1", target_uid)
     uname = f"@{pu['username']}" if pu and pu.get('username') else str(target_uid)
-    await callback.message.edit_text(
+    await navigate(
+        callback,
         f"✅ <b>Подтвердите смену тарифа</b>\n\n"
         f"👤 {uname}\n"
         f"💎 {label}  •  {dur_label}\n"
@@ -840,7 +865,6 @@ async def on_ga_pu_tariff_dur(callback: CallbackQuery):
             [InlineKeyboardButton(text="❌ Отмена",        callback_data=f"ga_pu_tariff:{target_uid}:{admin_owner_id}")],
         ])
     )
-    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("ga_pu_tariff_apply:"))
@@ -929,13 +953,13 @@ async def on_ga_pu_history(callback: CallbackQuery):
             )
         lines.append(f"\n<b>Всего оплат: {len(payments)}</b>")
 
-    await callback.message.edit_text(
+    await navigate(
+        callback,
         "\n".join(lines), parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="◀️ Назад к карточке", callback_data=f"ga_pu_card:{target_uid}:{admin_owner_id}")]
         ])
     )
-    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("ga_team:"))
@@ -972,8 +996,7 @@ async def on_ga_team(callback: CallbackQuery):
         [InlineKeyboardButton(text="➖ Удалить админа", callback_data=f"ga_team_remove:{owner_id}")],
         [InlineKeyboardButton(text="◀️ Назад", callback_data=f"ga_main:{owner_id}")]
     ]
-    await callback.message.edit_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
-    await callback.answer()
+    await navigate(callback, text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
 
 
 @router.callback_query(F.data.startswith("ga_team_howto:"))
@@ -983,7 +1006,6 @@ async def on_ga_team_howto(callback: CallbackQuery, state: FSMContext):
     if role != 'owner':
         return await callback.answer("❌ Только для Владельца", show_alert=True)
     await state.set_state(StaffFSM.waiting_add_input)
-    await state.update_data(owner_id=owner_id, prompt_msg_id=callback.message.message_id)
     text = (
         "➕ <b>Добавить администратора</b>\n\n"
         "Введите <b>@username</b> или <b>Telegram ID</b> сотрудника:\n\n"
@@ -991,10 +1013,17 @@ async def on_ga_team_howto(callback: CallbackQuery, state: FSMContext):
         "<i>ID можно узнать через </i><a href='https://t.me/userinfobot'>@userinfobot</a>"
     )
     kb = [[InlineKeyboardButton(text="🚫 Отмена", callback_data=f"ga_team:{owner_id}")]]
-    await callback.message.edit_text(text, parse_mode="HTML",
-                                     reply_markup=InlineKeyboardMarkup(inline_keyboard=kb),
-                                     disable_web_page_preview=True)
-    await callback.answer()
+    prompt_msg = await navigate(
+        callback,
+        text,
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=kb),
+        disable_web_page_preview=True
+    )
+    if prompt_msg and hasattr(prompt_msg, 'message_id'):
+        await state.update_data(owner_id=owner_id, prompt_msg_id=prompt_msg.message_id)
+    else:
+        await state.update_data(owner_id=owner_id, prompt_msg_id=callback.message.message_id)
 
 
 @router.message(StaffFSM.waiting_add_input)
@@ -1093,15 +1122,17 @@ async def on_ga_team_remove(callback: CallbackQuery, state: FSMContext):
     if role != 'owner':
         return await callback.answer("❌ Только для Владельца", show_alert=True)
     await state.set_state(StaffFSM.waiting_remove_input)
-    await state.update_data(owner_id=owner_id, prompt_msg_id=callback.message.message_id)
     text = (
         "➖ <b>Удалить администратора</b>\n\n"
         "Введите <b>@username</b> или <b>Telegram ID</b> сотрудника, которого хотите убрать:\n\n"
         "<code>@username</code> или <code>123456789</code>"
     )
     kb = [[InlineKeyboardButton(text="🚫 Отмена", callback_data=f"ga_team:{owner_id}")]]
-    await callback.message.edit_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
-    await callback.answer()
+    prompt_msg = await navigate(callback, text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+    if prompt_msg and hasattr(prompt_msg, 'message_id'):
+        await state.update_data(owner_id=owner_id, prompt_msg_id=prompt_msg.message_id)
+    else:
+        await state.update_data(owner_id=owner_id, prompt_msg_id=callback.message.message_id)
 
 
 @router.message(StaffFSM.waiting_remove_input)
@@ -1238,8 +1269,7 @@ async def on_ga_audit(callback: CallbackQuery):
         text = "\n".join(lines)
 
     kb = [[InlineKeyboardButton(text="◀️ Назад", callback_data=f"ga_main:{owner_id}")]]
-    await callback.message.edit_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
-    await callback.answer()
+    await navigate(callback, text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
 
 
 @router.message(Command("admin_help"))

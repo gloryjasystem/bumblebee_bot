@@ -932,7 +932,6 @@ async def on_channel_in_bot(callback: CallbackQuery, platform_user: dict | None)
     ch_id = int(parts[1])
     child_bot_id = int(parts[2]) if len(parts) > 2 and parts[2] else None
     owner_id = platform_user["user_id"]
-    await db.execute("UPDATE platform_users SET last_channels_menu_id=NULL WHERE user_id=$1", owner_id)
 
     ch = await db.fetchrow(
         "SELECT * FROM bot_chats WHERE id=$1 AND owner_id=$2",
@@ -959,6 +958,9 @@ async def on_channel_in_bot(callback: CallbackQuery, platform_user: dict | None)
             
         await callback.answer(msg_text, show_alert=True)
         return
+
+    # Если мы дошли сюда, значит мы переходим на новый экран — сбрасываем ID меню Площадок
+    await db.execute("UPDATE platform_users SET last_channels_menu_id=NULL WHERE user_id=$1", owner_id)
 
     # ── Обычный экран ─────────────────────────────────────────────────────────
     status_label = "🟢 Включена" if ch["is_active"] else "🔴 Выключена"

@@ -1218,6 +1218,22 @@ async def _handle_my_chat_member(
             logger.info(f"[MCM] User {event.from_user.id} blocked child bot {child_bot_id}")
         return
 
+    # ── Защита от дублей: проверяем, что этот polling-таск — правильный владелец ──
+    # Если в системе один и тот же бот зарегистрирован у НЕСКОЛЬКИХ owner_id,
+    # запускаются два параллельных polling-цикла и оба получают одни апдейты.
+    # Условие: чат уже в нашей БД под ДРУГИМ owner_id → тихо выходим.
+    existing_owner = await db.fetchval(
+        "SELECT owner_id FROM bot_chats WHERE child_bot_id=$1 AND chat_id=$2",
+        child_bot_id, chat.id,
+    )
+    if existing_owner is not None and existing_owner != owner_id:
+        # Этот канал принадлежит другому владельцу — не наше событие.
+        logger.debug(
+            f"[MCM] Skipping: chat={chat.id} belongs to owner={existing_owner}, "
+            f"but this polling task has owner={owner_id}"
+        )
+        return
+
     # ── Сценарий 3: бот удалён (kicked / left) ────────────────────────────────
     if new_status in ("kicked", "left"):
         # Мягкая деактивация — НЕ удаляем запись и настройки из БД.

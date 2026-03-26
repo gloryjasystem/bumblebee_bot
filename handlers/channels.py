@@ -100,7 +100,6 @@ async def on_bot_settings(callback: CallbackQuery, platform_user: dict | None):
         return
     child_bot_id = int(callback.data.split(":")[1])
     user_id = platform_user["user_id"]
-    await db.execute("UPDATE platform_users SET last_channels_menu_id=NULL WHERE user_id=$1", user_id)
 
     # Разрешаем доступ владельцу ИЛИ активному admin
     bot = await db.fetchrow(
@@ -400,7 +399,6 @@ async def on_bot_connect(callback: CallbackQuery, platform_user: dict | None):
         return
     child_bot_id = int(callback.data.split(":")[1])
     owner_id = platform_user["user_id"]
-    await db.execute("UPDATE platform_users SET last_channels_menu_id=NULL WHERE user_id=$1", owner_id)
 
     bot = await db.fetchrow(
         "SELECT bot_username FROM child_bots WHERE id=$1 AND owner_id=$2",
@@ -959,8 +957,6 @@ async def on_channel_in_bot(callback: CallbackQuery, platform_user: dict | None)
         await callback.answer(msg_text, show_alert=True)
         return
 
-    # Если мы дошли сюда, значит мы переходим на новый экран — сбрасываем ID меню Площадок
-    await db.execute("UPDATE platform_users SET last_channels_menu_id=NULL WHERE user_id=$1", owner_id)
 
     # ── Обычный экран ─────────────────────────────────────────────────────────
     status_label = "🟢 Включена" if ch["is_active"] else "🔴 Выключена"

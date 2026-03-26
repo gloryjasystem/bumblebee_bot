@@ -1442,9 +1442,6 @@ async def _handle_my_chat_member(
                 await _main_bot.delete_message(owner_id, last_menu_id)
             except Exception:
                 pass
-            await db.execute(
-                "UPDATE platform_users SET last_channels_menu_id=NULL WHERE user_id=$1", owner_id
-            )
 
         if is_returning and existing_chat and not existing_chat["is_active"]:
             # Права возвращены — чат снова в работе
@@ -1459,8 +1456,12 @@ async def _handle_my_chat_member(
                 f"Бот @{bot_username} готов к работе."
             )
         try:
-            await _main_bot.send_message(
+            sent = await _main_bot.send_message(
                 owner_id, msg_text, parse_mode="HTML", reply_markup=kb,
+            )
+            await db.execute(
+                "UPDATE platform_users SET last_channels_menu_id=$1 WHERE user_id=$2",
+                sent.message_id, owner_id
             )
         except Exception as _e:
             logger.debug(f"[MCM] notify owner failed (success): {_e}")

@@ -31,4 +31,24 @@ async def navigate(
     except Exception:
         pass
 
+    # ── Tracking for auto-closing the "Channels List" menu ──
+    if msg and callback.data:
+        from db.database import db
+        import asyncio
+        async def _update_menu_state():
+            try:
+                if callback.data.startswith("bot_chats_list:"):
+                    await db.execute(
+                        "UPDATE platform_users SET last_channels_menu_id=$1 WHERE user_id=$2",
+                        msg.message_id, callback.from_user.id
+                    )
+                else:
+                    await db.execute(
+                        "UPDATE platform_users SET last_channels_menu_id=NULL WHERE user_id=$1",
+                        callback.from_user.id
+                    )
+            except Exception:
+                pass
+        asyncio.create_task(_update_menu_state())
+
     return msg

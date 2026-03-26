@@ -1395,9 +1395,23 @@ async def _handle_my_chat_member(
         type_icon = "📢" if chat_type == "channel" else "👥"
         from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
         kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="📍 Площадки бота", callback_data=f"bot_chats_list:{child_bot_id}")],
             [InlineKeyboardButton(text="⚙️ Настройки бота", callback_data=f"bot_settings:{child_bot_id}")],
+            [InlineKeyboardButton(text="📍 Площадки бота", callback_data=f"bot_chats_list:{child_bot_id}")],
         ])
+        
+        # ── Умное закрытие старого меню с ложным статусом ──
+        last_menu_id = await db.fetchval(
+            "SELECT last_channels_menu_id FROM platform_users WHERE user_id=$1", owner_id
+        )
+        if last_menu_id:
+            try:
+                await _main_bot.delete_message(owner_id, last_menu_id)
+            except Exception:
+                pass
+            await db.execute(
+                "UPDATE platform_users SET last_channels_menu_id=NULL WHERE user_id=$1", owner_id
+            )
+
         if is_returning and existing_chat and not existing_chat["is_active"]:
             # Права возвращены — чат снова в работе
             msg_text = (

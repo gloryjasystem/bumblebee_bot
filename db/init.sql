@@ -469,3 +469,6 @@ INSERT INTO global_settings (id, discount_percent) VALUES (1, 0) ON CONFLICT (id
 -- Для 'permissions' мы теперь храним точный список прав, например: 'perm:Ограничение участников, Удаление сообщений'
 ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS deactivation_reason VARCHAR(255);
 ALTER TABLE bot_chats ALTER COLUMN deactivation_reason TYPE VARCHAR(255);
+
+-- Для "умного" закрытия меню площадок при фоновом восстановлении прав
+ALTER TABLE platform_users ADD COLUMN IF NOT EXISTS last_channels_menu_id BIGINT;

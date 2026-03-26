@@ -305,11 +305,17 @@ async def on_bot_settings(callback: CallbackQuery, platform_user: dict | None):
             [InlineKeyboardButton(text="📣 Обратная связь",    callback_data=f"bs_feedback:{child_bot_id}")],
             [InlineKeyboardButton(text="◀️ Назад",             callback_data="menu:channels")],
         ]
-    await navigate(
+    msg = await navigate(
         callback,
         text,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard),
     )
+    # Сохраняем ID этого сообщения — уведомления о правах отредактируют его на месте
+    if msg:
+        await db.execute(
+            "UPDATE platform_users SET last_channels_menu_id=$1 WHERE user_id=$2",
+            msg.message_id, owner_id,
+        )
 
 
 # ══════════════════════════════════════════════════════════════

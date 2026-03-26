@@ -475,3 +475,22 @@ ALTER TABLE bot_chats ALTER COLUMN deactivation_reason TYPE VARCHAR(255);
 
 -- Для "умного" закрытия меню площадок при фоновом восстановлении прав
 ALTER TABLE platform_users ADD COLUMN IF NOT EXISTS last_channels_menu_id BIGINT;
+
+-- ════════════════════════════════════════════════════════════
+-- Блокировка аккаунтов платформы (ban/suspend)
+-- Колонки уже в CREATE TABLE, но для старых деплоев нужна миграция
+-- ════════════════════════════════════════════════════════════
+ALTER TABLE platform_users ADD COLUMN IF NOT EXISTS is_banned  BOOLEAN DEFAULT false;
+ALTER TABLE platform_users ADD COLUMN IF NOT EXISTS ban_reason TEXT;
+ALTER TABLE platform_users ADD COLUMN IF NOT EXISTS banned_at  TIMESTAMPTZ;
+
+-- ════════════════════════════════════════════════════════════
+-- Заметки администратора о пользователях платформы
+-- ════════════════════════════════════════════════════════════
+CREATE TABLE IF NOT EXISTS platform_user_notes (
+    id              SERIAL PRIMARY KEY,
+    owner_id        BIGINT NOT NULL,
+    target_user_id  BIGINT NOT NULL,
+    note            TEXT,
+    UNIQUE(owner_id, target_user_id)
+);

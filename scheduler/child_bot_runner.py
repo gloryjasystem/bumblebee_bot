@@ -1284,30 +1284,36 @@ async def _handle_my_chat_member(
                     kb = InlineKeyboardMarkup(inline_keyboard=[
                         [InlineKeyboardButton(text="🔙 К списку площадок", callback_data=f"bot_chats_list:{child_bot_id}")],
                     ])
-                    sent = await _main_bot.send_message(
-                        owner_id,
+                    msg_text = (
                         f"⚠️ В вашем канале/группе {chat_link} бот @{bot_username} "
                         f"лишился прав администратора.\n\n"
                         f"💡 Зайдите в {chat_link} → Управление → Администраторы → "
                         f"@{bot_username} и верните все права.\n\n"
-                        f"Бот возобновит работу автоматически, как только права появятся.",
-                        parse_mode="HTML",
-                        disable_web_page_preview=True,
-                        reply_markup=kb,
+                        f"Бот возобновит работу автоматически, как только права появятся."
                     )
-                    # Удаляем старое меню (если было открыто) и записываем это предупреждение как новое активное меню
+                    
                     last_menu_id = await db.fetchval(
                         "SELECT last_channels_menu_id FROM platform_users WHERE user_id=$1", owner_id
                     )
+                    edited = False
                     if last_menu_id:
                         try:
-                            await _main_bot.delete_message(owner_id, last_menu_id)
+                            await _main_bot.edit_message_text(
+                                chat_id=owner_id, message_id=last_menu_id,
+                                text=msg_text, parse_mode="HTML", disable_web_page_preview=True, reply_markup=kb
+                            )
+                            edited = True
                         except Exception:
                             pass
-                    await db.execute(
-                        "UPDATE platform_users SET last_channels_menu_id=$1 WHERE user_id=$2",
-                        sent.message_id, owner_id
-                    )
+                    
+                    if not edited:
+                        sent = await _main_bot.send_message(
+                            owner_id, msg_text, parse_mode="HTML", disable_web_page_preview=True, reply_markup=kb
+                        )
+                        await db.execute(
+                            "UPDATE platform_users SET last_channels_menu_id=$1 WHERE user_id=$2",
+                            sent.message_id, owner_id
+                        )
                 except Exception as _e:
                     logger.debug(f"[MCM] notify owner failed (rights stripped): {_e}")
             logger.info(f"[MCM] Bot @{bot_username} lost admin in chat={chat.id} — deactivated")
@@ -1375,31 +1381,37 @@ async def _handle_my_chat_member(
                 kb = InlineKeyboardMarkup(inline_keyboard=[
                     [InlineKeyboardButton(text="🔙 К списку площадок", callback_data=f"bot_chats_list:{child_bot_id}")],
                 ])
-                sent = await _main_bot.send_message(
-                    owner_id,
+                msg_text = (
                     f"⚠️ В вашем канале/группе {chat_link} боту @{bot_username} "
                     f"не хватает прав администратора.\n\n"
                     f"Права, которые нужно выдать:\n{missing_text}\n\n"
                     f"💡 Как исправить: зайдите в {chat_link} → Управление → "
                     f"Администраторы → @{bot_username} → включите галочки выше.\n\n"
-                    f"Бот подключится автоматически, как только вы сохраните изменения.",
-                    parse_mode="HTML",
-                    disable_web_page_preview=True,
-                    reply_markup=kb,
+                    f"Бот подключится автоматически, как только вы сохраните изменения."
                 )
-                # Удаляем старое меню (если было открыто) и записываем это предупреждение как новое активное меню
+                
                 last_menu_id = await db.fetchval(
                     "SELECT last_channels_menu_id FROM platform_users WHERE user_id=$1", owner_id
                 )
+                edited = False
                 if last_menu_id:
                     try:
-                        await _main_bot.delete_message(owner_id, last_menu_id)
+                        await _main_bot.edit_message_text(
+                            chat_id=owner_id, message_id=last_menu_id,
+                            text=msg_text, parse_mode="HTML", disable_web_page_preview=True, reply_markup=kb
+                        )
+                        edited = True
                     except Exception:
                         pass
-                await db.execute(
-                    "UPDATE platform_users SET last_channels_menu_id=$1 WHERE user_id=$2",
-                    sent.message_id, owner_id
-                )
+                
+                if not edited:
+                    sent = await _main_bot.send_message(
+                        owner_id, msg_text, parse_mode="HTML", disable_web_page_preview=True, reply_markup=kb
+                    )
+                    await db.execute(
+                        "UPDATE platform_users SET last_channels_menu_id=$1 WHERE user_id=$2",
+                        sent.message_id, owner_id
+                    )
             except Exception as _e:
                 logger.debug(f"[MCM] notify owner failed (missing perms): {_e}")
         logger.warning(
@@ -1433,15 +1445,10 @@ async def _handle_my_chat_member(
             [InlineKeyboardButton(text="📍 Площадки бота", callback_data=f"bot_chats_list:{child_bot_id}")],
         ])
         
-        # ── Умное закрытие старого меню с ложным статусом ──
+        # ── Умное перекрытие старого меню (Edit-in-Place) ──
         last_menu_id = await db.fetchval(
             "SELECT last_channels_menu_id FROM platform_users WHERE user_id=$1", owner_id
         )
-        if last_menu_id:
-            try:
-                await _main_bot.delete_message(owner_id, last_menu_id)
-            except Exception:
-                pass
 
         if is_returning and existing_chat and not existing_chat["is_active"]:
             # Права возвращены — чат снова в работе
@@ -1455,14 +1462,27 @@ async def _handle_my_chat_member(
                 f"✅ {type_icon} <b>{chat_title}</b> успешно подключён!\n\n"
                 f"Бот @{bot_username} готов к работе."
             )
+            
         try:
-            sent = await _main_bot.send_message(
-                owner_id, msg_text, parse_mode="HTML", reply_markup=kb,
-            )
-            await db.execute(
-                "UPDATE platform_users SET last_channels_menu_id=$1 WHERE user_id=$2",
-                sent.message_id, owner_id
-            )
+            edited = False
+            if last_menu_id:
+                try:
+                    await _main_bot.edit_message_text(
+                        chat_id=owner_id, message_id=last_menu_id,
+                        text=msg_text, parse_mode="HTML", reply_markup=kb
+                    )
+                    edited = True
+                except Exception:
+                    pass
+            
+            if not edited:
+                sent = await _main_bot.send_message(
+                    owner_id, msg_text, parse_mode="HTML", reply_markup=kb,
+                )
+                await db.execute(
+                    "UPDATE platform_users SET last_channels_menu_id=$1 WHERE user_id=$2",
+                    sent.message_id, owner_id
+                )
         except Exception as _e:
             logger.debug(f"[MCM] notify owner failed (success): {_e}")
 

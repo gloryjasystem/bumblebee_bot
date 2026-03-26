@@ -951,7 +951,7 @@ async def on_channel_in_bot(callback: CallbackQuery, platform_user: dict | None)
         missing_rights = reason.split("perm:", 1)[1]
         msg_text = (
             f"⚠️ Нет прав администратора!\nОбязательно выдайте:\n{missing_rights}\n\n"
-            f"📍 Управление каналом → Админы → Включить галочки."
+            f"💡 Управление каналом → Админы → Включить галочки."
         )
         if len(msg_text) > 195:
             msg_text = msg_text[:192] + "..."

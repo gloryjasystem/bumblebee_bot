@@ -1282,14 +1282,13 @@ async def _handle_my_chat_member(
                 try:
                     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
                     kb = InlineKeyboardMarkup(inline_keyboard=[
-                        [InlineKeyboardButton(text="⚙️ Настройки бота", callback_data=f"bot_settings:{child_bot_id}")],
-                        [InlineKeyboardButton(text="📍 Площадки бота", callback_data=f"bot_chats_list:{child_bot_id}")],
+                        [InlineKeyboardButton(text="🔙 К списку площадок", callback_data=f"bot_chats_list:{child_bot_id}")],
                     ])
                     sent = await _main_bot.send_message(
                         owner_id,
                         f"⚠️ В вашем канале/группе {chat_link} бот @{bot_username} "
                         f"лишился прав администратора.\n\n"
-                        f"📍 Зайдите в {chat_link} → Управление → Администраторы → "
+                        f"💡 Зайдите в {chat_link} → Управление → Администраторы → "
                         f"@{bot_username} и верните все права.\n\n"
                         f"Бот возобновит работу автоматически, как только права появятся.",
                         parse_mode="HTML",
@@ -1374,15 +1373,14 @@ async def _handle_my_chat_member(
             try:
                 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
                 kb = InlineKeyboardMarkup(inline_keyboard=[
-                    [InlineKeyboardButton(text="⚙️ Настройки бота", callback_data=f"bot_settings:{child_bot_id}")],
-                    [InlineKeyboardButton(text="📍 Площадки бота", callback_data=f"bot_chats_list:{child_bot_id}")],
+                    [InlineKeyboardButton(text="🔙 К списку площадок", callback_data=f"bot_chats_list:{child_bot_id}")],
                 ])
                 sent = await _main_bot.send_message(
                     owner_id,
                     f"⚠️ В вашем канале/группе {chat_link} боту @{bot_username} "
                     f"не хватает прав администратора.\n\n"
                     f"Права, которые нужно выдать:\n{missing_text}\n\n"
-                    f"📍 Как исправить: зайдите в {chat_link} → Управление → "
+                    f"💡 Как исправить: зайдите в {chat_link} → Управление → "
                     f"Администраторы → @{bot_username} → включите галочки выше.\n\n"
                     f"Бот подключится автоматически, как только вы сохраните изменения.",
                     parse_mode="HTML",

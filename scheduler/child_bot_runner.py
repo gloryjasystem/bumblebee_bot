@@ -1152,6 +1152,16 @@ async def _handle_message(bot: Bot, child_bot_id: int, owner_id: int, message):
 
 
 
+async def _delete_main_bot_msg(chat_id: int, message_id: int, delay_sec: int):
+    """Удаляет сообщение главного бота через delay_sec секунд (авто-чистка уведомлений)."""
+    await asyncio.sleep(delay_sec)
+    if _main_bot:
+        try:
+            await _main_bot.delete_message(chat_id, message_id)
+        except Exception:
+            pass
+
+
 # ── КРИТИЧЕСКИЕ ПРАВА, необходимые для работы бота ────────────────────────────
 # Минимально достаточный набор для: защиты, заявок, рассылок.
 _REQUIRED_PERMISSIONS = {
@@ -1213,7 +1223,7 @@ async def _handle_my_chat_member(
         # Мягкая деактивация — НЕ удаляем запись и настройки из БД.
         # При повторном добавлении бота все конфиги сохранятся (Seamless Flow).
         await db.execute(
-            "UPDATE bot_chats SET is_active=false WHERE child_bot_id=$1 AND chat_id=$2",
+            "UPDATE bot_chats SET is_active=false, deactivation_reason='kicked' WHERE child_bot_id=$1 AND chat_id=$2",
             child_bot_id, chat.id,
         )
         if _main_bot:
@@ -1231,26 +1241,36 @@ async def _handle_my_chat_member(
 
     # ── Сценарии 1 и 2: бот стал administrator / creator ─────────────────────
     if new_status not in ("administrator", "creator"):
-        # member / restricted — значит права существенно урезаны
-        # Проверяем, была ли площадка активна
+        # member / restricted — права урезаны до уровня ниже admin
         was_active = await db.fetchval(
             "SELECT is_active FROM bot_chats WHERE child_bot_id=$1 AND chat_id=$2",
             child_bot_id, chat.id,
         )
         if was_active:
             await db.execute(
-                "UPDATE bot_chats SET is_active=false WHERE child_bot_id=$1 AND chat_id=$2",
+                "UPDATE bot_chats SET is_active=false, deactivation_reason='permissions' "
+                "WHERE child_bot_id=$1 AND chat_id=$2",
                 child_bot_id, chat.id,
             )
+            # Строим ссылку на канал
+            chat_username = getattr(chat, "username", None)
+            if chat_username:
+                chat_link = f'<a href="https://t.me/{chat_username}">{chat_title}</a>'
+            else:
+                chat_link = f"<b>{chat_title}</b>"
             if _main_bot:
                 try:
-                    await _main_bot.send_message(
+                    sent = await _main_bot.send_message(
                         owner_id,
-                        f"⚠️ Работа в <b>{chat_title}</b> приостановлена.\n\n"
-                        f"Бот @{bot_username} потерял права администратора. "
-                        f"Верните права — защита включится автоматически.",
+                        f"⚠️ В вашем канале/группе {chat_link} бот @{bot_username} "
+                        f"лишился прав администратора.\n\n"
+                        f"📍 Зайдите в {chat_link} → Управление → Администраторы → "
+                        f"@{bot_username} и верните права.\n\n"
+                        f"Бот возобновит работу автоматически, как только права появятся.",
                         parse_mode="HTML",
+                        disable_web_page_preview=True,
                     )
+                    asyncio.create_task(_delete_main_bot_msg(sent.chat.id, sent.message_id, 8))
                 except Exception as _e:
                     logger.debug(f"[MCM] notify owner failed (rights stripped): {_e}")
             logger.info(f"[MCM] Bot @{bot_username} lost admin in chat={chat.id} — deactivated")
@@ -1288,19 +1308,43 @@ async def _handle_my_chat_member(
     missing_perms = _check_permissions(new_member)
 
     if missing_perms:
-        # Прав не хватает — НЕ создаём запись в БД, сообщаем владельцу что нужно исправить.
-        # Когда права будут выданы — придёт ещё один my_chat_member и мы зарегистрируем чат.
+        # Записываем в БД как НЕАКТИВНУЮ площадку — она появится в списке как 🔴.
+        # При получении прав придёт новый my_chat_member → активируем автоматически.
+        await db.execute(
+            """
+            INSERT INTO bot_chats (owner_id, child_bot_id, chat_id, chat_title, chat_type,
+                                   is_active, captcha_type, deactivation_reason)
+            VALUES ($1, $2, $3, $4, $5, false, 'off', 'permissions')
+            ON CONFLICT (owner_id, chat_id)
+            DO UPDATE SET
+                chat_title         = EXCLUDED.chat_title,
+                child_bot_id       = EXCLUDED.child_bot_id,
+                is_active          = false,
+                deactivation_reason = 'permissions'
+            """,
+            owner_id, child_bot_id, chat.id, chat_title, chat_type,
+        )
         missing_text = "\n".join(f"  • {p}" for p in missing_perms)
+        # Строим кликабельную ссылку на канал/группу
+        chat_username = getattr(chat, "username", None)
+        if chat_username:
+            chat_link = f'<a href="https://t.me/{chat_username}">{chat_title}</a>'
+        else:
+            chat_link = f"<b>{chat_title}</b>"
         if _main_bot:
             try:
-                await _main_bot.send_message(
+                sent = await _main_bot.send_message(
                     owner_id,
-                    f"❌ Бот @{bot_username} добавлен в <b>{chat_title}</b>, "
-                    f"но не хватает прав:\n{missing_text}\n\n"
-                    f"Выдайте их в настройках канала/группы — "
-                    f"бот подключится автоматически, как только права появятся.",
+                    f"⚠️ В вашем канале/группе {chat_link} боту @{bot_username} "
+                    f"не хватает прав администратора.\n\n"
+                    f"Права, которые нужно выдать:\n{missing_text}\n\n"
+                    f"📍 Как исправить: зайдите в {chat_link} → Управление → "
+                    f"Администраторы → @{bot_username} → включите галочки выше.\n\n"
+                    f"Бот подключится автоматически, как только вы сохраните изменения.",
                     parse_mode="HTML",
+                    disable_web_page_preview=True,
                 )
+                asyncio.create_task(_delete_main_bot_msg(sent.chat.id, sent.message_id, 8))
             except Exception as _e:
                 logger.debug(f"[MCM] notify owner failed (missing perms): {_e}")
         logger.warning(
@@ -1311,13 +1355,15 @@ async def _handle_my_chat_member(
     # Шаг 3: Все права есть — регистрируем/активируем площадку атомарно.
     await db.execute(
         """
-        INSERT INTO bot_chats (owner_id, child_bot_id, chat_id, chat_title, chat_type, is_active, captcha_type)
-        VALUES ($1, $2, $3, $4, $5, true, 'off')
+        INSERT INTO bot_chats (owner_id, child_bot_id, chat_id, chat_title, chat_type,
+                               is_active, captcha_type, deactivation_reason)
+        VALUES ($1, $2, $3, $4, $5, true, 'off', NULL)
         ON CONFLICT (owner_id, chat_id)
         DO UPDATE SET
-            chat_title   = EXCLUDED.chat_title,
-            child_bot_id = EXCLUDED.child_bot_id,
-            is_active    = true
+            chat_title          = EXCLUDED.chat_title,
+            child_bot_id        = EXCLUDED.child_bot_id,
+            is_active           = true,
+            deactivation_reason = NULL
         """,
         owner_id, child_bot_id,
         chat.id, chat_title, chat_type,

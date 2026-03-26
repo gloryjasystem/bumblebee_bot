@@ -933,11 +933,38 @@ async def on_channel_in_bot(callback: CallbackQuery, platform_user: dict | None)
         await callback.answer("Площадка не найдена", show_alert=True)
         return
 
-    status_label = "🟢 Включена" if ch["is_active"] else "🔴 Выключена"
-    added = ch["added_at"].strftime("%d.%m.%Y") if ch.get("added_at") else "—"
     type_icon = "📢" if ch.get("chat_type") == "channel" else "👥"
     title = ch["chat_title"] or f"Чат {ch['chat_id']}"
     back_cb = f"bot_chats_list:{child_bot_id}" if child_bot_id else "menu:channels"
+
+    # ── Особый экран: не хватает прав администратора ──────────────────────────
+    if not ch["is_active"] and ch.get("deactivation_reason") == "permissions":
+        chat_username = ch.get("chat_username")  # может быть NULL — тогда просто bold
+        if chat_username:
+            chat_link = f'<a href="https://t.me/{chat_username}">{title}</a>'
+        else:
+            chat_link = f"<b>{title}</b>"
+        await navigate(
+            callback,
+            f"🔴 {type_icon} {chat_link}\n\n"
+            f"⚠️ <b>Боту не хватает прав администратора</b> в этом канале/группе.\n\n"
+            f"Необходимые права:\n"
+            f"  • Ограничение участников\n"
+            f"  • Приглашение участников\n"
+            f"  • Удаление сообщений\n\n"
+            f"📍 <b>Как исправить:</b> зайдите в канал/группу → Управление → "
+            f"Администраторы → найдите бота → включите галочки выше.\n\n"
+            f"Бот подключится автоматически, как только вы сохраните изменения.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🗑 Удалить площадку", callback_data=f"ch_delete:{ch_id}:{child_bot_id or ''}")],
+                [InlineKeyboardButton(text="◀️ Назад",            callback_data=back_cb)],
+            ]),
+        )
+        return
+
+    # ── Обычный экран ─────────────────────────────────────────────────────────
+    status_label = "🟢 Включена" if ch["is_active"] else "🔴 Выключена"
+    added = ch["added_at"].strftime("%d.%m.%Y") if ch.get("added_at") else "—"
 
     await navigate(
         callback,

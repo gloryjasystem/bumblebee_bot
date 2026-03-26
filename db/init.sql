@@ -461,3 +461,9 @@ CREATE TABLE IF NOT EXISTS global_settings (
     discount_until TIMESTAMPTZ
 );
 INSERT INTO global_settings (id, discount_percent) VALUES (1, 0) ON CONFLICT (id) DO NOTHING;
+
+-- Причина деактивации площадки: 'permissions' | 'kicked' | NULL
+-- 'permissions' — бот в чате, но прав администратора не хватает → показываем инструкцию
+-- 'kicked'      — бот удалён из чата
+-- NULL          — площадка активна или причина не определена
+ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS deactivation_reason VARCHAR(32);

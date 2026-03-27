@@ -12,6 +12,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
 import db.pool as db
+from db.pool import get_pool
 from services.child_bot_service import validate_and_save_child_bot, verify_bot_is_admin
 from config import settings
 from utils.nav import navigate

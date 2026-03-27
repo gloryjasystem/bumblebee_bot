@@ -1198,6 +1198,20 @@ async def _handle_my_chat_member(
       3. УДАЛЕНИЕ (kicked/left)— мягкая деактивация (is_active=False), запись сохраняется.
       4. PM-блокировка         — пользователь заблокировал бота в личке.
     """
+    # ── Защита от ghost-апдейтов удалённого бота (FK violation guard) ─────────
+    # Если бот был удалён из child_bots, его polling-таска должна была уже
+    # получить cancel(). Но апдейт мог прийти ДО отмены. Проверяем существование.
+    still_alive = await db.fetchval(
+        "SELECT 1 FROM child_bots WHERE id=$1", child_bot_id
+    )
+    if not still_alive:
+        logger.warning(
+            f"[MCM] Ghost update for deleted child_bot_id={child_bot_id} (@{bot_username}) — "
+            f"cancelling polling task."
+        )
+        stop_child_bot(child_bot_id)
+        return
+
     new_member = event.new_chat_member
     old_member = event.old_chat_member
     new_status  = new_member.status
@@ -1420,21 +1434,34 @@ async def _handle_my_chat_member(
         return
 
     # Шаг 3: Все права есть — регистрируем/активируем площадку атомарно.
-    await db.execute(
-        """
-        INSERT INTO bot_chats (owner_id, child_bot_id, chat_id, chat_title, chat_type,
-                               is_active, captcha_type, deactivation_reason)
-        VALUES ($1, $2, $3, $4, $5, true, 'off', NULL)
-        ON CONFLICT (owner_id, chat_id)
-        DO UPDATE SET
-            chat_title          = EXCLUDED.chat_title,
-            child_bot_id        = EXCLUDED.child_bot_id,
-            is_active           = true,
-            deactivation_reason = NULL
-        """,
-        owner_id, child_bot_id,
-        chat.id, chat_title, chat_type,
-    )
+    try:
+        await db.execute(
+            """
+            INSERT INTO bot_chats (owner_id, child_bot_id, chat_id, chat_title, chat_type,
+                                   is_active, captcha_type, deactivation_reason)
+            VALUES ($1, $2, $3, $4, $5, true, 'off', NULL)
+            ON CONFLICT (owner_id, chat_id)
+            DO UPDATE SET
+                chat_title          = EXCLUDED.chat_title,
+                child_bot_id        = EXCLUDED.child_bot_id,
+                is_active           = true,
+                deactivation_reason = NULL
+            """,
+            owner_id, child_bot_id,
+            chat.id, chat_title, chat_type,
+        )
+    except Exception as _fk_err:
+        # FK violation: child_bot_id удалён из child_bots пока мы обрабатывали апдейт.
+        # Останавливаем зомби-поллинг и выходим.
+        if "foreign key" in str(_fk_err).lower() or "violates" in str(_fk_err).lower():
+            logger.warning(
+                f"[MCM] FK violation for child_bot_id={child_bot_id} — bot was deleted. "
+                f"Stopping zombie polling task."
+            )
+            stop_child_bot(child_bot_id)
+        else:
+            logger.error(f"[MCM] Unexpected DB error in bot_chats upsert: {_fk_err}")
+        return
 
     # Шаг 4: Уведомляем владельца с контекстом (первичное vs. возврат прав)
     if _main_bot:

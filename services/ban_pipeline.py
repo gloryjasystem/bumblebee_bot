@@ -88,10 +88,12 @@ class TokenBucket:
         """
         Args:
             rate:     Токенов в секунду (максимальный throughput).
-            capacity: Максимальный «бурст» токенов (default = rate * 2).
+            capacity: Максимальный «бурст» токенов (default = max(1.0, rate * 2)).
         """
         self._rate: float = rate
-        self._capacity: float = capacity or rate * 2.0
+        # Если rate < 0.5 (например, RPM=15 -> rate=0.25), capacity будет < 1.0.
+        # В этом случае acquire() зависнет в бесконечном цикле, так как ждёт >= 1.0 токенов.
+        self._capacity: float = capacity or max(1.0, rate * 2.0)
         self._tokens: float = self._capacity
         self._last_refill: float = time.monotonic()
         self._lock: asyncio.Lock = asyncio.Lock()
@@ -99,7 +101,7 @@ class TokenBucket:
     def update_rate(self, new_rate: float) -> None:
         """Динамически обновить лимит без пересоздания объекта."""
         self._rate = new_rate
-        self._capacity = new_rate * 2.0
+        self._capacity = max(1.0, new_rate * 2.0)
 
     async def acquire(self, jitter: float = TG_BAN_JITTER) -> None:
         """

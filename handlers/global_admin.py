@@ -1150,12 +1150,13 @@ async def on_ga_team_howto(callback: CallbackQuery, state: FSMContext):
         "<i>ID можно узнать через </i><a href='https://t.me/userinfobot'>@userinfobot</a>"
     )
     kb = [[InlineKeyboardButton(text="🚫 Отмена", callback_data=f"ga_team:{owner_id}")]]
+    from aiogram.types import LinkPreviewOptions
     prompt_msg = await navigate(
         callback,
         text,
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=kb),
-        disable_web_page_preview=True
+        link_preview=LinkPreviewOptions(is_disabled=True)
     )
     if prompt_msg and hasattr(prompt_msg, 'message_id'):
         await state.update_data(owner_id=owner_id, prompt_msg_id=prompt_msg.message_id)

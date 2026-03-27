@@ -123,19 +123,52 @@ async def cmd_start(message: Message, platform_user: dict | None):
 
     # ── Стандартный /start ────────────────────────────────────
     if platform_user is None:
-        # Новый пользователь — регистрируем и показываем выбор языка
+        # Новый пользователь — регистрируем с языком ru по умолчанию
         await db.execute(
             """
-            INSERT INTO platform_users (user_id, username, first_name)
-            VALUES ($1, $2, $3)
+            INSERT INTO platform_users (user_id, username, first_name, language)
+            VALUES ($1, $2, $3, 'ru')
             ON CONFLICT (user_id) DO NOTHING
             """,
             user.id, user.username, user.first_name,
         )
-        await message.answer(
-            "👋 Добро пожаловать в <b>Bumblebee Bot</b>!\n\nВыберите язык / Choose language:",
-            reply_markup=kb_language(),
+
+        # Владелец/совладелец — business навсегда, без trial
+        username_lower = (user.username or "").lower().lstrip("@")
+        is_project_owner = (
+            user.id == settings.owner_telegram_id
+            or (settings.owner_username and username_lower == settings.owner_username.lower().lstrip("@"))
+            or (settings.co_owner_telegram_id and user.id == settings.co_owner_telegram_id)
+            or (settings.co_owner_username and username_lower == settings.co_owner_username.lower().lstrip("@"))
         )
+
+        if is_project_owner:
+            await db.execute(
+                "UPDATE platform_users SET tariff='business', tariff_until=NULL, trial_used=true WHERE user_id=$1",
+                user.id,
+            )
+            trial_msg = ""
+        else:
+            # Активируем Trial 10 дней (тариф Про) сразу при регистрации
+            await db.execute(
+                """
+                UPDATE platform_users
+                SET tariff='pro',
+                    tariff_until = now() + interval '10 days',
+                    trial_used = true
+                WHERE user_id=$1 AND trial_used = false
+                """,
+                user.id,
+            )
+            trial_msg = "\n\n🎁 <b>10 дней Про-тарифа активированы бесплатно!</b>"
+
+        # Получаем свежую запись для _show_main_menu
+        platform_user = await db.fetchrow(
+            "SELECT * FROM platform_users WHERE user_id=$1", user.id
+        )
+        platform_user = dict(platform_user) if platform_user else {"user_id": user.id, "tariff": "pro", "tariff_until": None}
+
+        await _show_main_menu(message, platform_user, extra=trial_msg)
     else:
         # Существующий пользователь — сразу в меню
         await _show_main_menu(message, platform_user)
@@ -225,7 +258,7 @@ async def on_main_menu(callback: CallbackQuery, platform_user: dict | None):
     )
 
 
-async def _show_main_menu(message: Message, platform_user: dict | None):
+async def _show_main_menu(message: Message, platform_user: dict | None, extra: str = ""):
     tariff = platform_user["tariff"] if platform_user else "free"
     tariff_labels = {
         "free":     "🆓 Free",
@@ -241,7 +274,7 @@ async def _show_main_menu(message: Message, platform_user: dict | None):
     await message.answer(
         f"⚡ <b>Bumblebee Bot</b> — ваш главный помощник для работы с трафиком.\n\n"
         f"Тариф: {label}{until}\n\n"
-        f"⇨ Главное меню",
+        f"⇨ Главное меню{extra}",
         reply_markup=kb_main_menu(),
     )
 

@@ -2285,11 +2285,11 @@ async def on_ga_bl(callback: CallbackQuery, state: FSMContext = None):
                   AND child_bot_id IS NOT NULL
             """, selected_bot_ids) or 0
 
-            # Суммарные блокировки: global_blocked — только наш ЧС, total — все боты
+            # Суммарные блокировки
             total_global_blocked = sum((r['global_blocked_count'] or 0) for r in selected_bots)
-            total_all_blocked = sum((r['blocked_count'] or 0) for r in selected_bots)
-            # Локальные блокировки = все минус влияние глобального ЧС
-            total_local_blocked = max(0, total_all_blocked - total_global_blocked)
+            total_local_blocked = sum((r['blocked_count'] or 0) for r in selected_bots)
+            # Всего блокировок = локальные + глобальные
+            total_all_blocked = total_global_blocked + total_local_blocked
         else:
             local_record_count = 0
             total_global_blocked = 0

@@ -602,14 +602,32 @@ async def on_token_received(message: Message, state: FSMContext, platform_user: 
     try:
         bot_info = await validate_and_save_child_bot(platform_user["user_id"], token)
     except ValueError as e:
-        await msg.edit_text(
+        # Удаляем сообщение пользователя (токен) и предыдущую инструкцию/ошибку
+        try:
+            await message.delete()
+        except Exception:
+            pass
+        if prompt_msg_id:
+            try:
+                await message.bot.delete_message(chat_id=message.chat.id, message_id=prompt_msg_id)
+            except Exception:
+                pass
+        # Удаляем "⏳ Проверяю токен..."
+        try:
+            await msg.delete()
+        except Exception:
+            pass
+
+        # Отправляем новое сообщение об ошибке и запоминаем его id для следующей очистки
+        error_msg = await message.answer(
             f"❌ {e}",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="🔄 Попробовать снова", callback_data="bot_type:welcome")],
                 [InlineKeyboardButton(text="🚫 Отменить",          callback_data="menu:channels")],
             ]),
         )
-        await state.clear()
+        # Обновляем prompt_msg_id — при следующей попытке это сообщение тоже будет удалено
+        await state.update_data(prompt_msg_id=error_msg.message_id)
         return
 
     # Запускаем polling для нового дочернего бота (слушает my_chat_member и join requests)

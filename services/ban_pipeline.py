@@ -218,6 +218,7 @@ async def start_ban_pipeline(
     status_msg_id:   int,
     child_bot_id:    Optional[int] = None,
     resolver:        BaseUsernameResolver | None = None,
+    action:          str = "ban",
 ) -> None:
     """
     Запускает enterprise-grade dual-lane конвейер бана.
@@ -294,6 +295,7 @@ async def start_ban_pipeline(
                         bot=bot,
                         notify_chat_id=notify_chat_id,
                         status_msg_id=status_msg_id,
+                        action=action,
                     )
                 ))
 
@@ -315,6 +317,7 @@ async def start_ban_pipeline(
                         bot=bot,
                         notify_chat_id=notify_chat_id,
                         status_msg_id=status_msg_id,
+                        action=action,
                     )
                 ))
 
@@ -346,16 +349,16 @@ async def start_ban_pipeline(
         text = (
             f"⚠️ <b>Процесс прерван</b> вручную.\n"
             f"Успело обработаться: <b>{done}/{total}</b>\n\n"
-            f"✅ Новых забанено: <b>{results['ok']}</b>\n"
-            f"🔄 Уже в базе: <b>{results['already_in_bl']}</b>\n"
+            f"✅ {'Забанено' if action=='ban' else 'Разбанено'}: <b>{results['ok']}</b>\n"
+            f"🔄 {'Уже в базе' if action=='ban' else 'Уже удалены'}: <b>{results['already_in_bl']}</b>\n"
             f"❓ Не найдено: <b>{results['not_found']}</b>\n"
             f"⚠️ Ошибки: <b>{results['error']}</b>"
         )
     else:
         text = (
             f"✅ <b>Готово!</b>\n\n"
-            f"├ Новых забанено: <b>{results['ok']}</b>\n"
-            f"├ Уже в базе: <b>{results['already_in_bl']}</b>\n"
+            f"├ {'Забанено' if action=='ban' else 'Разбанено'}: <b>{results['ok']}</b>\n"
+            f"├ {'Уже в базе' if action=='ban' else 'Уже удалены'}: <b>{results['already_in_bl']}</b>\n"
             f"├ Не найдено: <b>{results['not_found']}</b>\n"
             f"└ Ошибки: <b>{results['error']}</b>"
         )
@@ -395,17 +398,32 @@ async def _fast_worker(
                 child_bot_id=child_bot_id,
             )
             if already:
-                logger.info("[FAST %d] id=%d already in BL, enforcing ban...", worker_id, numeric_id)
-                results["already_in_bl"] += 1
-
-            banned = await _ban_in_all_chats(owner_id, numeric_id, child_bot_id)
-            total_banned = sum(banned.values())
-            if total_banned > 0:
-                await _increment_blocked_count(owner_id, banned, is_global=(child_bot_id is None))
-            if not already:
-                results["ok"] += 1
-                await _save_to_blacklist(owner_id, numeric_id, None, child_bot_id)
-            logger.info("[FAST %d] Banned user=%d in %d chats", worker_id, numeric_id, total_banned)
+            if action == "ban":
+                if already:
+                    logger.info("[FAST %d] id=%d already in BL, enforcing ban...", worker_id, numeric_id)
+                    results["already_in_bl"] += 1
+                
+                banned = await _process_in_all_chats(owner_id, numeric_id, child_bot_id, action=action)
+                total_banned = sum(banned.values())
+                if total_banned > 0:
+                    await _increment_blocked_count(owner_id, banned, is_global=(child_bot_id is None))
+                if not already:
+                    results["ok"] += 1
+                    await _save_to_blacklist(owner_id, numeric_id, None, child_bot_id)
+                logger.info("[FAST %d] Banned user=%d in %d chats", worker_id, numeric_id, total_banned)
+            else:
+                if not already:
+                    logger.info("[FAST %d] id=%d not in BL, enforcing unban anyway...", worker_id, numeric_id)
+                    results["already_in_bl"] += 1
+                
+                banned = await _process_in_all_chats(owner_id, numeric_id, child_bot_id, action=action)
+                total_banned = sum(banned.values())
+                if total_banned > 0:
+                    await _increment_blocked_count(owner_id, banned, is_global=(child_bot_id is None), is_unban=True)
+                if already:
+                    results["ok"] += 1
+                    await _remove_from_blacklist(owner_id, numeric_id, child_bot_id)
+                logger.info("[FAST %d] Unbanned user=%d in %d chats", worker_id, numeric_id, total_banned)
 
         except Exception:
             logger.exception("[FAST %d] Unexpected error for id=%s", worker_id, numeric_id)
@@ -435,6 +453,7 @@ async def _slow_worker(
     bot:            AioBot,
     notify_chat_id: int,
     status_msg_id:  int,
+    action:         str,
 ) -> None:
     while True:
         if stop_event.is_set():
@@ -464,8 +483,11 @@ async def _slow_worker(
                 numeric_id=None,
                 child_bot_id=child_bot_id,
             )
-            if already:
+            if already and action == "ban":
                 logger.info("[SLOW %d] @%s already in BL, enforcing ban...", worker_id, username)
+                results["already_in_bl"] += 1
+            elif not already and action == "unban":
+                logger.info("[SLOW %d] @%s not in BL, enforcing unban anyway...", worker_id, username)
                 results["already_in_bl"] += 1
 
             resolved_id: Optional[int] = local_id
@@ -524,14 +546,23 @@ async def _slow_worker(
                     continue
 
             if resolved_id:
-                banned = await _ban_in_all_chats(owner_id, resolved_id, child_bot_id)
+                banned = await _process_in_all_chats(owner_id, resolved_id, child_bot_id, action=action)
                 total_banned = sum(banned.values())
-                if total_banned > 0:
-                    await _increment_blocked_count(owner_id, banned, is_global=(child_bot_id is None))
-                await _save_to_blacklist(owner_id, resolved_id, username, child_bot_id)
-                if not already:
-                    results["ok"] += 1
-                logger.info("[SLOW %d] Banned user=%d in %d chats", worker_id, resolved_id, total_banned)
+                
+                if action == "ban":
+                    if total_banned > 0:
+                        await _increment_blocked_count(owner_id, banned, is_global=(child_bot_id is None))
+                    await _save_to_blacklist(owner_id, resolved_id, username, child_bot_id)
+                    if not already:
+                        results["ok"] += 1
+                    logger.info("[SLOW %d] Banned user=%d in %d chats", worker_id, resolved_id, total_banned)
+                else:
+                    if total_banned > 0:
+                        await _increment_blocked_count(owner_id, banned, is_global=(child_bot_id is None), is_unban=True)
+                    await _remove_from_blacklist(owner_id, resolved_id, child_bot_id)
+                    if already:
+                        results["ok"] += 1
+                    logger.info("[SLOW %d] Unbanned user=%d in %d chats", worker_id, resolved_id, total_banned)
             else:
                 results["error"] += 1
 
@@ -548,14 +579,15 @@ async def _slow_worker(
 # BAN ENGINE — с Global FloodWait и TokenBucket
 # ══════════════════════════════════════════════════════════════════════════════
 
-async def _ban_in_all_chats(
+async def _process_in_all_chats(
     owner_id:     int,
     tg_id:        int,
     child_bot_id: Optional[int],
     max_retries:  int = 3,
+    action:       str = "ban",
 ) -> dict[int, int]:
     """
-    Банит tg_id во всех активных чатах с соблюдением:
+    Выполняет ban_chat_member или unban_chat_member во всех активных чатах с соблюдением:
     - Глобального TokenBucket (TG_BAN_RPS)
     - Глобального FloodWait event (пауза для ВСЕХ воркеров)
     - Exponential backoff при RetryAfter
@@ -584,14 +616,21 @@ async def _ban_in_all_chats(
 
             try:
                 async with AioBot(token=token).context() as child_bot:
-                    await child_bot.ban_chat_member(
-                        chat_id=chat_id,
-                        user_id=tg_id,
-                        revoke_messages=False,
-                    )
+                    if action == "ban":
+                        await child_bot.ban_chat_member(
+                            chat_id=chat_id,
+                            user_id=tg_id,
+                            revoke_messages=False,
+                        )
+                    else:
+                        await child_bot.unban_chat_member(
+                            chat_id=chat_id,
+                            user_id=tg_id,
+                            only_if_banned=True,
+                        )
                 if bot_id:
                     banned_by_bot[bot_id] += 1
-                logger.debug("[BAN] user=%d → chat=%d ✓", tg_id, chat_id)
+                logger.debug("[PIPELINE] user=%d → chat=%d ✓ (%s)", tg_id, chat_id, action)
                 break  # Успех
 
             except TelegramRetryAfter as e:
@@ -716,34 +755,46 @@ async def _save_resolve_error(
         owner_id, username.lower().lstrip("@"), username, error, child_bot_id,
     )
 
+async def _remove_from_blacklist(
+    owner_id: int, tg_id: int, child_bot_id: Optional[int],
+) -> None:
+    await db.execute(
+        "DELETE FROM blacklist WHERE owner_id=$1 AND user_id=$2 AND child_bot_id IS NOT DISTINCT FROM $3",
+        owner_id, tg_id, child_bot_id,
+    )
+
 
 async def _increment_blocked_count(
     owner_id:      int,
     banned_by_bot: dict[int, int],
     is_global:     bool,
+    is_unban:      bool = False,
 ) -> None:
     total_count = sum(banned_by_bot.values())
     if total_count == 0:
         return
 
+    mult = -1 if is_unban else 1
+    total_change = total_count * mult
+
     await db.execute(
-        "UPDATE platform_users SET blocked_count = blocked_count + $1 WHERE user_id = $2",
-        total_count, owner_id,
+        "UPDATE platform_users SET blocked_count = GREATEST(0, blocked_count + $1) WHERE user_id = $2",
+        total_change, owner_id,
     )
 
-    updates = [(count, bot_id) for bot_id, count in banned_by_bot.items() if bot_id]
+    updates = [(mult * count, bot_id) for bot_id, count in banned_by_bot.items() if bot_id]
     if not updates:
         return
 
     if is_global:
         # Глобальный ЧС: только global_blocked_count, NOT local blocked_count
         await db.executemany(
-            "UPDATE child_bots SET global_blocked_count = global_blocked_count + $1 WHERE id = $2",
+            "UPDATE child_bots SET global_blocked_count = GREATEST(0, global_blocked_count + $1) WHERE id = $2",
             updates,
         )
     else:
         await db.executemany(
-            "UPDATE child_bots SET blocked_count = blocked_count + $1 WHERE id = $2",
+            "UPDATE child_bots SET blocked_count = GREATEST(0, blocked_count + $1) WHERE id = $2",
             updates,
         )
 

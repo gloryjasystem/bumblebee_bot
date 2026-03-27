@@ -473,11 +473,21 @@ async def _slow_worker(
                 # Арендуем токен RPM bucket перед запросом к API
                 await slow_bucket.acquire(jitter=TG_BAN_JITTER)
                 try:
-                    tg_id, quota = await resolver.resolve(session, username)
+                    tg_id, quota = await asyncio.wait_for(
+                        resolver.resolve(session, username),
+                        timeout=30.0,
+                    )
                     resolved_id = tg_id
                     if quota is not None:
                         quota_box["remaining"] = quota
                     logger.info("[SLOW %d] @%s → %d (via provider)", worker_id, username, tg_id)
+
+                except asyncio.TimeoutError:
+                    logger.warning("[SLOW %d] @%s: RapidAPI timeout (30s), skipping", worker_id, username)
+                    results["error"] += 1
+                    queue.task_done()
+                    _report_progress(bot, results, notify_chat_id, status_msg_id)
+                    continue
 
                 except UserNotFoundError:
                     logger.info("[SLOW %d] @%s not found", worker_id, username)

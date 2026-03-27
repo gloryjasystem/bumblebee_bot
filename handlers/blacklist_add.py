@@ -34,6 +34,8 @@ from utils.username_parser import parse_file_content, parse_usernames_and_ids
 logger = logging.getLogger(__name__)
 
 router = Router()
+# Держим ссылки на задачи, чтобы GC не отменил их до завершения
+_pipeline_tasks: set[asyncio.Task] = set()
 
 
 # ── FSM-состояния пайплайна ───────────────────────────────────────────────────
@@ -272,7 +274,7 @@ async def _kick_off_pipeline(
         parse_mode="HTML",
     )
 
-    asyncio.create_task(
+    _task = asyncio.create_task(
         start_ban_pipeline(
             bot=bot,
             owner_id=owner_id,
@@ -283,6 +285,8 @@ async def _kick_off_pipeline(
             child_bot_id=child_bot_id,
         )
     )
+    _pipeline_tasks.add(_task)
+    _task.add_done_callback(_pipeline_tasks.discard)
 
     logger.info(
         "[BL ADD] Pipeline started: owner=%d total=%d (u=%d id=%d) child_bot=%s",

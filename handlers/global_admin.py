@@ -1147,6 +1147,9 @@ async def on_ga_team_howto(callback: CallbackQuery, state: FSMContext):
         "➕ <b>Добавить администратора</b>\n\n"
         "Введите <b>@username</b> или <b>Telegram ID</b> сотрудника:\n\n"
         "<code>@username</code>  или  <code>123456789</code>\n\n"
+        "<i>ID можно узнать через </i><a href='https://t.me/userinfobot'>@userinfobot</a>"
+    )
+    kb = [[InlineKeyboardButton(text="🚫 Отмена", callback_data=f"ga_team:{owner_id}")]]
     prompt_msg = await navigate(
         callback,
         text,

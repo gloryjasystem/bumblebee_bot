@@ -2413,6 +2413,14 @@ async def on_ga_bl_clear_yes(callback: CallbackQuery):
     if not role or context_owner_id != owner_id:
         return await callback.answer("❌ Нет прав", show_alert=True)
 
+    from config import settings as _cfg
+    is_project_owner = callback.from_user.id in (
+        _cfg.owner_telegram_id,
+        _cfg.co_owner_telegram_id,
+    )
+    if not is_project_owner:
+        return await callback.answer("⚠️ Только владелец проекта может очистить Глобальный Чёрный Список. Функционал недоступен.", show_alert=True)
+
     async with get_pool().acquire() as conn:
         # Удаляем ТОЛЬКО глобальные записи администратора платформы (child_bot_id IS NULL).
         await conn.execute(

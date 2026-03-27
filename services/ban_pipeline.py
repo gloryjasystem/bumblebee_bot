@@ -379,6 +379,7 @@ async def _fast_worker(
     bot:            AioBot,
     notify_chat_id: int,
     status_msg_id:  int,
+    action:         str = "ban",
 ) -> None:
     while True:
         if stop_event.is_set():

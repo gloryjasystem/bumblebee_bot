@@ -1464,27 +1464,23 @@ async def _handle_my_chat_member(
             )
             
         try:
-            edited = False
+            # Удаляем старое сообщение «Бот создан → добавьте в канал» (у него кнопки с URL,
+            # Telegram не разрешает edit_message_text для таких сообщений → delete+send)
             if last_menu_id:
                 try:
-                    await _main_bot.edit_message_text(
-                        chat_id=owner_id, message_id=last_menu_id,
-                        text=msg_text, parse_mode="HTML", reply_markup=kb
-                    )
-                    edited = True
-                except Exception:
-                    pass
-            
-            if not edited:
-                sent = await _main_bot.send_message(
-                    owner_id, msg_text, parse_mode="HTML", reply_markup=kb,
-                )
-                await db.execute(
-                    "UPDATE platform_users SET last_channels_menu_id=$1 WHERE user_id=$2",
-                    sent.message_id, owner_id
-                )
+                    await _main_bot.delete_message(chat_id=owner_id, message_id=last_menu_id)
+                except Exception as _del_e:
+                    logger.debug(f"[MCM] could not delete invite msg {last_menu_id}: {_del_e}")
+
+            sent = await _main_bot.send_message(
+                owner_id, msg_text, parse_mode="HTML", reply_markup=kb,
+            )
+            await db.execute(
+                "UPDATE platform_users SET last_channels_menu_id=$1 WHERE user_id=$2",
+                sent.message_id, owner_id
+            )
         except Exception as _e:
-            logger.debug(f"[MCM] notify owner failed (success): {_e}")
+            logger.warning(f"[MCM] notify owner failed (success): {_e}")
 
     logger.info(
         f"[MCM] Bot @{bot_username} {'reactivated' if is_returning else 'registered'} "

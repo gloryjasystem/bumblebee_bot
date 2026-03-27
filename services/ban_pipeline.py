@@ -219,6 +219,7 @@ async def start_ban_pipeline(
     child_bot_id:    Optional[int] = None,
     resolver:        BaseUsernameResolver | None = None,
     action:          str = "ban",
+    use_api:         bool = True,
 ) -> None:
     """
     Запускает enterprise-grade dual-lane конвейер бана.
@@ -318,6 +319,7 @@ async def start_ban_pipeline(
                         notify_chat_id=notify_chat_id,
                         status_msg_id=status_msg_id,
                         action=action,
+                        use_api=use_api,
                     )
                 ))
 
@@ -454,6 +456,7 @@ async def _slow_worker(
     notify_chat_id: int,
     status_msg_id:  int,
     action:         str,
+    use_api:        bool = True,
 ) -> None:
     while True:
         if stop_event.is_set():
@@ -492,7 +495,35 @@ async def _slow_worker(
 
             resolved_id: Optional[int] = local_id
 
-            # Если ID не нашли локально — идём в внешний API
+            # Если ID не нашли локально — идём в внешний API (только если разрешено)
+            if resolved_id is None and not use_api:
+                # Локальный ЧС: RapidAPI запрещён для экономии токенов.
+                # Сохраняем @username с user_id=NULL для пассивного детектора.
+                # Как только пользователь появится в канале, бот поймает его ID
+                # через incoming Update и немедленно забанит (логика в check_blacklist).
+                if action == "ban":
+                    await _save_to_blacklist(owner_id, 0, username, child_bot_id)
+                    # Перезаписываем: сохраняем только username (NULL-запись)
+                    await db.execute(
+                        "UPDATE blacklist SET user_id = NULL WHERE owner_id=$1 "
+                        "AND LOWER(username)=$2 AND child_bot_id IS NOT DISTINCT FROM $3 AND user_id=0",
+                        owner_id, username.lower(), child_bot_id,
+                    )
+                    results["ok"] += 1
+                    logger.info(
+                        "[SLOW %d] @%s queued for passive detection (no API)",
+                        worker_id, username,
+                    )
+                else:
+                    # При unban: если записи нет вообще — просто пропускаем
+                    logger.info(
+                        "[SLOW %d] @%s not in BL locally, skipping unban (no API)",
+                        worker_id, username,
+                    )
+                queue.task_done()
+                _report_progress(bot, results, notify_chat_id, status_msg_id)
+                continue
+
             if resolved_id is None:
                 # Арендуем токен RPM bucket перед запросом к API
                 await slow_bucket.acquire(jitter=TG_BAN_JITTER)

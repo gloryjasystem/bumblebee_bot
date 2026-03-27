@@ -283,6 +283,7 @@ async def _kick_off_pipeline(
             notify_chat_id=msg.chat.id,
             status_msg_id=status_msg.message_id,
             child_bot_id=child_bot_id,
+            use_api=(child_bot_id is None),  # Локальный ЧС — без RapidAPI
         )
     )
     _pipeline_tasks.add(_task)

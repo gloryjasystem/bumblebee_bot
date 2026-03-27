@@ -667,12 +667,12 @@ async def on_token_received(message: Message, state: FSMContext, platform_user: 
     except Exception:
         pass
 
-    await msg.edit_text(
+    created_msg = await msg.edit_text(
         f"✅ Бот: @{username} создан\n\n"
         f"➕ Чтобы начать настраивать созданного вами бота, добавьте сначала его "
         f"в <b>канал или группу</b> в качестве администратора "
         f"с правами на «Добавление участников» (ios) → «Пригласительные ссылки» (android).\n\n"
-        f"� Создай универсального помощника, который закроет все задачи по управлению, "
+        f"🤖 Создай универсального помощника, который закроет все задачи по управлению, "
         f"защите и монетизации твоего сообщества.\n\n"
         f"Выберите действие 👇",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
@@ -681,6 +681,12 @@ async def on_token_received(message: Message, state: FSMContext, platform_user: 
             [InlineKeyboardButton(text="⊃ В меню", callback_data="menu:channels")],
         ]),
     )
+    
+    async with get_pool().acquire() as conn:
+        await conn.execute(
+            "UPDATE platform_users SET last_channels_menu_id=$1 WHERE user_id=$2",
+            created_msg.message_id, platform_user["user_id"]
+        )
 
 
 

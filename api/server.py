@@ -209,7 +209,7 @@ def create_app(bot: Bot, dp: Dispatcher) -> FastAPI:
         logger.info("Scheduler started")
 
         # Дочерние боты — запускаем polling для каждого
-        from scheduler.child_bot_runner import init_runner, start_all_child_bots
+        from scheduler.child_bot_runner import init_runner, start_all_child_bots, stop_all_child_bots
         init_runner(bot)
         await start_all_child_bots()
         logger.info("Child bot runner started")
@@ -230,6 +230,7 @@ def create_app(bot: Bot, dp: Dispatcher) -> FastAPI:
         yield
         # ── Shutdown ─────────────────────────────────────────
         logger.info("Shutting down...")
+        await stop_all_child_bots()  # Gracefully cancel all child bot polling tasks
         await db.close_pool()
         await bot.session.close()
 

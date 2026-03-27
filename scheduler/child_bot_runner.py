@@ -186,10 +186,29 @@ async def start_child_bot(child_bot_id: int, owner_id: int, bot_username: str, t
     logger.info(f"Child bot @{bot_username} (id={child_bot_id}) polling started")
 
 
-def stop_child_bot(child_bot_id: int):
+def stop_child_bot(child_bot_id: int) -> None:
     task = _running_bots.pop(child_bot_id, None)
-    if task:
+    if task and not task.done():
         task.cancel()
+
+
+async def stop_all_child_bots() -> None:
+    """Graceful shutdown — отменяет все polling-таски и ждёт их завершения.
+    Должна вызываться из lifespan shutdown ДО закрытия db pool.
+    """
+    if not _running_bots:
+        return
+    bot_ids = list(_running_bots.keys())
+    logger.info("Stopping %d child bot(s)...", len(bot_ids))
+    tasks = []
+    for bot_id in bot_ids:
+        task = _running_bots.pop(bot_id, None)
+        if task and not task.done():
+            task.cancel()
+            tasks.append(task)
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
+    logger.info("All child bots stopped ✅")
 
 
 async def _poll_child_bot(child_bot_id: int, owner_id: int, bot_username: str, raw_token: str):
@@ -214,6 +233,9 @@ async def _poll_child_bot(child_bot_id: int, owner_id: int, bot_username: str, r
         # Ждём немного чтобы старый инстанс (при редеплое) успел умереть,
         # затем делаем быстрый вызов чтобы "захватить" сессию у старого polling-а
         await asyncio.sleep(3)
+        # «Захватываем» сессию у старого инстанса (при редеплое):
+        # пустой вызов get_updates переключает Telegram на нас.
+        # Ошибка Conflict здесь ожидаема — подавляем её намеренно.
         try:
             await bot.get_updates(offset=0, timeout=0, allowed_updates=[])
         except Exception:
@@ -240,7 +262,19 @@ async def _poll_child_bot(child_bot_id: int, owner_id: int, bot_username: str, r
             except asyncio.CancelledError:
                 raise
             except Exception as e:
-                logger.warning(f"Child bot @{bot_username} poll error: {e}. Retry in {retry_delay}s")
+                err_str = str(e)
+                # «Conflict» в первые секунды — нормально при редеплое:
+                # старый контейнер ещё не умер. Подавляем INFO вместо WARNING.
+                if "Conflict" in err_str or "terminated by other" in err_str:
+                    logger.info(
+                        "Child bot @%s: Conflict with old instance, retrying in %ds",
+                        bot_username, retry_delay,
+                    )
+                else:
+                    logger.warning(
+                        "Child bot @%s poll error: %s. Retry in %ds",
+                        bot_username, e, retry_delay,
+                    )
                 await asyncio.sleep(retry_delay)
                 retry_delay = min(retry_delay * 2, 60)
 

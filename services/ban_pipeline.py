@@ -397,7 +397,6 @@ async def _fast_worker(
                 numeric_id=numeric_id,
                 child_bot_id=child_bot_id,
             )
-            if already:
             if action == "ban":
                 if already:
                     logger.info("[FAST %d] id=%d already in BL, enforcing ban...", worker_id, numeric_id)

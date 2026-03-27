@@ -484,6 +484,11 @@ ALTER TABLE platform_users ADD COLUMN IF NOT EXISTS is_banned  BOOLEAN DEFAULT f
 ALTER TABLE platform_users ADD COLUMN IF NOT EXISTS ban_reason TEXT;
 ALTER TABLE platform_users ADD COLUMN IF NOT EXISTS banned_at  TIMESTAMPTZ;
 
+-- ID прилипающего сообщения о бане (message_id в личном чате с пользователем)
+ALTER TABLE platform_users ADD COLUMN IF NOT EXISTS ban_msg_id  BIGINT;
+-- ID сообщения «аккаунт разблокирован» (удаляется при первом следующем действии пользователя)
+ALTER TABLE platform_users ADD COLUMN IF NOT EXISTS unban_msg_id BIGINT;
+
 -- ════════════════════════════════════════════════════════════
 -- Заметки администратора о пользователях платформы
 -- ════════════════════════════════════════════════════════════

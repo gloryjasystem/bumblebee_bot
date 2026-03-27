@@ -455,9 +455,9 @@ async def on_ga_pu_block_input(message: Message, state: FSMContext):
             pass
             
     async with get_pool().acquire() as conn:
-        # Обновляем статус 
+        # Обновляем статус
         await conn.execute(
-            "UPDATE platform_users SET is_banned=true, ban_reason=$1, banned_at=now() WHERE user_id=$2",
+            "UPDATE platform_users SET is_banned=true, ban_reason=$1, banned_at=now(), ban_msg_id=NULL WHERE user_id=$2",
             reason, target_uid
         )
         # Логируем действие
@@ -465,18 +465,18 @@ async def on_ga_pu_block_input(message: Message, state: FSMContext):
             "INSERT INTO audit_log (owner_id, user_id, action, details) VALUES ($1, $2, 'ban_platform_user', $3)",
             owner_id, message.from_user.id, json.dumps({"target_uid": target_uid, "reason": reason})
         )
-        
+
         # Получаем список дочерних ботов, чтобы их остановить
         bots = await conn.fetch("SELECT id FROM child_bots WHERE owner_id=$1", target_uid)
-        
+
         row = await conn.fetchrow("SELECT * FROM platform_users WHERE user_id=$1", target_uid)
 
     for b in bots:
         stop_child_bot(b['id'])
 
-    # Отправляем уведомление юзеру
+    # Отправляем первичное уведомление юзеру и сохраняем его message_id как ban_msg_id
     try:
-        await message.bot.send_message(
+        ban_notification = await message.bot.send_message(
             target_uid,
             f"⛔️ <b>Служба безопасности Bumblebee Bot</b>\n\n"
             f"Ваш аккаунт и предоставляемые услуги были <b>заблокированы</b>.\n"
@@ -484,11 +484,17 @@ async def on_ga_pu_block_input(message: Message, state: FSMContext):
             f"Все активные боты вашей сети приостановлены.",
             parse_mode="HTML"
         )
+        # Запоминаем message_id — middleware будет ротировать это сообщение
+        async with get_pool().acquire() as _conn:
+            await _conn.execute(
+                "UPDATE platform_users SET ban_msg_id=$1 WHERE user_id=$2",
+                ban_notification.message_id, target_uid
+            )
     except Exception as e:
         logger.warning(f"Could not notify user {target_uid} about ban: {e}")
 
     await message.answer("✅ Пользователь заблокирован, его боты остановлены.", disable_notification=True)
-    
+
     # Возвращаемся в карточку
     fake_msg = await message.answer("⏳ Обновление...")  # Hack to use navigate
     await _show_platform_user_card(fake_msg, owner_id, row)
@@ -498,17 +504,24 @@ async def on_ga_pu_block_input(message: Message, state: FSMContext):
 async def on_ga_pu_unblock(callback: CallbackQuery):
     parts = callback.data.split(":")
     target_uid, admin_owner_id = int(parts[1]), int(parts[2])
-    
+
     async with get_pool().acquire() as conn:
+        # Читаем текущий ban_msg_id перед тем, как обнулить
+        pu_row = await conn.fetchrow(
+            "SELECT ban_msg_id FROM platform_users WHERE user_id=$1", target_uid
+        )
+        old_ban_msg_id = pu_row["ban_msg_id"] if pu_row else None
+
         await conn.execute(
-            "UPDATE platform_users SET is_banned=false, ban_reason=NULL, banned_at=NULL WHERE user_id=$1",
+            "UPDATE platform_users SET is_banned=false, ban_reason=NULL, banned_at=NULL,"
+            " ban_msg_id=NULL, unban_msg_id=NULL WHERE user_id=$1",
             target_uid
         )
         await conn.execute(
             "INSERT INTO audit_log (owner_id, user_id, action, details) VALUES ($1, $2, 'unban_platform_user', $3)",
             admin_owner_id, callback.from_user.id, json.dumps({"target_uid": target_uid})
         )
-        
+
         bots = await conn.fetch("SELECT id, owner_id, bot_username, token_encrypted FROM child_bots WHERE owner_id=$1", target_uid)
         row = await conn.fetchrow("SELECT * FROM platform_users WHERE user_id=$1", target_uid)
 
@@ -516,14 +529,27 @@ async def on_ga_pu_unblock(callback: CallbackQuery):
     for b in bots:
         await start_child_bot(b['id'], b['owner_id'], b['bot_username'], b['token_encrypted'])
 
-    # Уведомляем пользователя
+    # Удаляем прилипающее сообщение о бане
+    if old_ban_msg_id:
+        try:
+            await callback.bot.delete_message(chat_id=target_uid, message_id=old_ban_msg_id)
+        except Exception:
+            pass
+
+    # Отправляем уведомление о разблокировке; его message_id запоминаем —
+    # middleware удалит его при первом следующем действии пользователя
     try:
-        await callback.bot.send_message(
+        unban_msg = await callback.bot.send_message(
             target_uid,
             f"✅ <b>Служба поддержки Bumblebee Bot</b>\n\n"
             f"Ваш аккаунт успешно <b>разблокирован</b>! Все сервисы и боты сети возобновили работу.",
             parse_mode="HTML"
         )
+        async with get_pool().acquire() as _conn:
+            await _conn.execute(
+                "UPDATE platform_users SET unban_msg_id=$1 WHERE user_id=$2",
+                unban_msg.message_id, target_uid
+            )
     except Exception as e:
         logger.warning(f"Could not notify user {target_uid} about unban: {e}")
 

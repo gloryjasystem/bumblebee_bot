@@ -105,13 +105,13 @@ async def on_bl_rapidapi_add(call: CallbackQuery, state: FSMContext, platform_us
     await state.set_state(RapidApiFSM.waiting_for_input)
 
     prompt_msg = await call.message.edit_text(
-        "🔑 <b>Добавить в ЧС — Универсальный ввод</b>\n\n"
+        "➕ <b>Добавить в ЧС бота — Универсальный ввод</b>\n\n"
         "Отправьте любое из вариантов:\n"
         "• <b>@username</b>, <b>цифровой ID</b> или ссылку <b>t.me/user</b>\n"
         "• Файл <b>.txt/.csv</b> со списком\n"
-        "• <b>Пересланное сообщение</b> от нужного пользователя (мгновенно баним по ID)\n\n"
-        "<i>По юзернеймам бот автоматически получает цифровой ID через RapidAPI.\n"
-        "Цифровые ID банятся мгновенно во всех подключённых каналах.</i>",
+        "• <b>Пересланное сообщение</b> от нужного пользователя\n\n"
+        "<i>Пользователи будут заблокированы при любой попытке взаимодействия "
+        "или вступления во все каналы этого бота.</i>",
         parse_mode="HTML",
         reply_markup=_kb_cancel_input(back_cb),
     )

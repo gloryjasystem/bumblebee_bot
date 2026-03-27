@@ -104,12 +104,13 @@ async def on_bl_rapidapi_del(call: CallbackQuery, state: FSMContext, platform_us
     await state.set_state(RapidApiDelFSM.waiting_for_input)
 
     prompt_msg = await call.message.edit_text(
-        "➖ <b>Удалить из ЧС бота</b>\n\n"
+        "➖ <b>Удалить из ЧС бота — Универсальный ввод</b>\n\n"
         "Отправьте любое из вариантов:\n"
         "• <b>@username</b>, <b>цифровой ID</b> или ссылку <b>t.me/user</b>\n"
         "• Файл <b>.txt/.csv</b> со списком\n"
-        "• <b>Пересланное сообщение</b> от нужного пользователя (мгновенно разбаним по ID)\n\n"
-        "<i>Пользователи будут немедленно разблокированы во всех каналах этого бота.</i>",
+        "• <b>Пересланное сообщение</b> от нужного пользователя\n\n"
+        "<i>Пользователи будут немедленно разблокированы во всех каналах "
+        "этого бота, а также исключены из системы пассивного перехвата.</i>",
         parse_mode="HTML",
         reply_markup=_kb_cancel_input(back_cb),
     )

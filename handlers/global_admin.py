@@ -493,11 +493,23 @@ async def on_ga_pu_block_input(message: Message, state: FSMContext):
     except Exception as e:
         logger.warning(f"Could not notify user {target_uid} about ban: {e}")
 
-    await message.answer("✅ Пользователь заблокирован, его боты остановлены.", disable_notification=True)
+    status_msg = await message.answer("✅ Пользователь заблокирован, его боты остановлены.", disable_notification=True)
 
     # Возвращаемся в карточку
     fake_msg = await message.answer("⏳ Обновление...")  # Hack to use navigate
     await _show_platform_user_card(fake_msg, owner_id, row)
+
+    # Удаляем сервисные сообщения через 4 секунды
+    async def _cleanup():
+        await asyncio.sleep(4)
+        for mid in [status_msg.message_id, fake_msg.message_id]:
+            try:
+                await message.bot.delete_message(chat_id=message.chat.id, message_id=mid)
+            except Exception:
+                pass
+    task = asyncio.create_task(_cleanup())
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
 
 
 @router.callback_query(F.data.startswith("ga_pu_unblock:"))

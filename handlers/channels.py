@@ -667,7 +667,10 @@ async def on_token_received(message: Message, state: FSMContext, platform_user: 
     except Exception:
         pass
 
-    created_msg = await msg.edit_text(
+    # Запоминаем message_id ДО редактирования — edit_text возвращает bool в aiogram 3
+    invite_msg_id = msg.message_id
+    
+    await msg.edit_text(
         f"✅ Бот: @{username} создан\n\n"
         f"➕ Чтобы начать настраивать созданного вами бота, добавьте сначала его "
         f"в <b>канал или группу</b> в качестве администратора "
@@ -682,10 +685,11 @@ async def on_token_received(message: Message, state: FSMContext, platform_user: 
         ]),
     )
     
+    # Сохраняем ID сообщения — child_bot_runner перезапишет его когда бот успешно добавится в чат
     async with get_pool().acquire() as conn:
         await conn.execute(
             "UPDATE platform_users SET last_channels_menu_id=$1 WHERE user_id=$2",
-            created_msg.message_id, platform_user["user_id"]
+            invite_msg_id, platform_user["user_id"]
         )
 
 

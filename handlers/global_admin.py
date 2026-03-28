@@ -956,8 +956,7 @@ async def on_ga_pu_tariff_pick(callback: CallbackQuery):
     
     if new_tariff == "free":
         # Free has no duration, go straight to confirmation
-        fake_cb = callback
-        fake_cb.data = f"ga_pu_tariff_dur:free:forever:{target_uid}:{admin_owner_id}"
+        fake_cb = callback.model_copy(update={"data": f"ga_pu_tariff_dur:free:forever:{target_uid}:{admin_owner_id}"})
         await on_ga_pu_tariff_dur(fake_cb)
         return
 
@@ -1049,8 +1048,7 @@ async def on_ga_pu_tariff_apply(callback: CallbackQuery):
     asyncio.create_task(sync_child_bots(target_uid))
     await callback.answer("✅ Тариф обновлён", show_alert=True)
     # Go back to tariff screen refreshed
-    fake_cb = callback
-    fake_cb.data = f"ga_pu_tariff:{target_uid}:{admin_owner_id}"
+    fake_cb = callback.model_copy(update={"data": f"ga_pu_tariff:{target_uid}:{admin_owner_id}"})
     await on_ga_pu_tariff(fake_cb)
 
 

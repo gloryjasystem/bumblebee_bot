@@ -115,8 +115,8 @@ TARIFFS = {
         }
     },
     "business": {
-        "max_bots": 10,
-        "max_chats_per_bot": 999999,
+        "max_bots": 12,
+        "max_chats_per_bot": 20,
         "max_blacklist_users": 100000,
         "features": {
             "analytics_full": True,

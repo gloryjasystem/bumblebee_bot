@@ -278,7 +278,7 @@ async def on_bot_settings(callback: CallbackQuery, platform_user: dict | None):
     is_free = platform_user.get("tariff", "free") == "free"
 
     if is_free:
-        captcha_block = "\n\n🔒 <i>Детальная аналитика (капчи, сообщения) доступна на платных тарифах.</i>"
+        captcha_block = ""
         msg_block = ""
     else:
         if captcha_total_all > 0:

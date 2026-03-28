@@ -285,15 +285,53 @@ async def on_settings_menu(callback: CallbackQuery, platform_user: dict | None):
         else:
             until_str = f" ({since_str}Бессрочно)"
 
+    # Загружаем загруженность из БД
+    async with db.get_pool().acquire() as conn:
+        bots_count = await conn.fetchval("SELECT COUNT(*) FROM child_bots WHERE owner_id=$1", platform_user["user_id"])
+        # Считаем только активные подключенные чаты
+        chats_count = await conn.fetchval(
+            "SELECT COUNT(c.id) FROM bot_chats c JOIN child_bots b ON c.child_bot_id = b.id WHERE c.owner_id=$1 AND c.is_active=true", 
+            platform_user["user_id"]
+        )
+        bl_count = await conn.fetchval(
+            "SELECT COUNT(*) FROM platform_blacklist WHERE owner_id=$1",
+            platform_user["user_id"]
+        )
+
+    from config import TARIFFS, settings
+    t_cfg = TARIFFS.get(tariff, TARIFFS["free"])
+    max_bots = t_cfg["max_bots"]
+    
+    max_chats_p_bot = t_cfg["max_chats_per_bot"]
+    if max_chats_p_bot > 10000:
+        chats_display = f"{chats_count} (Без ограничений)"
+    else:
+        chats_display = f"{chats_count} из {max_chats_p_bot * max_bots}"
+
+    max_bl = t_cfg["max_blacklist_users"]
+    
+    # Получаем юзернейм саппорта из конфига
+    support_username = settings.co_owner_username or settings.owner_username or "secvency"
+    support_url = f"https://t.me/{support_username.strip('@')}"
+
+    # Отформатируем большие числа с пробелами
+    bl_str = f"{bl_count:,}".replace(",", " ")
+    max_bl_str = f"{max_bl:,}".replace(",", " ")
+
     await navigate(
         callback,
-        f"🔑 <b>Управление аккаунтом</b>\n\n"
-        f"👤 ID: <code>{platform_user['user_id']}</code>\n"
-        f"📦 Тариф: {label}{until_str}",
+        f"🔑 <b>Личный кабинет</b>\n\n"
+        f"👤 Ваш ID: <code>{platform_user['user_id']}</code>\n"
+        f"💎 Тариф: {label}{until_str}\n\n"
+        f"📊 <b>Ваши лимиты:</b>\n"
+        f"├ 🤖 Боты: <b>{bots_count}</b> из {max_bots}\n"
+        f"├ 📍 Площадки: <b>{chats_display}</b>\n"
+        f"└ ⛔️ Глобальный ЧС: <b>{bl_str}</b> из {max_bl_str}\n",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="📜 История покупок",  callback_data="settings:history")],
             [InlineKeyboardButton(text="💳 Тарифы и оплата", callback_data="menu:tariffs")],
-            [InlineKeyboardButton(text="◀️ Назад",           callback_data="menu:main")],
+            [InlineKeyboardButton(text="📜 История покупок",  callback_data="settings:history")],
+            [InlineKeyboardButton(text="🎧 Служба поддержки", url=support_url)],
+            [InlineKeyboardButton(text="◀️ Назад к меню",           callback_data="menu:main")],
         ]),
     )
 

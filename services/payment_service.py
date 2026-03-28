@@ -74,26 +74,76 @@ async def create_invoice(user_id: int, tariff: str, period: str, currency: str =
 
 async def activate_tariff(user_id: int, tariff: str, period: str):
     """
-    Активирует тариф пользователю.
-    Если тариф уже активен — продлевает от текущего конца.
+    Активирует тариф пользователю. Три сценария:
+      - Смена тарифа (Upgrade / Downgrade): новый тариф применяется немедленно. 
+        Остаток дней текущего тарифа конвертируется в бонусные дни (пропорционально цене).
+      - Продление: дни прибавляются к концу текущего периода.
     """
+    from datetime import datetime, timezone, timedelta
+
     days = settings.tariff_durations.get(period, 30)
+
+    # Иерархия тарифов
+    TARIFF_RANK = {"free": 0, "start": 1, "pro": 2, "business": 3}
+
+    now = datetime.now(timezone.utc)
+    row = await db.fetchrow(
+        "SELECT tariff, tariff_until FROM platform_users WHERE user_id=$1", user_id
+    )
+
+    current_tariff = (row["tariff"] if row else "free") or "free"
+    current_until  = row["tariff_until"] if row else None
+
+    current_rank = TARIFF_RANK.get(current_tariff, 0)
+    new_rank     = TARIFF_RANK.get(tariff, 0)
+
+    has_active_sub = current_until and current_until > now and current_tariff != "free"
+
+    if not has_active_sub:
+        # Нет активной подписки — простая активация от сейчас
+        new_until = now + timedelta(days=days)
+        final_tariff = tariff
+
+    elif new_rank != current_rank:
+        # ── СМЕНА ТАРИФА (Upgrade или Downgrade) ─────────────────────
+        # Конвертируем оставшиеся дни текущего тарифа в бонусные дни нового
+        remaining_days = max(0, (current_until - now).days)
+        price_old = settings.tariff_prices.get(f"{current_tariff}_month", 0)
+        price_new = settings.tariff_prices.get(f"{tariff}_month", 1)
+
+        bonus_days = round(remaining_days * price_old / price_new) if price_new > 0 else 0
+        new_until    = now + timedelta(days=days + bonus_days)
+        final_tariff = tariff
+        
+        action = "Upgrade" if new_rank > current_rank else "Downgrade"
+        logger.info(
+            f"[{action}] {current_tariff}→{tariff} for {user_id}: "
+            f"remaining {remaining_days}d → {bonus_days} bonus days"
+        )
+
+    else:
+        # ── ПРОДЛЕНИЕ ТОГО ЖЕ ТАРИФА ─────────────────────────────────
+        start_from   = max(now, current_until)
+        new_until    = start_from + timedelta(days=days)
+        final_tariff = tariff
+
     await db.execute(
         """
         UPDATE platform_users
         SET tariff       = $1,
-            tariff_until = GREATEST(now(), COALESCE(tariff_until, now())) + ($2 || ' days')::interval
+            tariff_until = $2
         WHERE user_id = $3
         """,
-        tariff, str(days), user_id,
+        final_tariff, new_until, user_id,
     )
+
     from scheduler.child_bot_runner import sync_child_bots
     try:
         await sync_child_bots(user_id)
     except Exception as e:
         logger.error(f"Failed to sync child bots for {user_id} after payment: {e}")
 
-    logger.info(f"Tariff {tariff}/{period} activated for user {user_id}")
+    logger.info(f"Tariff {tariff}/{period} activated for user {user_id} until {new_until.strftime('%d.%m.%Y')}")
 
 
 async def get_payment_status(payment_id: str) -> dict:

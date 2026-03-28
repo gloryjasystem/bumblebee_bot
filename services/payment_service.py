@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 NOWPAYMENTS_API = "https://api.nowpayments.io/v1"
 
 
-async def create_invoice(user_id: int, tariff: str, period: str, currency: str = "usd") -> dict:
+async def create_invoice(user_id: int, tariff: str, period: str, currency: str = "usd", invoice_msg_id: int | None = None) -> dict:
     """
     Создаёт запись в payments и вызывает NOWPayments Invoice API.
     Возвращает {'payment_id': UUID, 'payment_url': str}.
@@ -33,10 +33,10 @@ async def create_invoice(user_id: int, tariff: str, period: str, currency: str =
     # Создаём pending-запись в БД
     payment_id = await db.fetchval(
         """
-        INSERT INTO payments (user_id, tariff, period, amount_usd, applied_discount)
-        VALUES ($1, $2, $3, $4, $5) RETURNING id
+        INSERT INTO payments (user_id, tariff, period, amount_usd, applied_discount, invoice_msg_id)
+        VALUES ($1, $2, $3, $4, $5, $6) RETURNING id
         """,
-        user_id, tariff, period, amount, percent,
+        user_id, tariff, period, amount, percent, invoice_msg_id,
     )
 
     # Вызываем NOWPayments Invoice API (не /payment — там нужна конкретная валюта)

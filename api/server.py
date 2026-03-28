@@ -278,12 +278,18 @@ def create_app(bot: Bot, dp: Dispatcher) -> FastAPI:
         tariff   = data.get("tariff")
         period   = data.get("period")
         currency = data.get("currency")
+        msg_id   = data.get("msg_id")  # message_id сообщения с кнопкой Оплатить
+        if msg_id:
+            try:
+                msg_id = int(msg_id)
+            except (TypeError, ValueError):
+                msg_id = None
 
         if not all([tariff, period, currency]):
             return JSONResponse({"error": "Missing fields"}, status_code=400)
 
         try:
-            result = await create_invoice(user_id, tariff, period, currency)
+            result = await create_invoice(user_id, tariff, period, currency, invoice_msg_id=msg_id)
             return JSONResponse({"success": True, **result})
         except Exception as e:
             logger.error(f"create_invoice error: {e}")
@@ -334,7 +340,6 @@ def create_app(bot: Bot, dp: Dispatcher) -> FastAPI:
                         except Exception:
                             pass
                     await notify_user_paid(_bot, row["user_id"], row["tariff"], row["period"])
-                    await notify_owner_payment(_bot, row["user_id"], data)
 
         return {"status": "ok"}
 

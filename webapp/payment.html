@@ -25,11 +25,12 @@
         const params = new URLSearchParams(window.location.search);
         const tariff = params.get('tariff') || 'pro';
         const period = params.get('period') || 'month';
+        const msg_id = params.get('msg_id') ? parseInt(params.get('msg_id')) : null;
 
         fetch('/api/create-crypto-payment', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ init_data: tg.initData, tariff, period, currency: 'usd' }),
+            body: JSON.stringify({ init_data: tg.initData, tariff, period, currency: 'usd', msg_id }),
         })
             .then(r => r.json())
             .then(data => {

@@ -102,12 +102,7 @@ async def on_tariffs(callback: CallbackQuery, state: FSMContext, platform_user: 
 
     buttons = []
 
-    # Trial / Free кнопка
-    if not platform_user.get("trial_used") and tariff == "free":
-        buttons.append([InlineKeyboardButton(
-            text="🎁 Попробовать 10 дней Про бесплатно",
-            callback_data="tariff_activate:trial",
-        )])
+    # Trial / Free кнопка удалена для предотвращения злоупотреблений
 
     percent, until_date = await get_active_discount()
     discount_text = ""
@@ -230,45 +225,8 @@ async def on_tariff_buy(callback: CallbackQuery, platform_user: dict | None):
 
 
 # ──────────────────────────────────────────────────────────────
-# Активация trial / free
+# Активация trial / free (Удалено для предотвращения абуза)
 # ──────────────────────────────────────────────────────────────
-@router.callback_query(F.data.startswith("tariff_activate:"))
-async def on_tariff_activate(callback: CallbackQuery, platform_user: dict | None):
-    if not platform_user:
-        return
-    tariff_type = callback.data.split(":")[1]
-
-    if tariff_type == "free":
-        await callback.answer("Вы уже на Free тарифе!", show_alert=True)
-        return
-
-    if tariff_type == "trial":
-        if platform_user.get("trial_used"):
-            await callback.answer("Trial уже был использован", show_alert=True)
-            return
-        await db.execute(
-            """
-            UPDATE platform_users
-            SET tariff='pro',
-                tariff_until = now() + interval '10 days',
-                trial_used = true
-            WHERE user_id=$1
-            """,
-            platform_user["user_id"],
-        )
-        await callback.answer("✅ Trial 10 дней Про активирован!")
-        await callback.message.edit_text(
-            "🎁 <b>Trial активирован!</b>\n\n"
-            "Тариф ⭐ Про активен на 10 дней.\n"
-            "Используй все функции Pro и оцени бота!\n\n"
-            "📅 Для продления после trial — зайди в 💎 Тарифы.",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
-                InlineKeyboardButton(text="🚀 Начать работу", callback_data="menu:main")
-            ]]),
-        )
-        return
-
-    await callback.answer()
 
 
 @router.callback_query(F.data == "noop")

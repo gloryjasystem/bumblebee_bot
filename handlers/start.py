@@ -149,24 +149,13 @@ async def cmd_start(message: Message, platform_user: dict | None):
             )
             trial_msg = ""
         else:
-            # Активируем Trial 10 дней (тариф Про) сразу при регистрации
-            await db.execute(
-                """
-                UPDATE platform_users
-                SET tariff='pro',
-                    tariff_until = now() + interval '10 days',
-                    trial_used = true
-                WHERE user_id=$1 AND trial_used = false
-                """,
-                user.id,
-            )
-            trial_msg = "\n\n🎁 <b>10 дней Про-тарифа активированы бесплатно!</b>"
+            trial_msg = ""
 
         # Получаем свежую запись для _show_main_menu
         platform_user = await db.fetchrow(
             "SELECT * FROM platform_users WHERE user_id=$1", user.id
         )
-        platform_user = dict(platform_user) if platform_user else {"user_id": user.id, "tariff": "pro", "tariff_until": None}
+        platform_user = dict(platform_user) if platform_user else {"user_id": user.id, "tariff": "free", "tariff_until": None}
 
         await _show_main_menu(message, platform_user, extra=trial_msg)
     else:
@@ -208,19 +197,6 @@ async def on_language_select(callback: CallbackQuery, platform_user: dict | None
             callback.from_user.id,
         )
         trial_msg = ""
-    elif puser and not puser["trial_used"]:
-        # Активируем Trial 10 дней (тариф Про)
-        await db.execute(
-            """
-            UPDATE platform_users
-            SET tariff='pro',
-                tariff_until = now() + interval '10 days',
-                trial_used = true
-            WHERE user_id=$1
-            """,
-            callback.from_user.id,
-        )
-        trial_msg = "\n\n🎁 <b>10 дней Про-тарифа активированы бесплатно!</b>"
     else:
         trial_msg = ""
 

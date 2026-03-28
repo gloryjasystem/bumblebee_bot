@@ -43,10 +43,10 @@ class Settings(BaseSettings):
 
     # ── Тарифные цены (USD) ──────────────────────────
     tariff_prices: dict = {
-        "start_month":    1,
+        "start_month":    9,
         "pro_month":     24,
         "business_month": 59,
-        "start_year":    1,
+        "start_year":    79,
         "pro_year":     199,
         "business_year": 499,
     }

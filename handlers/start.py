@@ -294,7 +294,7 @@ async def on_settings_menu(callback: CallbackQuery, platform_user: dict | None):
             platform_user["user_id"]
         )
         bl_count = await conn.fetchval(
-            "SELECT COUNT(*) FROM platform_blacklist WHERE owner_id=$1",
+            "SELECT COUNT(*) FROM blacklist WHERE owner_id=$1",
             platform_user["user_id"]
         )
 

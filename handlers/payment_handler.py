@@ -46,7 +46,6 @@ TARIFF_INFO = {
             "• 📨 Рассылки по базе\n"
             "• 🔗 Пригласительные ссылки\n"
             "• 🛡 Полная защита\n"
-            "• 📋 Лог действий\n"
             "• 👥 Команда (до 3 администраторов)\n"
             "• 📊 Расширенная аналитика\n\n"
             "Лучший выбор для активного роста.\n\n"
@@ -65,7 +64,6 @@ TARIFF_INFO = {
             "• 📨 Приоритетные рассылки\n"
             "• 🔗 Неограниченные ссылки\n"
             "• 🛡 Полная защита\n"
-            "• 📋 Лог действий\n"
             "• 👥 Команда (неограниченно)\n"
             "• 📊 Полная аналитика\n"
             "• 🎯 Персональный менеджер\n\n"
@@ -267,3 +265,14 @@ async def on_tariff_activate(callback: CallbackQuery, platform_user: dict | None
 @router.callback_query(F.data == "noop")
 async def on_noop(callback: CallbackQuery):
     await callback.answer()
+
+@router.callback_query(F.data.startswith("paywall:"))
+async def on_paywall_click(callback: CallbackQuery, platform_user: dict | None):
+    # Показываем сообщение и перекидываем в тарифы
+    await callback.answer(
+        "🔒 Доступно только на платных тарифах!\nПерейдите в меню тарифов для прокачки бота.",
+        show_alert=True
+    )
+    # Имитируем нажатие "menu:tariffs"
+    await on_tariffs(callback, platform_user)
+

@@ -136,6 +136,32 @@ async def run_mailing(mailing_id: int, bot: Bot,
             child_bot_id = row["child_bot_id"]
         logger.info(f"[MAILING {mailing_id}] resolved child_bot_id={child_bot_id} from chat_id")
 
+    # ── Проверка Soft-Lock (тариф и заморозка бота) ─────────────
+    user = await db.fetchrow("SELECT tariff FROM platform_users WHERE user_id=$1", owner_id)
+    tariff = user["tariff"] if user else "free"
+    from config import TARIFFS
+    t_info = TARIFFS.get(tariff, TARIFFS["free"])
+
+    if not t_info["features"]["mailings"]:
+        logger.info(f"[MAILING {mailing_id}] cancelled: mailings disabled for {tariff}")
+        await db.execute("UPDATE mailings SET status='cancelled' WHERE id=$1", mailing_id)
+        return
+
+    if child_bot_id:
+        rn = await db.fetchval(
+            """
+            SELECT rn FROM (
+                SELECT id, ROW_NUMBER() OVER(PARTITION BY owner_id ORDER BY id ASC) as rn
+                FROM child_bots WHERE owner_id=$1
+            ) t WHERE id=$2
+            """,
+            owner_id, child_bot_id
+        )
+        if rn and rn > t_info["max_bots"]:
+            logger.info(f"[MAILING {mailing_id}] cancelled: child_bot_id={child_bot_id} is frozen (limit {t_info['max_bots']})")
+            await db.execute("UPDATE mailings SET status='cancelled' WHERE id=$1", mailing_id)
+            return
+
     # ── Получаем токен дочернего бота для отправки ──────────────
     send_bot = bot   # fallback на основной
     child_bot_instance = None

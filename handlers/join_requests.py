@@ -18,36 +18,42 @@ router = Router()
 async def _get_owner(chat_id: int) -> dict | None:
     """Returns platform settings, owner_id, blacklist state, and whether this bot is in the global BL scope."""
     from config import settings as _cfg
-    return await db.fetchrow(
+    row = await db.fetchrow(
         """
-        SELECT bc.*, cb.blacklist_enabled,
+        WITH TargetBot AS (
+            SELECT child_bot_id FROM bot_chats WHERE chat_id=$1 LIMIT 1
+        ),
+        RankedChats AS (
+            SELECT bc.*,
+                   CASE WHEN bc.is_active THEN ROW_NUMBER() OVER(PARTITION BY bc.child_bot_id, bc.is_active ORDER BY bc.added_at ASC)
+                        ELSE 9999 END as rn
+            FROM bot_chats bc
+            JOIN TargetBot tb ON bc.child_bot_id = tb.child_bot_id
+        )
+        SELECT bc.*, cb.blacklist_enabled, pu.tariff,
                COALESCE((SELECT blacklist_active FROM platform_users WHERE user_id = $2), true) AS blacklist_active,
                EXISTS(
                    SELECT 1 FROM ga_selected_bots gsb
                    WHERE gsb.owner_id = $2
                      AND gsb.child_bot_id = bc.child_bot_id
                ) AS in_global_bl_scope
-        FROM bot_chats bc
+        FROM RankedChats bc
         JOIN child_bots cb ON bc.child_bot_id = cb.id
+        JOIN platform_users pu ON bc.owner_id = pu.user_id
         WHERE bc.chat_id=$1 AND bc.is_active=true
         """,
         chat_id, _cfg.owner_telegram_id,
     )
+    if not row:
+        return None
+        
+    from config import TARIFFS
+    limit = TARIFFS.get(row["tariff"], TARIFFS["free"])["max_chats_per_bot"]
+    if dict(row).get("rn", 1) > limit:
+        return None  # Бот заморожен на этой площадке
+        
+    return dict(row)
 
-
-async def _log_action(owner_id: int, chat_id: int, action: str, target_id: int, details: dict = None):
-    """Пишет в audit_log (только для Про+ тарифов)."""
-    puser = await db.fetchrow(
-        "SELECT tariff FROM platform_users WHERE user_id=$1", owner_id
-    )
-    if puser and puser["tariff"] in ("pro", "business"):
-        import json
-        await db.execute(
-            "INSERT INTO audit_log (owner_id, chat_id, action, target_id, details) "
-            "VALUES ($1, $2, $3, $4, $5)",
-            owner_id, chat_id, action, target_id,
-            json.dumps(details or {}),
-        )
 
 
 # ── ЗАКРЫТЫЙ КАНАЛ: ChatJoinRequest ───────────────────────────
@@ -102,7 +108,7 @@ async def on_join_request(event: ChatJoinRequest, bot: Bot):
                     "UPDATE child_bots SET blocked_count = blocked_count + 1 WHERE id = $1",
                     child_bot_id,
                 )
-        await _log_action(owner_id, event.chat.id, "reject_bl", user.id)
+
         logger.info(f"[BL] Rejected {user.id} from {event.chat.id} (Global: {is_global_block}, Local: {is_local_block})")
         return
 
@@ -116,21 +122,19 @@ async def on_join_request(event: ChatJoinRequest, bot: Bot):
         )
         if lang_blocked:
             await event.decline()
-            await _log_action(owner_id, event.chat.id, "reject_lang", user.id,
-                              {"lang": user_lang})
             return
 
     # 3. RTL-фильтр
     full_name = f"{user.first_name or ''} {user.last_name or ''}".strip()
     if settings_row["filter_rtl"] and detect_rtl(full_name):
         await event.decline()
-        await _log_action(owner_id, event.chat.id, "reject_rtl", user.id)
+
         return
 
     # 4. Иероглифы
     if settings_row["filter_hieroglyph"] and detect_hieroglyph(full_name):
         await event.decline()
-        await _log_action(owner_id, event.chat.id, "reject_hieroglyph", user.id)
+
         return
 
     # 5. Аккаунты без фото
@@ -139,7 +143,7 @@ async def on_join_request(event: ChatJoinRequest, bot: Bot):
             photos = await bot.get_user_profile_photos(user.id, limit=1)
             if photos.total_count == 0:
                 await event.decline()
-                await _log_action(owner_id, event.chat.id, "reject_no_photo", user.id)
+
                 return
         except Exception as e:
             logger.warning(f"[FILTER] get_user_profile_photos failed for {user.id}: {e}")
@@ -167,7 +171,7 @@ async def on_join_request(event: ChatJoinRequest, bot: Bot):
         await _register_user(owner_id, event.chat.id, user,
                              invite_link=event.invite_link)
         await _send_welcome(bot, event.chat.id, user, settings_row)
-        await _log_action(owner_id, event.chat.id, "approve", user.id)
+
         logger.info(f"[LINK AUTO=on] Approved {user.id} via link {raw_invite_url}")
         return
 
@@ -195,7 +199,7 @@ async def on_join_request(event: ChatJoinRequest, bot: Bot):
             )
             await _register_user(owner_id, event.chat.id, user)
             await _send_welcome(bot, event.chat.id, user, settings_row)
-            await _log_action(owner_id, event.chat.id, "approve", user.id)
+
     elif (settings_row.get("captcha_type") or "off") != "off":
         await _save_pending(owner_id, event.chat.id, user)
         from handlers.captcha import send_captcha
@@ -267,7 +271,7 @@ async def on_member_update(event: ChatMemberUpdated, bot: Bot):
                         "UPDATE child_bots SET blocked_count = blocked_count + 1 WHERE id = $1",
                         child_bot_id,
                     )
-            await _log_action(owner_id, event.chat.id, "ban_on_join", user.id)
+
             logger.info(f"[BL] Banned {user.id} on join to {event.chat.id} (Global: {is_global_block}, Local: {is_local_block})")
             return
 

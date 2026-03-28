@@ -396,8 +396,22 @@ async def import_file(owner_id: int, content: bytes, filename: str, child_bot_id
     if rows:
         from services.blacklist import resolve_username_to_id
         
+        from services.blacklist import get_blacklist_count
+        pu = await db.fetchrow("SELECT tariff FROM platform_users WHERE user_id=$1", owner_id)
+        tariff = pu["tariff"] if pu else "free"
+        from config import TARIFFS
+        limit = TARIFFS.get(tariff, TARIFFS["free"])["max_blacklist_users"]
+        
+        total_curr = await get_blacklist_count(owner_id)
+
         for i in range(0, len(rows), 1000):
-            batch = rows[i:i+1000]
+            if total_curr >= limit:
+                break
+                
+            # If batch would exceed limit, truncate it
+            batch_size = min(1000, limit - total_curr)
+            batch = rows[i:i+batch_size]
+
             existing_uids = set()
             existing_unames = set()
             
@@ -474,6 +488,7 @@ async def import_file(owner_id: int, content: bytes, filename: str, child_bot_id
                 existing_unames.update(r["uname"] for r in res)
                 
             # Фильтруем батч: добавляем только тех, кого СОВСЕМ нет в базе (ни по ID, ни по юзернейму)
+            # Фильтруем батч: добавляем только тех, кого СОВСЕМ нет в базе (ни по ID, ни по юзернейму)
             to_insert = []
             for r in enriched_batch:
                 uid, uname = r[1], r[2]
@@ -486,7 +501,6 @@ async def import_file(owner_id: int, content: bytes, filename: str, child_bot_id
                     continue
                     
                 # Если у нас НЕТ ID (только юзернейм), и в базе есть запись с таким юзернеймом - пропускаем
-                # (Если у нас ЕСТЬ ID, и в базе есть запись с таким юзернеймом, мы ее уже обновили в Step 2)
                 if uname and uname.lower() in existing_unames and not uid:
                     duplicates += 1
                     newly_added.append({"user_id": uid, "username": uname})
@@ -494,6 +508,24 @@ async def import_file(owner_id: int, content: bytes, filename: str, child_bot_id
                     
                 to_insert.append(r)
                 newly_added.append({"user_id": uid, "username": uname})  # С точным Resolved UID!
+            
+            # Применяем лимит к to_insert
+            if total_curr + len(to_insert) > limit:
+                # Обрезаем те элементы, которые не влезают в лимит
+                allowed = limit - total_curr
+                to_remove = to_insert[allowed:]
+                to_insert = to_insert[:allowed]
+                # Убираем их из newly_added, чтобы не кикать
+                for r in to_remove:
+                    r_uid, r_uname = r[1], r[2]
+                    try:
+                        newly_added.remove({"user_id": r_uid, "username": r_uname})
+                    except ValueError:
+                        pass
+                        
+            if to_insert:
+                added += len(to_insert)
+                total_curr += len(to_insert)
                 
                 if uid: existing_uids.add(uid)
                 if uname: existing_unames.add(uname.lower())

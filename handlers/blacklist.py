@@ -48,8 +48,9 @@ async def on_protection_menu(callback: CallbackQuery, platform_user: dict | None
         return
     chat_id = int(callback.data.split(":")[1])
     count = await get_blacklist_count(platform_user["user_id"])
+    from config import TARIFFS
     tariff = platform_user["tariff"]
-    limit = settings.blacklist_limits.get(tariff, 0)
+    limit = TARIFFS.get(tariff, TARIFFS["free"])["max_blacklist_users"]
 
     await navigate(
         callback,
@@ -103,12 +104,23 @@ async def on_bl_manual_input(message: Message, state: FSMContext, platform_user:
 
     from services.security import parse_blacklist_line
     from services.blacklist import resolve_username_to_id
+    from services.blacklist import get_blacklist_count
+    
+    total = await get_blacklist_count(owner_id)
+    from config import TARIFFS
+    limit = TARIFFS.get(platform_user["tariff"], TARIFFS["free"])["max_blacklist_users"]
+
     lines = message.text.replace(",", "\n").split()
     added = errors = 0
     results = []
     newly_added = []  # (user_id, username) для кика
 
     for token in lines[:100]:  # Макс 100 за раз вручную
+        if total + added >= limit:
+            results.append(f"• {token} (❌ Достигнут лимит {limit})")
+            errors += 1
+            break
+            
         parsed = parse_blacklist_line(token)
         if parsed:
             uid = parsed["user_id"]

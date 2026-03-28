@@ -86,11 +86,14 @@ async def expire_tariffs():
 
     if expired:
         logger.info(f"Expired tariffs: {len(expired)} users")
+        from scheduler.child_bot_runner import sync_child_bots
         for row in expired:
             try:
                 await _notify_expired(row["user_id"], row["tariff"])
+                # Синхронизируем боты (останавливаем лишние по лимиту Free)
+                await sync_child_bots(row["user_id"])
             except Exception as e:
-                logger.debug(f"Failed to notify {row['user_id']}: {e}")
+                logger.debug(f"Failed to notify or sync {row['user_id']}: {e}")
 
 
 async def _notify_expired(user_id: int, old_tariff: str):

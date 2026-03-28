@@ -165,11 +165,61 @@ def init_runner(main_bot: Bot):
 async def start_all_child_bots():
     """Вызывается при старте приложения — запускает polling для всех токенов из БД."""
     rows = await db.fetch(
-        "SELECT id, owner_id, bot_username, token_encrypted FROM child_bots"
+        """
+        WITH RankedBots AS (
+            SELECT cb.id, cb.owner_id, cb.bot_username, cb.token_encrypted,
+                   pu.tariff,
+                   ROW_NUMBER() OVER(PARTITION BY cb.owner_id ORDER BY cb.id ASC) as rn
+            FROM child_bots cb
+            JOIN platform_users pu ON pu.user_id = cb.owner_id
+        )
+        SELECT id, owner_id, bot_username, token_encrypted, tariff, rn
+        FROM RankedBots
+        """
     )
+    from config import TARIFFS
+    started = 0
     for row in rows:
-        await start_child_bot(row["id"], row["owner_id"], row["bot_username"], row["token_encrypted"])
-    logger.info(f"Started {len(rows)} child bot(s)")
+        limit = TARIFFS.get(row["tariff"], TARIFFS["free"])["max_bots"]
+        if row["rn"] <= limit:
+            await start_child_bot(row["id"], row["owner_id"], row["bot_username"], row["token_encrypted"])
+            started += 1
+    logger.info(f"Started {started} child bot(s) out of {len(rows)}")
+
+
+async def sync_child_bots(owner_id: int):
+    """
+    Синхронизирует запущенные боты юзера с его текущим тарифом (Soft-Lock).
+    Останавливает лишние боты и запускает разрешенные.
+    """
+    rows = await db.fetch(
+        """
+        WITH RankedBots AS (
+            SELECT cb.id, cb.owner_id, cb.bot_username, cb.token_encrypted,
+                   pu.tariff,
+                   ROW_NUMBER() OVER(PARTITION BY cb.owner_id ORDER BY cb.id ASC) as rn
+            FROM child_bots cb
+            JOIN platform_users pu ON pu.user_id = cb.owner_id
+            WHERE cb.owner_id = $1
+        )
+        SELECT id, owner_id, bot_username, token_encrypted, tariff, rn
+        FROM RankedBots
+        """,
+        owner_id
+    )
+    from config import TARIFFS
+    for row in rows:
+        limit = TARIFFS.get(row["tariff"], TARIFFS["free"])["max_bots"]
+        bot_id = row["id"]
+        if row["rn"] <= limit:
+            # Бот в лимите: если не запущен — запускаем
+            if bot_id not in _running_bots or _running_bots[bot_id].done():
+                await start_child_bot(bot_id, row["owner_id"], row["bot_username"], row["token_encrypted"])
+        else:
+            # Бот превышает лимит: если запущен — останавливаем (Soft-Lock)
+            if bot_id in _running_bots and not _running_bots[bot_id].done():
+                logger.info(f"Soft-Lock stopping bot @{row['bot_username']} for owner {owner_id}")
+                stop_child_bot(bot_id)
 
 
 async def start_child_bot(child_bot_id: int, owner_id: int, bot_username: str, token_encrypted: str):
@@ -1910,8 +1960,7 @@ async def _handle_chat_member(bot: Bot, child_bot_id: int, event: ChatMemberUpda
                     child_bot_id,
                 )
 
-            from handlers.join_requests import _log_action
-            await _log_action(owner_id, chat_id, "ban_on_join", user.id)
+
             logger.info(f"[BL] Kicked {user.id} from open chat {chat_id} (blacklisted. global={is_global_block}, local={is_local_block})")
             return
 

@@ -87,6 +87,12 @@ async def activate_tariff(user_id: int, tariff: str, period: str):
         """,
         tariff, str(days), user_id,
     )
+    from scheduler.child_bot_runner import sync_child_bots
+    try:
+        await sync_child_bots(user_id)
+    except Exception as e:
+        logger.error(f"Failed to sync child bots for {user_id} after payment: {e}")
+
     logger.info(f"Tariff {tariff}/{period} activated for user {user_id}")
 
 
@@ -109,8 +115,8 @@ async def notify_user_paid(bot, user_id: int, tariff: str, period: str):
     until = row["tariff_until"].strftime("%d.%m.%Y") if row and row["tariff_until"] else "—"
 
     tariff_labels = {"start": "🌱 Старт", "pro": "⭐ Про", "business": "💼 Бизнес"}
-    limits = settings.channel_limits
-    bl_limits = settings.blacklist_limits
+    from config import TARIFFS
+    t_info = TARIFFS.get(tariff, TARIFFS["free"])
 
     try:
         await bot.send_message(
@@ -119,8 +125,9 @@ async def notify_user_paid(bot, user_id: int, tariff: str, period: str):
             f"✅ <b>Оплата успешно получена!</b>\n\n"
             f"Тариф {tariff_labels.get(tariff, tariff)} активирован.\n\n"
             f"📅 Активен до: {until}\n"
-            f"📡 Площадок: до {limits.get(tariff, 1)}\n"
-            f"🚫 Чёрный список: до {bl_limits.get(tariff, 0):,}\n"
+            f"🤖 Ботов: до {t_info['max_bots']}\n"
+            f"📡 Площадок на 1 бота: до {t_info['max_chats_per_bot']}\n"
+            f"🚫 Чёрный список: до {t_info['max_blacklist_users']:,}\n"
             f"📨 Рассылка: ✅ доступна\n\n"
             f"Спасибо, что выбрал Bumblebee Bot 🙏\n"
             f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",

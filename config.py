@@ -76,4 +76,56 @@ class Settings(BaseSettings):
     trial_days: int = 10
 
 
+# ── Тарифы и Лимиты ───────────────────────────────────────────
+TARIFFS = {
+    "free": {
+        "max_bots": 1,
+        "max_chats_per_bot": 1,
+        "max_blacklist_users": 100,
+        "features": {
+            "analytics_full": False,
+            "protection": False,
+            "mailings": False,
+            "custom_links": False,
+            "add_admins": False
+        }
+    },
+    "start": {
+        "max_bots": 1,
+        "max_chats_per_bot": 3,
+        "max_blacklist_users": 1000,
+        "features": {
+            "analytics_full": True,
+            "protection": True,
+            "mailings": True,
+            "custom_links": True,
+            "add_admins": True
+        }
+    },
+    "pro": {
+        "max_bots": 3,
+        "max_chats_per_bot": 10,
+        "max_blacklist_users": 10000,
+        "features": {
+            "analytics_full": True,
+            "protection": True,
+            "mailings": True,
+            "custom_links": True,
+            "add_admins": True
+        }
+    },
+    "business": {
+        "max_bots": 5,
+        "max_chats_per_bot": 25,
+        "max_blacklist_users": 100000,
+        "features": {
+            "analytics_full": True,
+            "protection": True,
+            "mailings": True,
+            "custom_links": True,
+            "add_admins": True
+        }
+    }
+}
+
 settings = Settings()

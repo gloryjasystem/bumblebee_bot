@@ -36,40 +36,60 @@ async def on_channels_menu(callback: CallbackQuery, platform_user: dict | None):
         return
     owner_id = platform_user["user_id"]
 
-    # Мои боты (владелец)
+    # Мои боты (владелец) + подсчет RN для лимитов
     bots = await db.fetch(
         """
-        SELECT cb.id, cb.bot_username, 'owner' AS my_role,
-               (SELECT COUNT(*) FROM bot_chats bc
-                WHERE bc.child_bot_id = cb.id AND bc.owner_id = cb.owner_id) AS chat_count
-        FROM child_bots cb
-        WHERE cb.owner_id = $1
+        WITH RankedBots AS (
+            SELECT cb.id, cb.bot_username, 'owner' AS my_role, cb.owner_id,
+                   ROW_NUMBER() OVER(PARTITION BY cb.owner_id ORDER BY cb.id ASC) as rn,
+                   (SELECT COUNT(*) FROM bot_chats bc 
+                    WHERE bc.child_bot_id = cb.id AND bc.owner_id = cb.owner_id) AS chat_count
+            FROM child_bots cb
+            WHERE cb.owner_id = $1
+        )
+        SELECT id, bot_username, my_role, chat_count, rn FROM RankedBots
         UNION
-        -- Боты, к которым я добавлен как admin
-        SELECT cb.id, cb.bot_username, 'admin' AS my_role,
-               (SELECT COUNT(*) FROM bot_chats bc
-                WHERE bc.child_bot_id = cb.id AND bc.owner_id = cb.owner_id) AS chat_count
+        -- Боты, к которым я добавлен как admin (для них своя квота идёт от их владельца, здесь просто показываем)
+        SELECT cb.id, cb.bot_username, 'admin' AS my_role, 
+               (SELECT COUNT(*) FROM bot_chats bc 
+                WHERE bc.child_bot_id = cb.id AND bc.owner_id = cb.owner_id) AS chat_count,
+               0 as rn
         FROM child_bots cb
         JOIN team_members tm ON tm.child_bot_id = cb.id AND tm.user_id = $1 AND tm.is_active = true
         WHERE cb.owner_id != $1
-        ORDER BY id DESC
+        ORDER BY rn ASC, id DESC
         """,
         owner_id,
     )
 
+    from config import TARIFFS
     tariff = platform_user["tariff"]
-    limit  = settings.channel_limits.get(tariff, 1)
-    # Считаем только собственные боты для лимита
+    limit  = TARIFFS.get(tariff, TARIFFS["free"])["max_bots"]
+    # Считаем только собственные боты для вывода кнопки
     own_count = sum(1 for b in bots if b["my_role"] == "owner")
 
     buttons = []
+    own_active = 0
+    own_frozen = 0
     for b in bots:
-        status = "🟢" if b["chat_count"] > 0 else "⚪"
-        role_icon = "" if b["my_role"] == "owner" else " 🛡"
-        buttons.append([InlineKeyboardButton(
-            text=f"{status} @{b['bot_username']}{role_icon}",
-            callback_data=f"bot_settings:{b['id']}",
-        )])
+        is_frozen = b["my_role"] == "owner" and b["rn"] > limit
+        if b["my_role"] == "owner":
+            if is_frozen:
+                own_frozen += 1
+            else:
+                own_active += 1
+        
+        if is_frozen:
+            status = "🔴"
+            btn_text = f"{status} @{b['bot_username']} (Заморожен)"
+            buttons.append([InlineKeyboardButton(text=btn_text, callback_data=f"bot_frozen:{b['id']}")])
+        else:
+            status = "🟢" if b["chat_count"] > 0 else "⚪"
+            role_icon = "" if b["my_role"] == "owner" else " 🛡"
+            buttons.append([InlineKeyboardButton(
+                text=f"{status} @{b['bot_username']}{role_icon}",
+                callback_data=f"bot_settings:{b['id']}",
+            )])
 
     if own_count < limit:
         buttons.append([InlineKeyboardButton(
@@ -91,6 +111,15 @@ async def on_channels_menu(callback: CallbackQuery, platform_user: dict | None):
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
     )
 
+
+@router.callback_query(F.data.startswith("bot_frozen:"))
+async def on_bot_frozen(callback: CallbackQuery):
+    await callback.answer(
+        "🔴 Бот заморожен!\n"
+        "Ваш текущий лимит ботов исчерпан из-за понижения тарифа.\n"
+        "Оплатите тариф для возвращения доступа к боту.",
+        show_alert=True
+    )
 
 # ══════════════════════════════════════════════════════════════
 # 1б. Настройки бота (уровень 2)
@@ -246,13 +275,26 @@ async def on_bot_settings(callback: CallbackQuery, platform_user: dict | None):
 
     username = bot["bot_username"]
     captcha_block = ""
-    if captcha_total_all > 0:
-        captcha_block = (
-            f"\n\n<u>\U0001f512 Решений капч</u>\n"
-            f"├ Сегодня ≈ {captcha_passed_today} | {_pct(captcha_passed_today, captcha_total_today)}\n"
-            f"├ Вчера ≈ {captcha_passed_yest} | {_pct(captcha_passed_yest, captcha_total_yest)}\n"
-            f"└ Всего ≈ {captcha_passed_all} | {_pct(captcha_passed_all, captcha_total_all)}"
+    is_free = platform_user.get("tariff", "free") == "free"
+
+    if is_free:
+        captcha_block = "\n\n🔒 <i>Детальная аналитика (капчи, сообщения) доступна на платных тарифах.</i>"
+        msg_block = ""
+    else:
+        if captcha_total_all > 0:
+            captcha_block = (
+                f"\n\n<u>\U0001f512 Решений капч</u>\n"
+                f"├ Сегодня ≈ {captcha_passed_today} | {_pct(captcha_passed_today, captcha_total_today)}\n"
+                f"├ Вчера ≈ {captcha_passed_yest} | {_pct(captcha_passed_yest, captcha_total_yest)}\n"
+                f"└ Всего ≈ {captcha_passed_all} | {_pct(captcha_passed_all, captcha_total_all)}"
+            )
+        msg_block = (
+            f"\n\n<u>\U0001f4ac Сообщений</u>\n"
+            f"├ Сегодня ≈ {msg_today}\n"
+            f"├ Вчера ≈ {msg_yesterday}\n"
+            f"└ Всего ≈ {msg_total}"
         )
+
     text = (
         f"🤖 Бот: @{username}\n\n"
         f"<u>\U0001f465 Пользователей</u>\n"
@@ -260,15 +302,16 @@ async def on_bot_settings(callback: CallbackQuery, platform_user: dict | None):
         f"├ Вчера ≈ {yesterday_users}\n"
         f"├ Всего ≈ {total_users}\n"
         f"└ Заявок в очереди ≈ {pending}"
-        f"{captcha_block}\n\n"
-        f"<u>\U0001f4ac Сообщений</u>\n"
-        f"├ Сегодня ≈ {msg_today}\n"
-        f"├ Вчера ≈ {msg_yesterday}\n"
-        f"└ Всего ≈ {msg_total}\n"
+        f"{captcha_block}{msg_block}\n"
         f"\n"
         f"🟢 Живые ≈ {alive_users}\n"
         f"🔴 Мёртвые ≈ {dead_users}"
     )
+
+    # Кнопки с учетом тарифа (Paywall)
+    btn_mailing    = InlineKeyboardButton(text=("🔒 Рассылка" if is_free else "📨 Рассылка"), callback_data="paywall:mailing" if is_free else f"bs_mailing:{child_bot_id}")
+    btn_links      = InlineKeyboardButton(text=("🔒 Ссылки" if is_free else "🔗 Ссылки"),   callback_data="paywall:links" if is_free else f"bs_links:{child_bot_id}")
+    btn_protection = InlineKeyboardButton(text=("🔒 Защита" if is_free else "🛡 Защита"),   callback_data="paywall:protection" if is_free else f"bs_protection:{child_bot_id}")
 
     if is_owner:
         # Владелец: Защита + Управление в одной строке, плюс Удалить бот
@@ -276,14 +319,14 @@ async def on_bot_settings(callback: CallbackQuery, platform_user: dict | None):
             [InlineKeyboardButton(text="✅ Обработка заявок",  callback_data=f"bs_requests:{child_bot_id}")],
             [
                 InlineKeyboardButton(text="💬 Сообщения",      callback_data=f"bs_messages:{child_bot_id}"),
-                InlineKeyboardButton(text="📨 Рассылка",       callback_data=f"bs_mailing:{child_bot_id}"),
+                btn_mailing,
             ],
             [
-                InlineKeyboardButton(text="🔗 Ссылки",         callback_data=f"bs_links:{child_bot_id}"),
+                btn_links,
                 InlineKeyboardButton(text="📍 Площадки",       callback_data=f"bot_chats_list:{child_bot_id}"),
             ],
             [
-                InlineKeyboardButton(text="🛡 Защита",         callback_data=f"bs_protection:{child_bot_id}"),
+                btn_protection,
                 InlineKeyboardButton(text="⚙️ Управление",     callback_data=f"bs_settings:{child_bot_id}"),
             ],
             [InlineKeyboardButton(text="📣 Обратная связь",    callback_data=f"bs_feedback:{child_bot_id}")],
@@ -296,13 +339,13 @@ async def on_bot_settings(callback: CallbackQuery, platform_user: dict | None):
             [InlineKeyboardButton(text="✅ Обработка заявок",  callback_data=f"bs_requests:{child_bot_id}")],
             [
                 InlineKeyboardButton(text="💬 Сообщения",      callback_data=f"bs_messages:{child_bot_id}"),
-                InlineKeyboardButton(text="📨 Рассылка",       callback_data=f"bs_mailing:{child_bot_id}"),
+                btn_mailing,
             ],
             [
-                InlineKeyboardButton(text="🔗 Ссылки",         callback_data=f"bs_links:{child_bot_id}"),
+                btn_links,
                 InlineKeyboardButton(text="📍 Площадки",       callback_data=f"bot_chats_list:{child_bot_id}"),
             ],
-            [InlineKeyboardButton(text="🛡 Защита",            callback_data=f"bs_protection:{child_bot_id}")],
+            [btn_protection],
             [InlineKeyboardButton(text="📣 Обратная связь",    callback_data=f"bs_feedback:{child_bot_id}")],
             [InlineKeyboardButton(text="◀️ Назад",             callback_data="menu:channels")],
         ]
@@ -342,22 +385,49 @@ async def on_bot_chats_list(callback: CallbackQuery, platform_user: dict | None)
         return
 
     chats = await db.fetch(
-        """SELECT id, chat_title, chat_type, is_active
-           FROM bot_chats
-           WHERE child_bot_id=$1 AND owner_id=$2
-           ORDER BY added_at DESC""",
+        """
+        WITH RankedChats AS (
+            SELECT id, chat_title, chat_type, is_active,
+                   CASE WHEN is_active THEN ROW_NUMBER() OVER(PARTITION BY child_bot_id, is_active ORDER BY added_at ASC)
+                        ELSE 9999 END as rn
+            FROM bot_chats
+            WHERE child_bot_id=$1 AND owner_id=$2
+        )
+        SELECT id, chat_title, chat_type, is_active, rn
+        FROM RankedChats
+        ORDER BY rn ASC
+        """,
         child_bot_id, owner_id,
     )
 
+    from config import TARIFFS
+    tariff = platform_user["tariff"]
+    limit  = TARIFFS.get(tariff, TARIFFS["free"])["max_chats_per_bot"]
+
     buttons = []
+    active_count = 0
+    frozen_count = 0
+
     for ch in chats:
-        icon = "🟢" if ch["is_active"] else "🔴"
-        type_icon = "📢" if ch["chat_type"] == "channel" else "👥"
-        title = ch["chat_title"] or "Без названия"
-        buttons.append([InlineKeyboardButton(
-            text=f"{icon} {type_icon} {title}",
-            callback_data=f"channel_in_bot:{ch['id']}:{child_bot_id}",
-        )])
+        # A chat is essentially soft-locked only if it's active AND its rank exceeds the limit
+        is_frozen = ch["rn"] > limit and ch["is_active"]
+        
+        if is_frozen:
+            frozen_count += 1
+            icon = "🔴"
+            title = ch["chat_title"] or "Без названия"
+            btn_text = f"{icon} {title} (Заморожено)"
+            buttons.append([InlineKeyboardButton(text=btn_text, callback_data=f"chat_frozen:{ch['id']}")])
+        else:
+            if ch["is_active"]:
+                active_count += 1
+            icon = "🟢" if ch["is_active"] else "⚪"
+            type_icon = "📢" if ch["chat_type"] == "channel" else "👥"
+            title = ch["chat_title"] or "Без названия"
+            buttons.append([InlineKeyboardButton(
+                text=f"{icon} {type_icon} {title}",
+                callback_data=f"channel_in_bot:{ch['id']}:{child_bot_id}",
+            )])
 
     verify_label = "✅ Проверка: вкл" if bot["verify_only"] else "❌ Проверка: выкл"
     buttons.append([InlineKeyboardButton(
@@ -378,17 +448,31 @@ async def on_bot_chats_list(callback: CallbackQuery, platform_user: dict | None)
         "</blockquote>"
     )
     count = len(chats)
+    status_text = f"Подключено площадок: {count}\n"
+    if frozen_count > 0:
+        status_text += f"Активно: {active_count} | Заморожено: {frozen_count} (лимит {limit})\n"
+
     msg = await navigate(
         callback,
         f"📍 <b>Площадки @{username}</b>\n\n"
         f"{hint}\n\n"
-        f"Подключено площадок: {count}\n\n"
+        f"{status_text}\n"
         "Выберите действие 👇" if count > 0 else
         f"📍 <b>Площадки @{username}</b>\n\n"
         f"{hint}\n\n"
+        f"{status_text}\n"
         "Бот ещё не добавлен ни в один канал или группу.\n"
         "Нажмите <b>Подключение</b> чтобы добавить.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+    )
+
+@router.callback_query(F.data.startswith("chat_frozen:"))
+async def on_chat_frozen(callback: CallbackQuery):
+    await callback.answer(
+        "🔴 Площадка заморожена!\n"
+        "Ваш лимит площадок на одного бота исчерпан.\n"
+        "Улучшите тариф, чтобы бот снова начал работать в этой группе/канале.",
+        show_alert=True
     )
     if msg:
         await db.execute(
@@ -746,15 +830,17 @@ async def on_chat_verify_input(message: Message, state: FSMContext, platform_use
         )
         return
 
-    # Проверяем лимит
+    # Проверяем лимит на количество площадок для данного бота
+    from config import TARIFFS
     tariff = platform_user["tariff"]
-    limit  = settings.channel_limits.get(tariff, 1)
+    limit  = TARIFFS.get(tariff, TARIFFS["free"])["max_chats_per_bot"]
     count  = await db.fetchval(
-        "SELECT COUNT(*) FROM bot_chats WHERE owner_id=$1", owner_id,
+        "SELECT COUNT(*) FROM bot_chats WHERE owner_id=$1 AND child_bot_id=$2 AND is_active=true", 
+        owner_id, child_bot_id
     )
     if count >= limit:
         await msg.edit_text(
-            f"🔒 Достигнут лимит площадок ({limit}) для тарифа {tariff.capitalize()}.",
+            f"🔒 Достигнут лимит площадок ({limit} на 1 бота) для тарифа {tariff.capitalize()}.",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="💳 Улучшить тариф", callback_data="menu:tariffs")],
                 [InlineKeyboardButton(text="◀️ Назад",           callback_data="menu:channels")],

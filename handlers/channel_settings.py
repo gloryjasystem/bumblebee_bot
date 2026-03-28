@@ -1864,7 +1864,21 @@ async def resolve_owner_id(user_id: int, child_bot_id: int) -> int | None:
            )""",
         child_bot_id, user_id,
     )
-    return row["owner_id"] if row else None
+    if not row:
+        return None
+        
+    owner_id = row["owner_id"]
+    if owner_id != user_id:
+        # Это участник команды. Проверяем, позволяет ли тариф владельца использовать функционал Команды
+        pu = await db.fetchrow("SELECT tariff FROM platform_users WHERE user_id=$1", owner_id)
+        tariff = pu["tariff"] if pu else "free"
+        from config import TARIFFS
+        limit_data = TARIFFS.get(tariff, TARIFFS["free"])
+        if not limit_data["features"]["add_admins"]:
+            # Тариф владельца не позволяет использовать команду (например, упал на Free)
+            return None
+            
+    return owner_id
 
 
 async def _get_bot_first_chat(owner_id: int, child_bot_id: int):
@@ -2562,11 +2576,14 @@ async def on_bs_settings(callback: CallbackQuery, platform_user: dict | None):
     if not platform_user:
         return
     child_bot_id = int(callback.data.split(":")[1])
+    is_free = platform_user.get("tariff", "free") == "free"
+    btn_team = InlineKeyboardButton(text=("🔒 Команда" if is_free else "👥 Команда"), callback_data="paywall:team" if is_free else f"bs_team:{child_bot_id}")
+
     await callback.message.edit_text(
         "⚙️ <b>Управление</b>\n\nВыберите действие ⬇️",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🗄 База",          callback_data=f"bs_base:{child_bot_id}")],
-            [InlineKeyboardButton(text="👥 Команда",       callback_data=f"bs_team:{child_bot_id}")],
+            [btn_team],
             [InlineKeyboardButton(text="🕐 Часовой пояс",  callback_data=f"bs_timezone:{child_bot_id}")],
             [InlineKeyboardButton(text="◀️ Назад",          callback_data=f"bot_settings:{child_bot_id}")],
         ]),

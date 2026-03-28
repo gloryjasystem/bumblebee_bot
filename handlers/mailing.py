@@ -45,19 +45,36 @@ async def _show_mass_mailing(callback: CallbackQuery, state: FSMContext,
     data = await state.get_data()
     selected: list[int] = data.get("mass_selected", [])
 
-    # Все боты пользователя (включая admin-боты из команды)
+    tariff = platform_user.get("tariff", "free")
+    from config import TARIFFS
+    t_info = TARIFFS.get(tariff, TARIFFS["free"])
+    max_bots = t_info["max_bots"]
+
+    # Активные боты владельца (в рамках лимита) + admin-боты из команды
     bots = await db.fetch(
         """
-        SELECT cb.id, cb.bot_username FROM child_bots cb
-        WHERE cb.owner_id = $1
+        WITH RankedBots AS (
+            SELECT cb.id, cb.bot_username,
+                   ROW_NUMBER() OVER(PARTITION BY cb.owner_id ORDER BY cb.id ASC) as rn
+            FROM child_bots cb
+            WHERE cb.owner_id = $1
+        )
+        SELECT id, bot_username FROM RankedBots
+        WHERE rn <= $2
         UNION
         SELECT cb.id, cb.bot_username FROM child_bots cb
         JOIN team_members tm ON tm.child_bot_id = cb.id AND tm.user_id = $1 AND tm.is_active = true
         WHERE cb.owner_id != $1
         ORDER BY id
         """,
-        owner_id,
+        owner_id, max_bots,
     )
+
+    # Убираем из выбранных те боты, которые были заморожены (если они там были)
+    valid_bot_ids = [b["id"] for b in bots]
+    selected = [sid for sid in selected if sid in valid_bot_ids]
+    if len(selected) != len(data.get("mass_selected", [])):
+        await state.update_data(mass_selected=selected)
 
     # Считаем пользователей по выбранным ботам
     total_users = 0

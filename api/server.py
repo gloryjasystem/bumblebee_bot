@@ -319,11 +319,20 @@ def create_app(bot: Bot, dp: Dispatcher) -> FastAPI:
             )
             if result == "UPDATE 1":
                 row = await db.fetchrow(
-                    "SELECT user_id, tariff, period FROM payments WHERE id=$1",
+                    "SELECT user_id, tariff, period, invoice_msg_id FROM payments WHERE id=$1",
                     payment_id,
                 )
                 if row:
                     await activate_tariff(row["user_id"], row["tariff"], row["period"])
+                    # Удаляем старое сообщение с кнопками "Оплатить / Назад"
+                    if row["invoice_msg_id"]:
+                        try:
+                            await _bot.delete_message(
+                                chat_id=row["user_id"],
+                                message_id=row["invoice_msg_id"],
+                            )
+                        except Exception:
+                            pass
                     await notify_user_paid(_bot, row["user_id"], row["tariff"], row["period"])
                     await notify_owner_payment(_bot, row["user_id"], data)
 

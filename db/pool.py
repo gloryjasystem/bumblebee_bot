@@ -107,6 +107,14 @@ async def create_pool() -> asyncpg.Pool:
         )
         logger.info("[DB] platform_settings table ready")
 
+        # ── invoice_msg_id для удаления сообщения с кнопками после оплаты ──────
+        await conn.execute(
+            "ALTER TABLE payments ADD COLUMN IF NOT EXISTS invoice_msg_id BIGINT"
+        )
+        await conn.execute(
+            "ALTER TABLE payments ADD COLUMN IF NOT EXISTS applied_discount SMALLINT DEFAULT 0"
+        )
+
     return _pool
 
 

@@ -206,8 +206,23 @@ async def on_tariff_buy(callback: CallbackQuery, platform_user: dict | None):
                                show_alert=True)
         return
 
-    # Открываем WebApp на нашем домене — внутри телеграма как миниприложение
     webapp_url = f"{settings.server_url}/webapp/payment.html?tariff={tariff_key}&period={period}"
+
+    # Сохраняем message_id чтобы вебхук мог удалить сообщение после оплаты
+    from db.pool import execute as db_execute
+    await db_execute(
+        """
+        UPDATE payments SET invoice_msg_id=$1
+        WHERE id = (
+            SELECT id FROM payments
+            WHERE user_id=$2 AND status='pending' AND invoice_msg_id IS NULL
+            ORDER BY created_at DESC
+            LIMIT 1
+        )
+        """,
+        callback.message.message_id,
+        platform_user["user_id"],
+    )
 
     await callback.message.edit_reply_markup(
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[

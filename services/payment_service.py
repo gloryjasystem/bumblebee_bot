@@ -121,16 +121,14 @@ async def notify_user_paid(bot, user_id: int, tariff: str, period: str):
     try:
         await bot.send_message(
             user_id,
-            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"✅ <b>Оплата успешно получена!</b>\n\n"
-            f"Тариф {tariff_labels.get(tariff, tariff)} активирован.\n\n"
-            f"📅 Активен до: {until}\n"
-            f"🤖 Ботов: до {t_info['max_bots']}\n"
-            f"📡 Площадок на 1 бота: до {t_info['max_chats_per_bot']}\n"
-            f"🚫 Чёрный список: до {t_info['max_blacklist_users']:,}\n"
-            f"📨 Рассылка: ✅ доступна\n\n"
-            f"Спасибо, что выбрал Bumblebee Bot 🙏\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+            f"✅ <b>Тариф {tariff_labels.get(tariff, tariff)} активирован!</b>\n\n"
+            f"📅 Активен до: <b>{until}</b>\n"
+            f"🤖 Ботов: до <b>{t_info['max_bots']}</b>\n"
+            f"📍 Площадок на 1 бота: до <b>{t_info['max_chats_per_bot']}</b>\n"
+            f"🚫 Чёрный список: до <b>{t_info['max_blacklist_users']:,}</b>\n"
+            f"📨 Рассылки: <b>доступны</b>\n\n"
+            f"Спасибо, что выбрал Bumblebee Bot 🙏",
+            parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
                 InlineKeyboardButton(text="🚀 Открыть панель", callback_data="menu:main")
             ]]),

@@ -91,7 +91,7 @@ TARIFFS = {
         }
     },
     "start": {
-        "max_bots": 1,
+        "max_bots": 3,
         "max_chats_per_bot": 3,
         "max_blacklist_users": 1000,
         "features": {
@@ -103,7 +103,7 @@ TARIFFS = {
         }
     },
     "pro": {
-        "max_bots": 3,
+        "max_bots": 6,
         "max_chats_per_bot": 10,
         "max_blacklist_users": 10000,
         "features": {
@@ -115,8 +115,8 @@ TARIFFS = {
         }
     },
     "business": {
-        "max_bots": 5,
-        "max_chats_per_bot": 25,
+        "max_bots": 10,
+        "max_chats_per_bot": 999999,
         "max_blacklist_users": 100000,
         "features": {
             "analytics_full": True,

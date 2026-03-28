@@ -953,6 +953,14 @@ async def on_ga_pu_tariff(callback: CallbackQuery):
 async def on_ga_pu_tariff_pick(callback: CallbackQuery):
     parts = callback.data.split(":")
     new_tariff, target_uid, admin_owner_id = parts[1], int(parts[2]), int(parts[3])
+    
+    if new_tariff == "free":
+        # Free has no duration, go straight to confirmation
+        fake_cb = callback
+        fake_cb.data = f"ga_pu_tariff_dur:free:forever:{target_uid}:{admin_owner_id}"
+        await on_ga_pu_tariff_dur(fake_cb)
+        return
+
     label = TARIFF_LABELS.get(new_tariff, new_tariff.title())
     kb = []
     dur_row = [
@@ -978,24 +986,39 @@ async def on_ga_pu_tariff_dur(callback: CallbackQuery):
     parts = callback.data.split(":")
     new_tariff, dur_key, target_uid, admin_owner_id = parts[1], parts[2], int(parts[3]), int(parts[4])
     label = TARIFF_LABELS.get(new_tariff, new_tariff.title())
-    dur_label = next((d[1] for d in DURATIONS if d[0] == dur_key), dur_key)
-    if dur_key == "forever":
-        until_str = "Бессрочно"
-    elif dur_key == "1m":
-        until = datetime.now(timezone.utc) + timedelta(days=30)
-        until_str = until.strftime("%d.%m.%Y")
-    else:  # 1y
-        until = datetime.now(timezone.utc) + timedelta(days=365)
-        until_str = until.strftime("%d.%m.%Y")
+    
     async with get_pool().acquire() as conn:
         pu = await conn.fetchrow("SELECT username FROM platform_users WHERE user_id=$1", target_uid)
     uname = f"@{pu['username']}" if pu and pu.get('username') else str(target_uid)
+
+    if new_tariff == "free":
+        msg_text = (
+            f"✅ <b>Подтвердите сброс тарифа</b>\n\n"
+            f"👤 {uname}\n"
+            f"💎 <b>Новый статус:</b> {label}\n\n"
+            f"<i>Внимание: тариф пользователя будет сброшен до базового уровня. Все лимиты будут пересчитаны, а излишки ботов и площадок заморожены.</i>"
+        )
+    else:
+        dur_label = next((d[1] for d in DURATIONS if d[0] == dur_key), dur_key)
+        if dur_key == "forever":
+            until_str = "Бессрочно"
+        elif dur_key == "1m":
+            until = datetime.now(timezone.utc) + timedelta(days=30)
+            until_str = until.strftime("%d.%m.%Y")
+        else:  # 1y
+            until = datetime.now(timezone.utc) + timedelta(days=365)
+            until_str = until.strftime("%d.%m.%Y")
+            
+        msg_text = (
+            f"✅ <b>Подтвердите смену тарифа</b>\n\n"
+            f"👤 {uname}\n"
+            f"💎 {label}  •  {dur_label}\n"
+            f"📅 Будет действовать до: <b>{until_str}</b>"
+        )
+        
     await navigate(
         callback,
-        f"✅ <b>Подтвердите смену тарифа</b>\n\n"
-        f"👤 {uname}\n"
-        f"💎 {label}  •  {dur_label}\n"
-        f"📅 Будет действовать до: <b>{until_str}</b>",
+        msg_text,
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="✅ Да, применить", callback_data=f"ga_pu_tariff_apply:{new_tariff}:{dur_key}:{target_uid}:{admin_owner_id}")],
@@ -1020,6 +1043,10 @@ async def on_ga_pu_tariff_apply(callback: CallbackQuery):
             "UPDATE platform_users SET tariff=$1, tariff_until=$2 WHERE user_id=$3",
             new_tariff, new_until, target_uid
         )
+        
+    import asyncio
+    from scheduler.child_bot_runner import sync_child_bots
+    asyncio.create_task(sync_child_bots(target_uid))
     await callback.answer("✅ Тариф обновлён", show_alert=True)
     # Go back to tariff screen refreshed
     fake_cb = callback

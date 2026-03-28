@@ -10,6 +10,8 @@ from config import settings
 import db.pool as db
 from services.discount import get_active_discount
 
+from aiogram.fsm.context import FSMContext
+
 logger = logging.getLogger(__name__)
 router = Router()
 
@@ -84,10 +86,14 @@ TARIFF_LABELS = {
 # ──────────────────────────────────────────────────────────────
 # Экран 1: список тарифов
 # ──────────────────────────────────────────────────────────────
-@router.callback_query(F.data == "menu:tariffs")
-async def on_tariffs(callback: CallbackQuery, platform_user: dict | None):
+@router.callback_query(F.data.in_({"menu:tariffs", "menu:tariffs_back"}))
+async def on_tariffs(callback: CallbackQuery, state: FSMContext, platform_user: dict | None):
     if not platform_user:
         return
+        
+    # Если зашли "снаружи" (главное меню), сбрасываем возврат к боту. Если из paywall — мы установим его сами.
+    if callback.data == "menu:tariffs" and not getattr(callback, "came_from_paywall", False):
+        await state.update_data(return_to_bot=None)
 
     tariff = platform_user["tariff"]
     until = ""
@@ -120,7 +126,10 @@ async def on_tariffs(callback: CallbackQuery, platform_user: dict | None):
             callback_data=f"tariff_detail:{key}",
         )])
 
-    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data="menu:main")])
+    data = await state.get_data()
+    return_bot = data.get("return_to_bot")
+    back_cd = f"bot_settings:{return_bot}" if return_bot else "menu:main"
+    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data=back_cd)])
 
     await callback.message.edit_text(
         f"💎 <b>Тарифы Bumblebee Bot</b>\n\n"
@@ -164,19 +173,19 @@ async def on_tariff_detail(callback: CallbackQuery, platform_user: dict | None):
         btn_month_text = f"💳 ${month_price} / месяц"
         btn_year_text  = f"💳 ${year_price} / год  (−29%)"
 
+    buttons = [
+        [
+            InlineKeyboardButton(text=btn_month_text, callback_data=f"tariff_buy:{tariff_key}:month")
+        ],
+        [
+            InlineKeyboardButton(text=btn_year_text, callback_data=f"tariff_buy:{tariff_key}:year")
+        ],
+        [InlineKeyboardButton(text="◀️ Назад", callback_data="menu:tariffs_back")]
+    ]
+
     await callback.message.edit_text(
         desc,
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(
-                text=btn_month_text,
-                callback_data=f"tariff_buy:{tariff_key}:month",
-            )],
-            [InlineKeyboardButton(
-                text=btn_year_text,
-                callback_data=f"tariff_buy:{tariff_key}:year",
-            )],
-            [InlineKeyboardButton(text="◀️ Назад", callback_data="menu:tariffs")],
-        ]),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
     )
     await callback.answer()
 
@@ -267,12 +276,19 @@ async def on_noop(callback: CallbackQuery):
     await callback.answer()
 
 @router.callback_query(F.data.startswith("paywall:"))
-async def on_paywall_click(callback: CallbackQuery, platform_user: dict | None):
+async def on_paywall_click(callback: CallbackQuery, state: FSMContext, platform_user: dict | None):
+    parts = callback.data.split(":")
+    if len(parts) > 2:
+        await state.update_data(return_to_bot=parts[2])
+    else:
+        await state.update_data(return_to_bot=None)
+        
     # Показываем сообщение и перекидываем в тарифы
     await callback.answer(
         "🔒 Доступно только на платных тарифах!\nПерейдите в меню тарифов для прокачки бота.",
         show_alert=True
     )
     # Имитируем нажатие "menu:tariffs"
-    await on_tariffs(callback, platform_user)
+    callback.came_from_paywall = True
+    await on_tariffs(callback, state, platform_user)
 

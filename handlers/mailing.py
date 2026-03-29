@@ -83,7 +83,7 @@ async def _show_mass_mailing(callback: CallbackQuery, state: FSMContext,
             """SELECT COUNT(DISTINCT bu.user_id) FROM bot_users bu
                LEFT JOIN bot_chats bc ON bu.chat_id=bc.chat_id AND bu.owner_id=bc.owner_id
                WHERE (bc.child_bot_id = ANY($1::int[]) OR bu.chat_id=bu.user_id)
-               AND bu.owner_id=$2 AND bu.is_active=true AND bu.bot_activated=true""",
+               AND bu.owner_id=$2 AND bu.user_id IS NOT NULL""",
             selected, owner_id
         ) or 0
 
@@ -176,7 +176,7 @@ async def on_ml_mass_start(callback: CallbackQuery, state: FSMContext,
         """SELECT COUNT(DISTINCT bu.user_id) FROM bot_users bu
            LEFT JOIN bot_chats bc ON bu.chat_id=bc.chat_id AND bu.owner_id=bc.owner_id
            WHERE (bc.child_bot_id = ANY($1::int[]) OR bu.chat_id=bu.user_id)
-           AND bu.owner_id=$2 AND bu.is_active=true AND bu.bot_activated=true""",
+           AND bu.owner_id=$2 AND bu.user_id IS NOT NULL""",
         selected, platform_user["user_id"]
     ) or 0
 

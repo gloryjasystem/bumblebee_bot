@@ -533,7 +533,7 @@ async def on_bot_connect(callback: CallbackQuery, platform_user: dict | None):
     deep_channel = f"https://t.me/{username}?startchannel=true&admin=post_messages+delete_messages+invite_users+restrict_members+pin_messages"
     deep_group   = f"https://t.me/{username}?startgroup=true&admin=post_messages+delete_messages+invite_users+restrict_members+pin_messages"
 
-    await navigate(
+    msg = await navigate(
         callback,
         f"➕ Добавьте <b>@{username}</b> в <b>канал или группу</b> "
         f"в качестве администратора с правами на "
@@ -547,6 +547,11 @@ async def on_bot_connect(callback: CallbackQuery, platform_user: dict | None):
             [InlineKeyboardButton(text="◀️ Назад", callback_data=f"bot_chats_list:{child_bot_id}")],
         ]),
     )
+    if msg:
+        await db.execute(
+            "UPDATE platform_users SET last_channels_menu_id=$1 WHERE user_id=$2",
+            msg.message_id, owner_id,
+        )
 
 
 # ══════════════════════════════════════════════════════════════

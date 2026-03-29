@@ -46,12 +46,12 @@ class Settings(BaseSettings):
 
     # ── Тарифные цены (USD) ──────────────────────────
     tariff_prices: dict = {
-        "start_month":    9,
-        "pro_month":     24,
-        "business_month": 59,
-        "start_year":    79,
-        "pro_year":     199,
-        "business_year": 499,
+        "start_month":     50,
+        "pro_month":      149,
+        "business_month": 299,
+        "start_year":     499,
+        "pro_year":       999,
+        "business_year": 1999,
     }
 
     tariff_durations: dict = {

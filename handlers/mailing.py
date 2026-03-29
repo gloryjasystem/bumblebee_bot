@@ -156,6 +156,10 @@ async def on_menu_mailing(callback: CallbackQuery, state: FSMContext,
         updates["mass_selected"] = []
     await state.update_data(**updates)
     await state.set_state(MassMailingFSM.selecting_bots)
+    # Удаляем эхо черновика если возвращаемся из экрана настройки рассылки
+    mid = _extract_mailing_id_from_keyboard(callback)
+    if mid is not None:
+        await _delete_draft_echo(callback.bot, mid)
     await _show_mass_mailing(callback, state, platform_user)
 
 

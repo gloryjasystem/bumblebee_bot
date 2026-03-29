@@ -1309,12 +1309,16 @@ async def on_ml_view_draft(callback: CallbackQuery, platform_user: dict | None):
     if not m:
         await callback.answer("Черновик не найден", show_alert=True)
         return
-    # Удаляем текущее сообщение (экран URL-кнопок или список) перед восстановлением эхо
+    # Удаляем текущее сообщение (список, URL-экран и т.д.) перед восстановлением эхо
     try:
         await callback.message.delete()
     except Exception:
         pass
+    # Удаляем старое эхо из чата и сбрасываем кэш — иначе _show_draft попытается
+    # отредактировать уже удалённое сообщение и покажет пустой экран
+    await _delete_draft_echo(callback.bot, mailing_id)
     await _show_draft(callback, dict(m))
+
 
 
 # ══════════════════════════════════════════════════════════════

@@ -295,9 +295,10 @@ async def on_ml_mass_scheduled(callback: CallbackQuery, platform_user: dict | No
     rows = await db.fetch(
         """SELECT m.id, m.text, m.scheduled_at, cb.bot_username
            FROM mailings m
-           JOIN child_bots cb ON cb.id = m.child_bot_id
-           WHERE m.owner_id=$1 AND m.child_bot_id IS NOT NULL
-             AND m.status IN ('pending','scheduled')
+           LEFT JOIN child_bots cb ON cb.id = m.child_bot_id
+           WHERE m.owner_id=$1
+             AND (m.child_bot_id IS NOT NULL OR m.campaign_id IS NOT NULL)
+             AND m.status IN ('scheduled')
            ORDER BY m.scheduled_at ASC LIMIT 15""",
         owner_id,
     )
@@ -314,11 +315,11 @@ async def on_ml_mass_scheduled(callback: CallbackQuery, platform_user: dict | No
     buttons = []
     for r in rows:
         dt = r["scheduled_at"].strftime("%d.%m %H:%M") if r.get("scheduled_at") else "—"
-        bot_name = f"@{r['bot_username']}"
+        bot_name = f"@{r['bot_username']}" if r.get("bot_username") else "📣 Массовая"
         preview = (r["text"] or "")[:20]
         buttons.append([InlineKeyboardButton(
             text=f"📅 {dt} [{bot_name}] {preview}…",
-            callback_data=f"mailing_view:{r['id']}",
+            callback_data=f"ml_view_draft:{r['id']}:",
         )])
     buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data="menu:mailing")])
 
@@ -1579,7 +1580,7 @@ async def on_mailing_schedule(callback: CallbackQuery, state: FSMContext, platfo
     now_utc = datetime.now(timezone.utc)
     now_str = now_utc.strftime("%H:%M")
 
-    await callback.message.edit_text(
+    msg = await callback.message.edit_text(
         "<u>Отправьте дату в формате</u>\n"
         "├ <code>01.01.25 12:00</code>\n"
         "├ <code>01.01.23, 11:24 (+3)</code>\n"
@@ -1594,6 +1595,7 @@ async def on_mailing_schedule(callback: CallbackQuery, state: FSMContext, platfo
         ]),
         link_preview_options=LinkPreviewOptions(is_disabled=True),
     )
+    await state.update_data(prompt_msg_id=msg.message_id)
     await callback.answer()
 
 
@@ -1798,6 +1800,18 @@ async def on_schedule_input(message: Message, state: FSMContext):
             return
 
     await state.clear()
+
+    # Удаляем сообщение пользователя и промпт
+    try:
+        await message.delete()
+    except Exception:
+        pass
+    prompt_id = data.get("prompt_msg_id")
+    if prompt_id:
+        try:
+            await message.bot.delete_message(chat_id=message.chat.id, message_id=prompt_id)
+        except Exception:
+            pass
 
     if mailing_id:
         m_old = await db.fetchrow("SELECT campaign_id FROM mailings WHERE id=$1", int(mailing_id))

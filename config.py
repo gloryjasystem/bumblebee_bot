@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     co_owner_telegram_id: int | None = None
     co_owner_username: str | None = None
 
+    # Support
+    support_username: str | None = None
+
     # Database
     database_url: str
 

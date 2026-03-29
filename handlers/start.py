@@ -311,7 +311,7 @@ async def on_settings_menu(callback: CallbackQuery, platform_user: dict | None):
     max_bl = t_cfg["max_blacklist_users"]
     
     # Получаем юзернейм саппорта из конфига
-    support_username = settings.co_owner_username or settings.owner_username or "secvency"
+    support_username = settings.support_username or settings.co_owner_username or settings.owner_username or "secvency"
     support_url = f"https://t.me/{support_username.strip('@')}"
 
     # Отформатируем большие числа с пробелами
@@ -330,7 +330,7 @@ async def on_settings_menu(callback: CallbackQuery, platform_user: dict | None):
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="💳 Тарифы и оплата", callback_data="menu:tariffs")],
             [InlineKeyboardButton(text="📜 История покупок",  callback_data="settings:history")],
-            [InlineKeyboardButton(text="🎧 Служба поддержки", url=support_url)],
+            [InlineKeyboardButton(text="💬 Служба поддержки", url=support_url)],
             [InlineKeyboardButton(text="◀️ Назад к меню",           callback_data="menu:main")],
         ]),
     )

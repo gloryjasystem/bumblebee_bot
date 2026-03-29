@@ -4677,11 +4677,17 @@ async def _bs_channel_picker(callback: CallbackQuery, platform_user: dict,
 
 
 @router.callback_query(F.data.startswith("bs_mailing:"))
-async def on_bs_mailing(callback: CallbackQuery, platform_user: dict | None):
+async def on_bs_mailing(callback: CallbackQuery, state: FSMContext, platform_user: dict | None):
     """Рассылка: показываем экран выбора действия сразу, без выбора площадки."""
     if not platform_user:
         return
-    child_bot_id = int(callback.data.split(":")[1])
+    raw_id = callback.data.split(":")[1]
+    if raw_id == "None" or not raw_id.isdigit():
+        # Массовая кампания или ошибка в ID — возвращаемся в общее меню рассылки
+        from handlers.mailing import on_menu_mailing
+        await on_menu_mailing(callback, state, platform_user)
+        return
+    child_bot_id = int(raw_id)
 
     # Проверяем тариф реального владельца бота (не admin'а)
     owner_id = await resolve_owner_id(platform_user["user_id"], child_bot_id)

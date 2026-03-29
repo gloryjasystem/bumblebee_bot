@@ -390,10 +390,14 @@ def _kb_draft(m: dict) -> InlineKeyboardMarkup:
                 ),
             ),
         ],
-        # Кнопка «Назад»: если chat_id=None — рассылка на уровне бота → возвращаем на bs_mailing
+        # Кнопка «Назад»: если это массовая кампания (child_bot_id=None) → в меню рассылки
+        # Иначе: если chat_id=None — рассылка на уровне бота → возвращаем на bs_mailing
         [InlineKeyboardButton(
             text="◀️ Назад",
-            callback_data=(f"bs_mailing:{m['child_bot_id']}" if not m.get('chat_id') else f"ch_mailing:{m['chat_id']}"),
+            callback_data=(
+                "menu:mailing" if not m.get('child_bot_id') and m.get('campaign_id')
+                else (f"bs_mailing:{m['child_bot_id']}" if not m.get('chat_id') else f"ch_mailing:{m['chat_id']}")
+            ),
         )],
     ])
 

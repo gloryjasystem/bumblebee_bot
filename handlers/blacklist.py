@@ -104,9 +104,9 @@ async def on_bl_manual_input(message: Message, state: FSMContext, platform_user:
 
     from services.security import parse_blacklist_line
     from services.blacklist import resolve_username_to_id
-    from services.blacklist import get_blacklist_count
+    from services.blacklist import get_total_blacklist_count
     
-    total = await get_blacklist_count(owner_id)
+    total = await get_total_blacklist_count(owner_id)
     from config import TARIFFS
     limit = TARIFFS.get(platform_user["tariff"], TARIFFS["free"])["max_blacklist_users"]
 
@@ -141,7 +141,7 @@ async def on_bl_manual_input(message: Message, state: FSMContext, platform_user:
         else:
             errors += 1
 
-    total = await get_blacklist_count(owner_id)
+    total = await get_total_blacklist_count(owner_id)
     await state.clear()
 
     result_text = "\n".join(results[:10])
@@ -314,7 +314,16 @@ async def on_bs_bl_text(message: Message, state: FSMContext, platform_user: dict
     newly_added = []  # (user_id, username) для кика
     newly_removed = []
 
+    total_for_limit = await db.fetchval("SELECT COUNT(*) FROM blacklist WHERE owner_id=$1", owner_id) or 0
+    from config import TARIFFS
+    limit = TARIFFS.get(platform_user["tariff"], TARIFFS["free"])["max_blacklist_users"]
+
     for token in lines[:100]:
+        if mode == "add" and total_for_limit + added >= limit:
+            results.append(f"• {token} (❌ Достигнут общий лимит {limit})")
+            invalid += 1
+            break
+
         parsed = parse_blacklist_line(token)
         if not parsed:
             invalid += 1

@@ -394,15 +394,13 @@ async def import_file(owner_id: int, content: bytes, filename: str, child_bot_id
     newly_added = []
 
     if rows:
-        from services.blacklist import resolve_username_to_id
-        
-        from services.blacklist import get_blacklist_count
+        from services.blacklist import get_total_blacklist_count
         pu = await db.fetchrow("SELECT tariff FROM platform_users WHERE user_id=$1", owner_id)
         tariff = pu["tariff"] if pu else "free"
         from config import TARIFFS
         limit = TARIFFS.get(tariff, TARIFFS["free"])["max_blacklist_users"]
         
-        total_curr = await get_blacklist_count(owner_id)
+        total_curr = await get_total_blacklist_count(owner_id)
 
         for i in range(0, len(rows), 1000):
             if total_curr >= limit:
@@ -702,6 +700,10 @@ async def sweep_unban_records(owner_id: int, records: list, child_bot_id: int | 
         "[BL] sweep_unban_records called but is a no-op (Lazy Pass). owner=%d records=%d",
         owner_id, len(records) if records else 0,
     )
+
+
+async def get_total_blacklist_count(owner_id: int) -> int:
+    return await db.fetchval("SELECT COUNT(*) FROM blacklist WHERE owner_id=$1", owner_id) or 0
 
 
 async def get_blacklist_count(owner_id: int, child_bot_id: int | None = None) -> int:

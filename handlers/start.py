@@ -326,7 +326,7 @@ async def on_settings_menu(callback: CallbackQuery, platform_user: dict | None):
         f"📊 <b>Ваши лимиты:</b>\n"
         f"├ 🤖 Боты: <b>{bots_count}</b> из {max_bots}\n"
         f"├ 📍 Площадки: <b>{chats_display}</b>\n"
-        f"└ ⛔️ Глобальный ЧС: <b>{bl_str}</b> из {max_bl_str}\n",
+        f"└ ⛔️ Всего в ЧС: <b>{bl_str}</b> из {max_bl_str}\n",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="💳 Тарифы и оплата", callback_data="menu:tariffs")],
             [InlineKeyboardButton(text="📜 История покупок",  callback_data="settings:history")],

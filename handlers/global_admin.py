@@ -342,12 +342,10 @@ async def _show_platform_user_card(message_or_cb, admin_owner_id: int, row):
             " WHERE cb.owner_id=$1 AND bc.is_active=true", uid
         ) or 0
         users_count = await conn.fetchval(
-            "SELECT COUNT(DISTINCT bu.user_id) FROM bot_users bu"
-            " JOIN bot_chats bc ON bu.chat_id=bc.chat_id AND bu.owner_id=bc.owner_id"
-            " WHERE bu.owner_id=$1", uid
+            "SELECT COUNT(DISTINCT user_id) FROM bot_users WHERE owner_id=$1", uid
         ) or 0
         bl_count = await conn.fetchval(
-            "SELECT COUNT(*) FROM blacklist WHERE owner_id=$1", uid
+            "SELECT COUNT(*) FROM blacklist WHERE owner_id=$1 AND child_bot_id IS NOT NULL", uid
         ) or 0
         note_row = None
         try:
@@ -376,7 +374,7 @@ async def _show_platform_user_card(message_or_cb, admin_owner_id: int, row):
         "────── 📊 Статистика ──────\n"
         f"📎  <b>Тариф:</b> {tariff}  (до {until})\n"
         f"🤖  <b>Ботов:</b> {bots_count}    📡  <b>Каналов:</b> {chats_count}\n"
-        f"👥  <b>Пользователей:</b> {users_count:,}    🚫  <b>ЧС:</b> {bl_count:,}"
+        f"👥  <b>Пользователей:</b> {users_count:,}    🚫  <b>В своём ЧС:</b> {bl_count:,}"
         f"{blocked_mark}{note_text}"
     )
     kb = [

@@ -1502,17 +1502,21 @@ async def on_ml_url_buttons(callback: CallbackQuery, state: FSMContext, platform
         pass
 
     # Ставим FSM-состояние — пользователь может сразу ввести кнопки
-    await state.update_data(mailing_id=mid, owner_id=platform_user["user_id"])
-    await state.set_state(MailingFSM.waiting_for_buttons)
+    if state is not None:
+        await state.update_data(mailing_id=mid, owner_id=platform_user["user_id"])
+        await state.set_state(MailingFSM.waiting_for_buttons)
 
     # Отправляем экран URL-кнопок как новое сообщение (+ только кнопка Назад)
-    await callback.message.answer(
+    prompt_msg = await callback.message.answer(
         _URL_BUTTONS_HELP + now_text,
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="◀️ Назад", callback_data=f"ml_view_draft:{mid}:")],
         ]),
     )
+    # Сохраняем ID промпта для удаления после ввода
+    if state is not None:
+        await state.update_data(prompt_msg_id=prompt_msg.message_id)
     await callback.answer()
 
 
@@ -1575,6 +1579,18 @@ async def on_mailing_buttons_input(message: Message, state: FSMContext):
     else:
         await db.execute("UPDATE mailings SET url_buttons_raw=$1 WHERE id=$2 AND owner_id=$3", raw, mid, owner_id)
     await state.clear()
+
+    # Удаляем сообщение пользователя и промпт с инструкцией
+    try:
+        await message.delete()
+    except Exception:
+        pass
+    prompt_id = data.get("prompt_msg_id")
+    if prompt_id:
+        try:
+            await message.bot.delete_message(chat_id=message.chat.id, message_id=prompt_id)
+        except Exception:
+            pass
 
     # Загружаем обновлённый черновик
     m = await db.fetchrow("SELECT * FROM mailings WHERE id=$1", mid)

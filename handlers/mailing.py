@@ -246,27 +246,25 @@ async def on_mass_mailing_text(message: Message, state: FSMContext, bot: Bot):
 
     await state.clear()
 
-    # Создаём черновики для каждого выбранного бота под одной кампанией
-    campaign_id = uuid.uuid4().hex
-    mailing_ids = []
-    for bot_id in selected:
-        mid = await db.fetchval(
-            """INSERT INTO mailings
-               (owner_id, child_bot_id, chat_id, text, media_file_id, media_type,
-                notify_users, protect_content, pin_message, delete_after_send,
-                disable_preview, url_buttons_raw, button_color, media_below, campaign_id)
-               VALUES ($1,$2,NULL,$3,$4,$5, true,false,false,false, false,NULL,'blue',true,$6)
-               RETURNING id""",
-            owner_id, bot_id, text, media_file_id, media_type, campaign_id
-        )
-        mailing_ids.append(mid)
+    # Создаём ЕДИНЫЙ черновик для выбранных ботов (кампания)
+    campaign_id = "bots:" + ",".join(str(x) for x in selected)
+    
+    mid = await db.fetchval(
+        """INSERT INTO mailings
+           (owner_id, child_bot_id, chat_id, text, media_file_id, media_type,
+            notify_users, protect_content, pin_message, delete_after_send,
+            disable_preview, url_buttons_raw, button_color, media_below, campaign_id)
+           VALUES ($1, NULL, NULL, $2, $3, $4, true, false, false, false, false, NULL, 'blue', true, $5)
+           RETURNING id""",
+        owner_id, text, media_file_id, media_type, campaign_id
+    )
 
-    if not mailing_ids:
+    if not mid:
         await message.answer("❌ Не удалось создать рассылку.")
         return
 
-    # Показываем настройки первого черновика (остальные создаются идентично)
-    m = await db.fetchrow("SELECT * FROM mailings WHERE id=$1", mailing_ids[0])
+    # Показываем настройки единого черновика
+    m = await db.fetchrow("SELECT * FROM mailings WHERE id=$1", mid)
     bots_note = f"\n📣 Рассылка будет отправлена по <b>{len(selected)} ботам</b>"
 
     # ── Эхо: предпросмотр сообщения
@@ -847,11 +845,17 @@ async def on_ml_stoggle(callback: CallbackQuery, platform_user: dict | None):
 
     if setting == "media":
         new_val = not bool(md.get("media_below", False))
-        await db.execute("UPDATE mailings SET media_below=$1 WHERE id=$2", new_val, mid)
+        if md.get("campaign_id"):
+            await db.execute("UPDATE mailings SET media_below=$1 WHERE campaign_id=$2", new_val, md["campaign_id"])
+        else:
+            await db.execute("UPDATE mailings SET media_below=$1 WHERE id=$2", new_val, mid)
     elif setting in _TOGGLE_MAP:
         col, default = _TOGGLE_MAP[setting]
         new_val = not (md[col] if md[col] is not None else default)
-        await db.execute(f"UPDATE mailings SET {col}=$1 WHERE id=$2", new_val, mid)
+        if md.get("campaign_id"):
+            await db.execute(f"UPDATE mailings SET {col}=$1 WHERE campaign_id=$2", new_val, md["campaign_id"])
+        else:
+            await db.execute(f"UPDATE mailings SET {col}=$1 WHERE id=$2", new_val, mid)
 
     m = await db.fetchrow("SELECT * FROM mailings WHERE id=$1", mid)
     md = dict(m)
@@ -906,10 +910,11 @@ async def on_ml_sched_cancel(callback: CallbackQuery, platform_user: dict | None
     child_bot_id = int(parts[2])
     owner_id = platform_user["user_id"]
 
-    await db.execute(
-        "UPDATE mailings SET status='cancelled', scheduled_at=NULL WHERE id=$1 AND owner_id=$2",
-        mid, owner_id,
-    )
+    m_old = await db.fetchrow("SELECT campaign_id FROM mailings WHERE id=$1 AND owner_id=$2", mid, owner_id)
+    if m_old and m_old["campaign_id"]:
+        await db.execute("UPDATE mailings SET status='cancelled', scheduled_at=NULL WHERE campaign_id=$1 AND owner_id=$2", m_old["campaign_id"], owner_id)
+    else:
+        await db.execute("UPDATE mailings SET status='cancelled', scheduled_at=NULL WHERE id=$1 AND owner_id=$2", mid, owner_id)
     await _delete_draft_echo(callback.bot, mid)
 
     await callback.message.edit_text(
@@ -1023,16 +1028,17 @@ async def on_scheduled_edit_input(message: Message, state: FSMContext):
         return
 
     # Обновляем черновик
+    m_old = await db.fetchrow("SELECT campaign_id FROM mailings WHERE id=$1", mailing_id)
     if media_file_id:
-        await db.execute(
-            "UPDATE mailings SET text=$1, media_file_id=$2, media_type=$3 WHERE id=$4 AND owner_id=$5",
-            text, media_file_id, media_type, mailing_id, owner_id,
-        )
+        if m_old and m_old["campaign_id"]:
+            await db.execute("UPDATE mailings SET text=$1, media_file_id=$2, media_type=$3 WHERE campaign_id=$4 AND owner_id=$5", text, media_file_id, media_type, m_old["campaign_id"], owner_id)
+        else:
+            await db.execute("UPDATE mailings SET text=$1, media_file_id=$2, media_type=$3 WHERE id=$4 AND owner_id=$5", text, media_file_id, media_type, mailing_id, owner_id)
     else:
-        await db.execute(
-            "UPDATE mailings SET text=$1, media_file_id=NULL, media_type=NULL WHERE id=$2 AND owner_id=$3",
-            text, mailing_id, owner_id,
-        )
+        if m_old and m_old["campaign_id"]:
+            await db.execute("UPDATE mailings SET text=$1, media_file_id=NULL, media_type=NULL WHERE campaign_id=$2 AND owner_id=$3", text, m_old["campaign_id"], owner_id)
+        else:
+            await db.execute("UPDATE mailings SET text=$1, media_file_id=NULL, media_type=NULL WHERE id=$2 AND owner_id=$3", text, mailing_id, owner_id)
 
     await state.clear()
     m = await db.fetchrow("SELECT * FROM mailings WHERE id=$1", mailing_id)
@@ -1338,10 +1344,11 @@ async def on_ml_toggle(callback: CallbackQuery, platform_user: dict | None):
 
     if setting == "media":
         new_val = not bool(m.get("media_below", False))
-        await db.execute(
-            "UPDATE mailings SET media_below=$1 WHERE id=$2 AND owner_id=$3",
-            new_val, mid, owner_id,
-        )
+        if m.get("campaign_id"):
+            await db.execute("UPDATE mailings SET media_below=$1 WHERE campaign_id=$2 AND owner_id=$3", new_val, m["campaign_id"], owner_id)
+        else:
+            await db.execute("UPDATE mailings SET media_below=$1 WHERE id=$2 AND owner_id=$3", new_val, mid, owner_id)
+            
         m = await db.fetchrow("SELECT * FROM mailings WHERE id=$1", mid)
         await callback.answer()
         await _show_draft(callback, dict(m))
@@ -1349,10 +1356,11 @@ async def on_ml_toggle(callback: CallbackQuery, platform_user: dict | None):
 
     col, default = _TOGGLE_MAP[setting]
     new_val = not (m[col] if m[col] is not None else default)
-    await db.execute(
-        f"UPDATE mailings SET {col}=$1 WHERE id=$2 AND owner_id=$3",
-        new_val, mid, owner_id,
-    )
+    if m.get("campaign_id"):
+        await db.execute(f"UPDATE mailings SET {col}=$1 WHERE campaign_id=$2 AND owner_id=$3", new_val, m["campaign_id"], owner_id)
+    else:
+        await db.execute(f"UPDATE mailings SET {col}=$1 WHERE id=$2 AND owner_id=$3", new_val, mid, owner_id)
+        
     m = await db.fetchrow("SELECT * FROM mailings WHERE id=$1", mid)
     await callback.answer()
     await _show_draft(callback, dict(m))
@@ -1436,10 +1444,12 @@ async def on_ml_color(callback: CallbackQuery, platform_user: dict | None):
         return
     parts = callback.data.split(":")
     mid, color = int(parts[1]), parts[2]
-    await db.execute(
-        "UPDATE mailings SET button_color=$1 WHERE id=$2 AND owner_id=$3",
-        color, mid, platform_user["user_id"],
-    )
+    owner_id = platform_user["user_id"]
+    m_old = await db.fetchrow("SELECT campaign_id FROM mailings WHERE id=$1", mid)
+    if m_old and m_old["campaign_id"]:
+        await db.execute("UPDATE mailings SET button_color=$1 WHERE campaign_id=$2 AND owner_id=$3", color, m_old["campaign_id"], owner_id)
+    else:
+        await db.execute("UPDATE mailings SET button_color=$1 WHERE id=$2 AND owner_id=$3", color, mid, owner_id)
     await callback.answer(f"Цвет: {color}")
     # Перерендер
     fake_cb = callback.model_copy(update={"data": f"ml_url_buttons:{mid}"})
@@ -1474,10 +1484,11 @@ async def on_mailing_buttons_input(message: Message, state: FSMContext):
     mid = data.get("mailing_id")
     owner_id = data.get("owner_id")
     raw = sanitize(message.text or "", max_len=2000)
-    await db.execute(
-        "UPDATE mailings SET url_buttons_raw=$1 WHERE id=$2 AND owner_id=$3",
-        raw, mid, owner_id,
-    )
+    m_old = await db.fetchrow("SELECT campaign_id FROM mailings WHERE id=$1", mid)
+    if m_old and m_old["campaign_id"]:
+        await db.execute("UPDATE mailings SET url_buttons_raw=$1 WHERE campaign_id=$2 AND owner_id=$3", raw, m_old["campaign_id"], owner_id)
+    else:
+        await db.execute("UPDATE mailings SET url_buttons_raw=$1 WHERE id=$2 AND owner_id=$3", raw, mid, owner_id)
     await state.clear()
 
     # Загружаем обновлённый черновик
@@ -1536,10 +1547,12 @@ async def on_ml_clear_buttons(callback: CallbackQuery, platform_user: dict | Non
     if not platform_user:
         return
     mid = int(callback.data.split(":")[1])
-    await db.execute(
-        "UPDATE mailings SET url_buttons_raw=NULL WHERE id=$1 AND owner_id=$2",
-        mid, platform_user["user_id"],
-    )
+    owner_id = platform_user["user_id"]
+    m_old = await db.fetchrow("SELECT campaign_id FROM mailings WHERE id=$1", mid)
+    if m_old and m_old["campaign_id"]:
+        await db.execute("UPDATE mailings SET url_buttons_raw=NULL WHERE campaign_id=$1 AND owner_id=$2", m_old["campaign_id"], owner_id)
+    else:
+        await db.execute("UPDATE mailings SET url_buttons_raw=NULL WHERE id=$1 AND owner_id=$2", mid, owner_id)
     await callback.answer("🗑 Кнопки очищены")
     fake_cb = callback.model_copy(update={"data": f"ml_url_buttons:{mid}"})
     await on_ml_url_buttons(fake_cb, None, platform_user)
@@ -1787,10 +1800,11 @@ async def on_schedule_input(message: Message, state: FSMContext):
     await state.clear()
 
     if mailing_id:
-        await db.execute(
-            "UPDATE mailings SET scheduled_at=$1, status='draft' WHERE id=$2",
-            dt, int(mailing_id),
-        )
+        m_old = await db.fetchrow("SELECT campaign_id FROM mailings WHERE id=$1", int(mailing_id))
+        if m_old and m_old["campaign_id"]:
+            await db.execute("UPDATE mailings SET scheduled_at=$1, status='draft' WHERE campaign_id=$2", dt, m_old["campaign_id"])
+        else:
+            await db.execute("UPDATE mailings SET scheduled_at=$1, status='draft' WHERE id=$2", dt, int(mailing_id))
         # Загружаем обновлённый черновик и перерисовываем меню
         m = await db.fetchrow("SELECT * FROM mailings WHERE id=$1", int(mailing_id))
         if m:
@@ -1873,10 +1887,10 @@ async def on_mailing_save(callback: CallbackQuery, platform_user: dict | None):
         return
 
     # Сохраняем как 'scheduled'
-    await db.execute(
-        "UPDATE mailings SET status='scheduled' WHERE id=$1 AND owner_id=$2",
-        mid, owner_id,
-    )
+    if m.get("campaign_id"):
+        await db.execute("UPDATE mailings SET status='scheduled' WHERE campaign_id=$1 AND owner_id=$2", m["campaign_id"], owner_id)
+    else:
+        await db.execute("UPDATE mailings SET status='scheduled' WHERE id=$1 AND owner_id=$2", mid, owner_id)
 
     # Удаляем эхо-сообщение черновика
     await _delete_draft_echo(callback.bot, mid)
@@ -2005,84 +2019,98 @@ async def on_mailing_run(callback: CallbackQuery, bot: Bot, platform_user: dict 
         return
 
     mailing_id   = mailing["id"]
-    bot_username = mailing.get("bot_username") or ""
-    await db.execute("UPDATE mailings SET status='pending' WHERE id=$1", mailing_id)
+    campaign_id  = mailing.get("campaign_id")
+
+    if campaign_id:
+        mailings_to_run = await db.fetch(
+            "SELECT m.id, cb.bot_username FROM mailings m "
+            "LEFT JOIN child_bots cb ON cb.id = m.child_bot_id "
+            "WHERE m.campaign_id=$1 AND m.status='draft'",
+            campaign_id
+        )
+    else:
+        mailings_to_run = [{"id": mailing["id"], "bot_username": mailing.get("bot_username", "")}]
 
     # Удаляем эхо-сообщение (превью) и сообщение с настройками
-    await _delete_draft_echo(callback.bot, mailing_id)
+    await _delete_draft_echo(callback.bot, mailing["id"])
     try:
         await callback.message.delete()
     except Exception:
         pass
 
-    # Начальный экран «идём!»
-    progress_text = _mailing_progress_text(mailing_id, 0, 0, 0, "running", bot_username)
-    try:
-        progress_msg = await callback.message.answer(
-            progress_text,
-            parse_mode="HTML",
-            reply_markup=kb_mailing_control(mailing_id, False, "low"),
-        )
-        upd_chat_id = progress_msg.chat.id
-        upd_msg_id  = progress_msg.message_id
-    except Exception:
-        progress_msg = None
-        upd_chat_id = callback.message.chat.id
-        upd_msg_id  = callback.message.message_id
-
     await callback.answer("▶ Рассылка запущена")
 
-    async def progress_callback(ml_id: int, sent: int, total: int,
-                                errors: int, status: str):
-        """Обновляем сообщение с прогрессом."""
-        m_row = await db.fetchrow("SELECT started_at, child_bot_id, chat_id FROM mailings WHERE id=$1", ml_id)
-        started_at = m_row["started_at"] if m_row else None
-        text = _mailing_progress_text(ml_id, sent, total, errors, status, bot_username, started_at)
-        kb = kb_mailing_control(ml_id, False, "low") if status == "running" else None
-        try:
-            await bot.edit_message_text(
-                text,
-                chat_id=upd_chat_id,
-                message_id=upd_msg_id,
-                parse_mode="HTML",
-                reply_markup=kb,
-            )
-        except Exception as e:
-            logger.debug(f"Progress update failed: {e}")
-
-        # После завершения — отправляем меню рассылки
-        if status in ("done", "cancelled", "failed") and m_row:
+    def make_progress_callback(target_m_id: int, initial_chat_id: int, initial_msg_id: int | None, target_bot_username: str):
+        async def progress_callback(ml_id: int, sent: int, total: int, errors: int, status: str):
+            m_row = await db.fetchrow("SELECT started_at, child_bot_id, chat_id FROM mailings WHERE id=$1", ml_id)
+            started_at = m_row["started_at"] if m_row else None
+            text = _mailing_progress_text(ml_id, sent, total, errors, status, target_bot_username, started_at)
+            kb = kb_mailing_control(ml_id, False, "low") if status == "running" else None
             try:
-                chat_id_from_m = m_row.get("chat_id")
-                child_bot_from_m = m_row.get("child_bot_id")
-                if chat_id_from_m:
-                    final_kb = InlineKeyboardMarkup(inline_keyboard=[
-                        [InlineKeyboardButton(text="➕ Создать рассылку", callback_data=f"mailing_start:{chat_id_from_m}")],
-                        [InlineKeyboardButton(text="📅 Запланированные",  callback_data=f"mailing_scheduled:{chat_id_from_m}")],
-                        [InlineKeyboardButton(text="◀️ Назад",             callback_data=f"channel_by_chat:{chat_id_from_m}")],
-                    ])
-                elif child_bot_from_m:
-                    final_kb = InlineKeyboardMarkup(inline_keyboard=[
-                        [InlineKeyboardButton(text="➕ Создать рассылку", callback_data=f"mailing_bot_start:{child_bot_from_m}")],
-                        [InlineKeyboardButton(text="📅 Запланированные",  callback_data=f"mailing_bot_scheduled:{child_bot_from_m}")],
-                        [InlineKeyboardButton(text="◀️ Назад",             callback_data=f"bs_mailing:{child_bot_from_m}")],
-                    ])
-                else:
-                    final_kb = InlineKeyboardMarkup(inline_keyboard=[
-                        [InlineKeyboardButton(text="➕ Создать рассылку", callback_data="menu:mailing")],
-                        [InlineKeyboardButton(text="◀️ Назад",             callback_data="menu:mailing")],
-                    ])
-
-                await bot.send_message(
-                    chat_id=upd_chat_id,
-                    text="📨 <b>Рассылка</b>\n\nВыберите действие ⬇️",
+                await bot.edit_message_text(
+                    text,
+                    chat_id=initial_chat_id,
+                    message_id=initial_msg_id,
                     parse_mode="HTML",
-                    reply_markup=final_kb,
+                    reply_markup=kb,
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Progress update failed: {e}")
 
-    asyncio.create_task(mailing_svc.run_mailing(mailing_id, bot, progress_callback))
+            # После завершения — отправляем меню рассылки (только если это одиночный бот или мы можем это сделать)
+            if status in ("done", "cancelled", "failed") and m_row:
+                try:
+                    chat_id_from_m = m_row.get("chat_id")
+                    child_bot_from_m = m_row.get("child_bot_id")
+                    if chat_id_from_m:
+                        final_kb = InlineKeyboardMarkup(inline_keyboard=[
+                            [InlineKeyboardButton(text="➕ Создать рассылку", callback_data=f"mailing_start:{chat_id_from_m}")],
+                            [InlineKeyboardButton(text="📅 Запланированные",  callback_data=f"mailing_scheduled:{chat_id_from_m}")],
+                            [InlineKeyboardButton(text="◀️ Назад",             callback_data=f"channel_by_chat:{chat_id_from_m}")],
+                        ])
+                    elif child_bot_from_m:
+                        final_kb = InlineKeyboardMarkup(inline_keyboard=[
+                            [InlineKeyboardButton(text="➕ Создать рассылку", callback_data=f"mailing_bot_start:{child_bot_from_m}")],
+                            [InlineKeyboardButton(text="📅 Запланированные",  callback_data=f"mailing_bot_scheduled:{child_bot_from_m}")],
+                            [InlineKeyboardButton(text="◀️ Назад",             callback_data=f"bs_mailing:{child_bot_from_m}")],
+                        ])
+                    else:
+                        final_kb = InlineKeyboardMarkup(inline_keyboard=[
+                            [InlineKeyboardButton(text="➕ Создать рассылку", callback_data="menu:mailing")],
+                            [InlineKeyboardButton(text="◀️ Назад",             callback_data="menu:mailing")],
+                        ])
+
+                    header = f"📨 <b>Рассылка @{target_bot_username} завершена</b>" if target_bot_username else "📨 <b>Массовая рассылка завершена</b>"
+                    await bot.send_message(
+                        chat_id=initial_chat_id,
+                        text=f"{header}\n\nВыберите действие ⬇️",
+                        parse_mode="HTML",
+                        reply_markup=final_kb,
+                    )
+                except Exception:
+                    pass
+        return progress_callback
+
+    for m_item in mailings_to_run:
+        m_id = m_item["id"]
+        m_bot = m_item["bot_username"] or ""
+        await db.execute("UPDATE mailings SET status='pending' WHERE id=$1", m_id)
+
+        progress_text = _mailing_progress_text(m_id, 0, 0, 0, "running", m_bot)
+        try:
+            progress_msg = await callback.message.answer(
+                progress_text,
+                parse_mode="HTML",
+                reply_markup=kb_mailing_control(m_id, False, "low"),
+            )
+            u_chat = progress_msg.chat.id
+            u_msg  = progress_msg.message_id
+        except Exception:
+            u_chat = callback.message.chat.id
+            u_msg  = callback.message.message_id
+
+        cb = make_progress_callback(m_id, u_chat, u_msg, m_bot)
+        asyncio.create_task(mailing_svc.run_mailing(m_id, callback.bot, cb))
 
 
 

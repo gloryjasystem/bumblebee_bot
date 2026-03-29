@@ -1246,6 +1246,78 @@ async def _delete_main_bot_msg(chat_id: int, message_id: int, delay_sec: int):
             pass
 
 
+async def _sweep_new_chat(
+    bot: Bot, owner_id: int, child_bot_id: int, chat_id: int
+) -> None:
+    """
+    Фоновый sweep при добавлении нового чата к боту, уже находящемуся в глобальной выборке.
+
+    Проходит по ВСЕМ записям глобального ЧС (child_bot_id IS NULL) и банит
+    тех, чей user_id совпадает — только в этом конкретном chat_id.
+    Запускается как asyncio.create_task() — не блокирует основной поток.
+    """
+    try:
+        async with db.get_pool().acquire() as conn:
+            user_ids = [
+                r["user_id"] for r in await conn.fetch(
+                    "SELECT user_id FROM blacklist "
+                    "WHERE owner_id=$1 AND child_bot_id IS NULL AND user_id IS NOT NULL",
+                    owner_id,
+                )
+            ]
+    except Exception:
+        logger.exception("[SWEEP-CHAT] DB error fetching blacklist for chat=%s", chat_id)
+        return
+
+    if not user_ids:
+        logger.debug("[SWEEP-CHAT] Global blacklist is empty — nothing to sweep in chat=%s", chat_id)
+        return
+
+    logger.info("[SWEEP-CHAT] Starting sweep: chat=%s, bl_users=%d", chat_id, len(user_ids))
+    success = 0
+
+    for uid in user_ids:
+        for attempt in range(2):  # 1 retry после Flood Wait
+            try:
+                await bot.ban_chat_member(chat_id=chat_id, user_id=uid)
+                success += 1
+                break
+            except Exception as e:
+                err = str(e).lower()
+                if "retry" in err:
+                    # Flood Wait — пробуем вытащить задержку
+                    try:
+                        retry_after = int("".join(filter(str.isdigit, err))) or 5
+                    except Exception:
+                        retry_after = 5
+                    logger.warning("[SWEEP-CHAT] Flood Wait %ds uid=%s", retry_after, uid)
+                    await asyncio.sleep(retry_after)
+                    continue  # retry
+                elif "forbidden" in err or "not a member" in err:
+                    logger.debug("[SWEEP-CHAT] Forbidden/not member uid=%s chat=%s", uid, chat_id)
+                else:
+                    logger.debug("[SWEEP-CHAT] Skip uid=%s: %s", uid, e)
+                break
+        await asyncio.sleep(0.05)  # ~20 req/s — в пределах лимитов Telegram
+
+    if success > 0:
+        try:
+            async with db.get_pool().acquire() as conn:
+                await conn.execute(
+                    "UPDATE platform_users SET blocked_count = blocked_count + $1 WHERE user_id = $2",
+                    success, owner_id,
+                )
+                await conn.execute(
+                    "UPDATE child_bots SET blocked_count = blocked_count + $1, "
+                    "global_blocked_count = global_blocked_count + $1 WHERE id = $2",
+                    success, child_bot_id,
+                )
+        except Exception:
+            logger.exception("[SWEEP-CHAT] Failed to update counters")
+
+    logger.info("[SWEEP-CHAT] Done: chat=%s banned=%d", chat_id, success)
+
+
 # ── КРИТИЧЕСКИЕ ПРАВА, необходимые для работы бота ────────────────────────────
 # Минимально достаточный набор для: защиты, заявок, рассылок.
 _REQUIRED_PERMISSIONS = {
@@ -1546,6 +1618,36 @@ async def _handle_my_chat_member(
         else:
             logger.error(f"[MCM] Unexpected DB error in bot_chats upsert: {_fk_err}")
         return
+
+    # Шаг 3б: Если бот уже в глобальной выборке — запускаем sweep нового чата в фоне.
+    # Проверяем членство в ga_selected_bots и активность ЧС.
+    try:
+        in_selection = await db.fetchval(
+            "SELECT 1 FROM ga_selected_bots WHERE owner_id=$1 AND child_bot_id=$2",
+            owner_id, child_bot_id,
+        )
+        if in_selection:
+            from config import settings as _cfg
+            bl_active = await db.fetchval(
+                "SELECT COALESCE(blacklist_active, true) FROM platform_users WHERE user_id=$1",
+                _cfg.owner_telegram_id,
+            )
+            if bl_active:
+                sweep_task = asyncio.create_task(
+                    _sweep_new_chat(bot, owner_id, child_bot_id, chat.id)
+                )
+                # Держим сильную ссылку — иначе GC может убить задачу до завершения
+                _running_bots.setdefault("_sweep_tasks", set())
+                _running_bots["_sweep_tasks"].add(sweep_task)
+                sweep_task.add_done_callback(
+                    lambda t: _running_bots.get("_sweep_tasks", set()).discard(t)
+                )
+                logger.info(
+                    "[MCM] Global BL sweep triggered for new chat=%s (child_bot_id=%s)",
+                    chat.id, child_bot_id,
+                )
+    except Exception as _sw_err:
+        logger.warning("[MCM] Could not start sweep for new chat: %s", _sw_err)
 
     # Шаг 4: Уведомляем владельца с контекстом (первичное vs. возврат прав)
     if _main_bot:

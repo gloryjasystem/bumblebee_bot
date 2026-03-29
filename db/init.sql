@@ -139,6 +139,8 @@ CREATE TABLE IF NOT EXISTS mailing_campaign_sent (
 );
 
 -- 7. Ссылки-приглашения
+ALTER TABLE mailings ADD COLUMN IF NOT EXISTS campaign_id TEXT;
+
 CREATE TABLE IF NOT EXISTS invite_links (
     id              SERIAL PRIMARY KEY,
     owner_id        BIGINT REFERENCES platform_users(user_id) ON DELETE CASCADE,

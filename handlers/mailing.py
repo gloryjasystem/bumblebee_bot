@@ -81,10 +81,10 @@ async def _show_mass_mailing(callback: CallbackQuery, state: FSMContext,
     if selected:
         total_users = await db.fetchval(
             """SELECT COUNT(DISTINCT bu.user_id) FROM bot_users bu
-               JOIN bot_chats bc ON bu.chat_id=bc.chat_id AND bu.owner_id=bc.owner_id
-               WHERE bc.child_bot_id = ANY($1::int[])
-               AND bu.is_active=true AND bu.bot_activated=true""",
-            selected,
+               LEFT JOIN bot_chats bc ON bu.chat_id=bc.chat_id AND bu.owner_id=bc.owner_id
+               WHERE (bc.child_bot_id = ANY($1::int[]) OR bu.chat_id=bu.user_id)
+               AND bu.owner_id=$2 AND bu.is_active=true AND bu.bot_activated=true""",
+            selected, owner_id
         ) or 0
 
     sel_count = len(selected)
@@ -171,17 +171,17 @@ async def on_ml_mass_start(callback: CallbackQuery, state: FSMContext,
         await callback.answer("⊕ Выберите минимум двух ботов", show_alert=True)
         return
 
-    # Считаем суммарных получателей
+    # Считаем суммарных получателей (PM + выбранные площадки)
     total_users = await db.fetchval(
         """SELECT COUNT(DISTINCT bu.user_id) FROM bot_users bu
-           JOIN bot_chats bc ON bu.chat_id=bc.chat_id AND bu.owner_id=bc.owner_id
-           WHERE bc.child_bot_id = ANY($1::int[])
-           AND bu.is_active=true AND bu.bot_activated=true""",
-        selected,
+           LEFT JOIN bot_chats bc ON bu.chat_id=bc.chat_id AND bu.owner_id=bc.owner_id
+           WHERE (bc.child_bot_id = ANY($1::int[]) OR bu.chat_id=bu.user_id)
+           AND bu.owner_id=$2 AND bu.is_active=true AND bu.bot_activated=true""",
+        selected, platform_user["user_id"]
     ) or 0
 
     await state.set_state(MassMailingFSM.waiting_for_text)
-    await navigate(
+    prompt_msg = await navigate(
         callback,
         "📨 <b>Массовая рассылка</b>\n\n"
         "Отправьте сообщение для рассылки.\n\n"
@@ -197,14 +197,18 @@ async def on_ml_mass_start(callback: CallbackQuery, state: FSMContext,
             [InlineKeyboardButton(text="◀️ Назад", callback_data="menu:mailing")],
         ]),
     )
+    if prompt_msg and hasattr(prompt_msg, 'message_id'):
+        await state.update_data(prompt_msg_id=prompt_msg.message_id)
 
 
 @router.message(MassMailingFSM.waiting_for_text)
-async def on_mass_mailing_text(message: Message, state: FSMContext):
+async def on_mass_mailing_text(message: Message, state: FSMContext, bot: Bot):
     from services.security import sanitize
+    import uuid
     data = await state.get_data()
     selected: list[int] = data.get("mass_selected", [])
     owner_id = data.get("owner_id") or message.from_user.id
+    prompt_msg_id = data.get("prompt_msg_id")
 
     text = ""
     media_file_id = None
@@ -229,19 +233,31 @@ async def on_mass_mailing_text(message: Message, state: FSMContext):
         await message.answer("⚠️ Отправьте текст или медиа.")
         return
 
+    # ── Clean UI: удаляем ввод юзера и сообщение-инструкцию бота ──
+    try:
+        await message.delete()
+    except Exception:
+        pass
+    if prompt_msg_id:
+        try:
+            await bot.delete_message(message.chat.id, prompt_msg_id)
+        except Exception:
+            pass
+
     await state.clear()
 
-    # Создаём черновики для каждого выбранного бота
+    # Создаём черновики для каждого выбранного бота под одной кампанией
+    campaign_id = uuid.uuid4().hex
     mailing_ids = []
     for bot_id in selected:
         mid = await db.fetchval(
             """INSERT INTO mailings
                (owner_id, child_bot_id, chat_id, text, media_file_id, media_type,
                 notify_users, protect_content, pin_message, delete_after_send,
-                disable_preview, url_buttons_raw, button_color, media_below)
-               VALUES ($1,$2,NULL,$3,$4,$5, true,false,false,false, false,NULL,'blue',true)
+                disable_preview, url_buttons_raw, button_color, media_below, campaign_id)
+               VALUES ($1,$2,NULL,$3,$4,$5, true,false,false,false, false,NULL,'blue',true,$6)
                RETURNING id""",
-            owner_id, bot_id, text, media_file_id, media_type,
+            owner_id, bot_id, text, media_file_id, media_type, campaign_id
         )
         mailing_ids.append(mid)
 

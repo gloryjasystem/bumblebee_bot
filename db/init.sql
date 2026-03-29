@@ -128,7 +128,14 @@ CREATE TABLE IF NOT EXISTS mailings (
     scheduled_at    TIMESTAMPTZ,
     started_at      TIMESTAMPTZ,
     finished_at     TIMESTAMPTZ,
-    created_at      TIMESTAMPTZ DEFAULT now()
+    created_at      TIMESTAMPTZ DEFAULT now(),
+    campaign_id     TEXT
+);
+
+CREATE TABLE IF NOT EXISTS mailing_campaign_sent (
+    campaign_id TEXT NOT NULL,
+    tg_user_id  BIGINT NOT NULL,
+    PRIMARY KEY (campaign_id, tg_user_id)
 );
 
 -- 7. Ссылки-приглашения

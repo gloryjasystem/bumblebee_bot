@@ -280,6 +280,18 @@ async def run_mailing(mailing_id: int, bot: Bot,
         user_dict = dict(rec)
         user_dict["_chat_title"] = chat_title
 
+        # ---> Deduplication lock <---
+        campaign_id = mailing.get("campaign_id")
+        if campaign_id:
+            import asyncpg
+            try:
+                await db.execute(
+                    "INSERT INTO mailing_campaign_sent (campaign_id, tg_user_id) VALUES ($1, $2)",
+                    campaign_id, rec["user_id"]
+                )
+            except asyncpg.exceptions.UniqueViolationError:
+                continue
+
         try:
             sent_file_id = None
             sent_msg_id = None
@@ -331,6 +343,11 @@ async def run_mailing(mailing_id: int, bot: Bot,
                 except Exception as _db_err:
                     logger.debug(f"[MAILING {mailing_id}] msm insert error: {_db_err}")
         except TelegramForbiddenError:
+            if campaign_id:
+                try:
+                    await db.execute("DELETE FROM mailing_campaign_sent WHERE campaign_id=$1 AND tg_user_id=$2", campaign_id, rec["user_id"])
+                except Exception:
+                    pass
             errors += 1
             await db.execute(
                 "UPDATE bot_users SET is_active=false WHERE owner_id=$1 AND user_id=$2",
@@ -366,8 +383,18 @@ async def run_mailing(mailing_id: int, bot: Bot,
                     except Exception:
                         pass
             except Exception:
+                if campaign_id:
+                    try:
+                        await db.execute("DELETE FROM mailing_campaign_sent WHERE campaign_id=$1 AND tg_user_id=$2", campaign_id, rec["user_id"])
+                    except Exception:
+                        pass
                 errors += 1
         except Exception as e:
+            if campaign_id:
+                try:
+                    await db.execute("DELETE FROM mailing_campaign_sent WHERE campaign_id=$1 AND tg_user_id=$2", campaign_id, rec["user_id"])
+                except Exception:
+                    pass
             errors += 1
             logger.warning(f"Mailing {mailing_id}: failed to send to {rec['user_id']}: {e}")
 

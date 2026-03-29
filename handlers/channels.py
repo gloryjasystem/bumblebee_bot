@@ -84,7 +84,7 @@ async def on_channels_menu(callback: CallbackQuery, platform_user: dict | None):
             btn_text = f"{status} @{b['bot_username']} (Заморожен)"
             buttons.append([InlineKeyboardButton(text=btn_text, callback_data=f"bot_frozen:{b['id']}")])
         else:
-            status = "🟢" if b["chat_count"] > 0 else "⚪"
+            status = "🟢"
             role_icon = "" if b["my_role"] == "owner" else " 🛡"
             buttons.append([InlineKeyboardButton(
                 text=f"{status} @{b['bot_username']}{role_icon}",

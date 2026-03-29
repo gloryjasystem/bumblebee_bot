@@ -203,9 +203,9 @@ async def run_mailing(mailing_id: int, bot: Bot,
             """SELECT DISTINCT ON (bu.user_id)
                       bu.user_id, bu.username, bu.first_name
                FROM bot_users bu
-               JOIN bot_chats bc ON bu.chat_id = bc.chat_id
-                                AND bu.owner_id = bc.owner_id
-               WHERE bc.child_bot_id = $1
+               LEFT JOIN bot_chats bc ON bu.chat_id = bc.chat_id
+                                     AND bu.owner_id = bc.owner_id
+               WHERE (bc.child_bot_id = $1 OR bu.chat_id = bu.user_id)
                  AND bu.owner_id = $2
                  AND bu.user_id IS NOT NULL
                ORDER BY bu.user_id, bu.joined_at""",
@@ -349,10 +349,12 @@ async def run_mailing(mailing_id: int, bot: Bot,
                 except Exception:
                     pass
             errors += 1
-            await db.execute(
-                "UPDATE bot_users SET is_active=false WHERE owner_id=$1 AND user_id=$2",
-                owner_id, rec["user_id"],
-            )
+            # Не деактивируем пользователя при массовой кампании, так как он мог просто не запускать конкретно этого бота
+            if not campaign_id:
+                await db.execute(
+                    "UPDATE bot_users SET is_active=false WHERE owner_id=$1 AND user_id=$2",
+                    owner_id, rec["user_id"],
+                )
         except TelegramRetryAfter as e:
             logger.warning(f"Mailing {mailing_id}: rate limit {e.retry_after}s")
             await asyncio.sleep(e.retry_after)

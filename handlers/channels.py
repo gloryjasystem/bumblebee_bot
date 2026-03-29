@@ -26,15 +26,25 @@ class ChannelFSM(StatesGroup):
     waiting_for_chat_verify  = State()   # Ввод @username или ID канала для проверки
 
 
+
 # ══════════════════════════════════════════════════════════════
-# 1. Список площадок
+# 1. Список ботов — с пагинацией
 # ══════════════════════════════════════════════════════════════
-@router.callback_query(F.data == "menu:channels")
+_BOTS_PER_PAGE = 5
+
+@router.callback_query(F.data.startswith("menu:channels"))
 async def on_channels_menu(callback: CallbackQuery, platform_user: dict | None):
     if not platform_user:
         await callback.answer("Выполните /start")
         return
     owner_id = platform_user["user_id"]
+
+    # Парсим номер страницы из callback_data: "menu:channels" или "menu:channels:2"
+    parts = callback.data.split(":")
+    try:
+        page = int(parts[2]) if len(parts) >= 3 and parts[2].isdigit() else 0
+    except (IndexError, ValueError):
+        page = 0
 
     # Мои боты (владелец) + подсчет RN для лимитов
     bots = await db.fetch(
@@ -65,20 +75,21 @@ async def on_channels_menu(callback: CallbackQuery, platform_user: dict | None):
     from config import TARIFFS
     tariff = platform_user["tariff"]
     limit  = TARIFFS.get(tariff, TARIFFS["free"])["max_bots"]
-    # Считаем только собственные боты для вывода кнопки
-    own_count = sum(1 for b in bots if b["my_role"] == "owner")
 
+    # Считаем статистику по ВСЕМ ботам (не только по текущей странице!)
+    own_count  = sum(1 for b in bots if b["my_role"] == "owner")
+    own_active = sum(1 for b in bots if b["my_role"] == "owner" and b["rn"] <= limit)
+    own_frozen = sum(1 for b in bots if b["my_role"] == "owner" and b["rn"] > limit)
+
+    # Пагинация
+    total_pages = max(1, (len(bots) + _BOTS_PER_PAGE - 1) // _BOTS_PER_PAGE)
+    page = max(0, min(page, total_pages - 1))
+    page_bots = bots[page * _BOTS_PER_PAGE : (page + 1) * _BOTS_PER_PAGE]
+
+    # Кнопки для текущей страницы
     buttons = []
-    own_active = 0
-    own_frozen = 0
-    for b in bots:
+    for b in page_bots:
         is_frozen = b["my_role"] == "owner" and b["rn"] > limit
-        if b["my_role"] == "owner":
-            if is_frozen:
-                own_frozen += 1
-            else:
-                own_active += 1
-        
         if is_frozen:
             status = "🔴"
             btn_text = f"{status} @{b['bot_username']} (Заморожен)"
@@ -90,6 +101,20 @@ async def on_channels_menu(callback: CallbackQuery, platform_user: dict | None):
                 text=f"{status} @{b['bot_username']}{role_icon}",
                 callback_data=f"bot_settings:{b['id']}",
             )])
+
+    # Навигация по страницам (только если страниц > 1)
+    if total_pages > 1:
+        nav_row = []
+        if page > 0:
+            nav_row.append(InlineKeyboardButton(text="◀️", callback_data=f"menu:channels:{page - 1}"))
+        else:
+            nav_row.append(InlineKeyboardButton(text="·", callback_data="ml_noop"))
+        nav_row.append(InlineKeyboardButton(text=f"{page + 1} / {total_pages}", callback_data="ml_noop"))
+        if page < total_pages - 1:
+            nav_row.append(InlineKeyboardButton(text="▶️", callback_data=f"menu:channels:{page + 1}"))
+        else:
+            nav_row.append(InlineKeyboardButton(text="·", callback_data="ml_noop"))
+        buttons.append(nav_row)
 
     if own_count < limit:
         buttons.append([InlineKeyboardButton(
@@ -110,6 +135,11 @@ async def on_channels_menu(callback: CallbackQuery, platform_user: dict | None):
         f"Подключено: {own_count}/{limit} (тариф {tariff.capitalize()})",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
     )
+
+
+@router.callback_query(F.data == "ml_noop")
+async def on_ml_noop(callback: CallbackQuery):
+    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("bot_frozen:"))

@@ -38,12 +38,17 @@ class MassMailingFSM(StatesGroup):
 # Массовая рассылка (menu:mailing)
 # ══════════════════════════════════════════════════════════════
 
+_MASS_BOTS_PER_PAGE = 6   # ботов на страницу при выборе
+_SCHED_PER_PAGE = 5       # рассылок на страницу в списке запланированных
+
+
 async def _show_mass_mailing(callback: CallbackQuery, state: FSMContext,
                              platform_user: dict):
-    """Показывает экран выбора ботов для массовой рассылки."""
+    """Показывает экран выбора ботов для массовой рассылки (с пагинацией)."""
     owner_id = platform_user["user_id"]
     data = await state.get_data()
     selected: list[int] = data.get("mass_selected", [])
+    page: int = data.get("mass_page", 0)
 
     tariff = platform_user.get("tariff", "free")
     from config import TARIFFS
@@ -70,13 +75,19 @@ async def _show_mass_mailing(callback: CallbackQuery, state: FSMContext,
         owner_id, max_bots,
     )
 
-    # Убираем из выбранных те боты, которые были заморожены (если они там были)
+    # Убираем из выбранных замороженные боты
     valid_bot_ids = [b["id"] for b in bots]
     selected = [sid for sid in selected if sid in valid_bot_ids]
     if len(selected) != len(data.get("mass_selected", [])):
         await state.update_data(mass_selected=selected)
 
-    # Считаем пользователей по выбранным ботам
+    # Пагинация списка ботов
+    total_bots = len(bots)
+    total_pages = max(1, (total_bots + _MASS_BOTS_PER_PAGE - 1) // _MASS_BOTS_PER_PAGE)
+    page = max(0, min(page, total_pages - 1))
+    page_bots = bots[page * _MASS_BOTS_PER_PAGE : (page + 1) * _MASS_BOTS_PER_PAGE]
+
+    # Считаем пользователей по ВСЕМ выбранным ботам (не только по текущей странице)
     total_users = 0
     if selected:
         total_users = await db.fetchval(
@@ -89,7 +100,7 @@ async def _show_mass_mailing(callback: CallbackQuery, state: FSMContext,
 
     sel_count = len(selected)
     buttons = []
-    for b in bots:
+    for b in page_bots:
         is_sel = b["id"] in selected
         icon = "🔵" if is_sel else "⚪"
         buttons.append([InlineKeyboardButton(
@@ -97,18 +108,23 @@ async def _show_mass_mailing(callback: CallbackQuery, state: FSMContext,
             callback_data=f"ml_mass_toggle:{b['id']}",
         )])
 
-    buttons.append([InlineKeyboardButton(
-        text="🚀 Начать рассылку",
-        callback_data="ml_mass_start",
-    )])
-    buttons.append([InlineKeyboardButton(
-        text="📅 Запланированные",
-        callback_data="ml_mass_scheduled",
-    )])
-    buttons.append([InlineKeyboardButton(
-        text="◀️ Назад",
-        callback_data="menu:main",
-    )])
+    # Навигация по страницам ботов (только если страниц > 1)
+    if total_pages > 1:
+        nav_row = []
+        if page > 0:
+            nav_row.append(InlineKeyboardButton(text="◀️", callback_data=f"ml_mass_page:{page - 1}"))
+        else:
+            nav_row.append(InlineKeyboardButton(text="·", callback_data="ml_noop"))
+        nav_row.append(InlineKeyboardButton(text=f"{page + 1}/{total_pages}", callback_data="ml_noop"))
+        if page < total_pages - 1:
+            nav_row.append(InlineKeyboardButton(text="▶️", callback_data=f"ml_mass_page:{page + 1}"))
+        else:
+            nav_row.append(InlineKeyboardButton(text="·", callback_data="ml_noop"))
+        buttons.append(nav_row)
+
+    buttons.append([InlineKeyboardButton(text="🚀 Начать рассылку", callback_data="ml_mass_start")])
+    buttons.append([InlineKeyboardButton(text="📅 Запланированные", callback_data="ml_mass_scheduled")])
+    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data="menu:main")])
 
     await navigate(
         callback,
@@ -133,10 +149,12 @@ async def on_menu_mailing(callback: CallbackQuery, state: FSMContext,
     if tariff == "free":
         await callback.answer("Рассылка доступна с тарифа Старт.", show_alert=True)
         return
-    # Сохраняем пустой выбор при первом входе (не сбрасываем если уже были)
+    # При входе сбрасываем страницу на первую; сохраняем выбранных ботов если уже были
     data = await state.get_data()
+    updates: dict = {"mass_page": 0}
     if "mass_selected" not in data:
-        await state.update_data(mass_selected=[])
+        updates["mass_selected"] = []
+    await state.update_data(**updates)
     await state.set_state(MassMailingFSM.selecting_bots)
     await _show_mass_mailing(callback, state, platform_user)
 
@@ -156,6 +174,20 @@ async def on_ml_mass_toggle(callback: CallbackQuery, state: FSMContext,
         selected.append(bot_id)
 
     await state.update_data(mass_selected=selected)
+    await _show_mass_mailing(callback, state, platform_user)
+
+
+@router.callback_query(F.data.startswith("ml_mass_page:"))
+async def on_ml_mass_page(callback: CallbackQuery, state: FSMContext,
+                          platform_user: dict | None):
+    """Переключение страницы в списке ботов для массовой рассылки."""
+    if not platform_user:
+        return
+    try:
+        page = int(callback.data.split(":")[1])
+    except (IndexError, ValueError):
+        page = 0
+    await state.update_data(mass_page=page)
     await _show_mass_mailing(callback, state, platform_user)
 
 
@@ -287,30 +319,54 @@ async def on_mass_mailing_text(message: Message, state: FSMContext, bot: Bot):
     )
 
 
-@router.callback_query(F.data == "ml_mass_scheduled")
+@router.callback_query(F.data.startswith("ml_mass_scheduled"))
 async def on_ml_mass_scheduled(callback: CallbackQuery, platform_user: dict | None):
+    """Список запланированных рассылок с пагинацией (5 на страницу)."""
     if not platform_user:
         return
     owner_id = platform_user["user_id"]
-    rows = await db.fetch(
-        """SELECT m.id, m.text, m.scheduled_at, cb.bot_username
-           FROM mailings m
-           LEFT JOIN child_bots cb ON cb.id = m.child_bot_id
-           WHERE m.owner_id=$1
-             AND (m.child_bot_id IS NOT NULL OR m.campaign_id IS NOT NULL)
-             AND m.status IN ('scheduled')
-           ORDER BY m.scheduled_at ASC LIMIT 15""",
+
+    # Парсим страницу: "ml_mass_scheduled" → 0, "ml_mass_scheduled:2" → 2
+    parts = callback.data.split(":")
+    try:
+        page = int(parts[1]) if len(parts) >= 2 and parts[1].isdigit() else 0
+    except (IndexError, ValueError):
+        page = 0
+
+    # Общее количество запланированных
+    total = await db.fetchval(
+        """SELECT COUNT(*) FROM mailings
+           WHERE owner_id=$1
+             AND (child_bot_id IS NOT NULL OR campaign_id IS NOT NULL)
+             AND status = 'scheduled'""",
         owner_id,
-    )
-    if not rows:
+    ) or 0
+
+    if total == 0:
         await callback.message.edit_text(
             "📅 <b>Запланированные рассылки</b>\n\nНет запланированных рассылок.",
+            parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="◀️ Назад", callback_data="menu:mailing")],
             ]),
         )
         await callback.answer()
         return
+
+    total_pages = max(1, (total + _SCHED_PER_PAGE - 1) // _SCHED_PER_PAGE)
+    page = max(0, min(page, total_pages - 1))
+
+    rows = await db.fetch(
+        """SELECT m.id, m.text, m.scheduled_at, cb.bot_username
+           FROM mailings m
+           LEFT JOIN child_bots cb ON cb.id = m.child_bot_id
+           WHERE m.owner_id=$1
+             AND (m.child_bot_id IS NOT NULL OR m.campaign_id IS NOT NULL)
+             AND m.status = 'scheduled'
+           ORDER BY m.scheduled_at ASC
+           LIMIT $2 OFFSET $3""",
+        owner_id, _SCHED_PER_PAGE, page * _SCHED_PER_PAGE,
+    )
 
     buttons = []
     for r in rows:
@@ -321,10 +377,26 @@ async def on_ml_mass_scheduled(callback: CallbackQuery, platform_user: dict | No
             text=f"📅 {dt} [{bot_name}] {preview}…",
             callback_data=f"ml_view_draft:{r['id']}:",
         )])
+
+    # Навигация по страницам (только если страниц > 1)
+    if total_pages > 1:
+        nav_row = []
+        if page > 0:
+            nav_row.append(InlineKeyboardButton(text="◀️", callback_data=f"ml_mass_scheduled:{page - 1}"))
+        else:
+            nav_row.append(InlineKeyboardButton(text="·", callback_data="ml_noop"))
+        nav_row.append(InlineKeyboardButton(text=f"{page + 1}/{total_pages}", callback_data="ml_noop"))
+        if page < total_pages - 1:
+            nav_row.append(InlineKeyboardButton(text="▶️", callback_data=f"ml_mass_scheduled:{page + 1}"))
+        else:
+            nav_row.append(InlineKeyboardButton(text="·", callback_data="ml_noop"))
+        buttons.append(nav_row)
+
     buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data="menu:mailing")])
 
     await callback.message.edit_text(
-        "📅 <b>Запланированные рассылки</b>",
+        f"📅 <b>Запланированные рассылки</b>",
+        parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
     )
     await callback.answer()
@@ -1778,34 +1850,67 @@ async def on_schedule_input(message: Message, state: FSMContext):
 
     # ── Проверка rate-limit: не чаще 1 рассылки в час ────────────
     if mailing_id:
-        owner_id_check = data.get("owner_id") or message.from_user.id
-        child_bot_id_check = await db.fetchval(
-            "SELECT child_bot_id FROM mailings WHERE id=$1", int(mailing_id)
+        owner_id_check = message.from_user.id
+        m_check = await db.fetchrow(
+            "SELECT child_bot_id, campaign_id FROM mailings WHERE id=$1",
+            int(mailing_id),
         )
-        conflict = await db.fetchval(
-            """SELECT 1 FROM mailings
-               WHERE owner_id=$1
-                 AND ($2::int IS NULL OR child_bot_id=$2::int)
-                 AND status IN ('scheduled','pending','running')
-                 AND id != $3
-                 AND ABS(EXTRACT(EPOCH FROM (scheduled_at - $4::timestamptz))) < 3600
-               LIMIT 1""",
-            owner_id_check, child_bot_id_check, int(mailing_id), dt,
-        )
-        if conflict:
-            err = await message.answer(
-                "🚫 <b>Слишком часто!</b>\n\n"
-                "Запланированные рассылки можно создавать "
-                "<b>не чаще одного раза в час</b>.\n"
-                "Пожалуйста, выберите другое время.",
-                parse_mode="HTML",
+        is_mass = bool(m_check and m_check["campaign_id"])
+
+        if is_mass:
+            # Для массовых кампаний: проверяем только другие массовые
+            conflict_row = await db.fetchrow(
+                """SELECT scheduled_at FROM mailings
+                   WHERE owner_id=$1
+                     AND campaign_id IS NOT NULL
+                     AND status = 'scheduled'
+                     AND id != $2
+                     AND ABS(EXTRACT(EPOCH FROM (scheduled_at - $3::timestamptz))) < 3600
+                   ORDER BY scheduled_at ASC LIMIT 1""",
+                owner_id_check, int(mailing_id), dt,
             )
-            await asyncio.sleep(5)
-            try:
-                await err.delete()
-            except Exception:
-                pass
-            return
+            if conflict_row:
+                next_at = conflict_row["scheduled_at"]
+                next_str = (next_at + timedelta(hours=1)).strftime("%H:%M %d.%m")
+                err = await message.answer(
+                    "🚫 <b>Слишком часто!</b>\n\n"
+                    "У вас уже есть запланированная массовая рассылка в течение ближайшего часа.\n\n"
+                    f"Следующую вы сможете создать после: <b>{next_str} (UTC)</b>",
+                    parse_mode="HTML",
+                )
+                await asyncio.sleep(5)
+                try:
+                    await err.delete()
+                except Exception:
+                    pass
+                return
+        else:
+            # Для обычных рассылок: проверяем только этот конкретный бот
+            child_bot_id_check = m_check["child_bot_id"] if m_check else None
+            conflict = await db.fetchval(
+                """SELECT 1 FROM mailings
+                   WHERE owner_id=$1
+                     AND ($2::int IS NULL OR child_bot_id=$2::int)
+                     AND status IN ('scheduled','pending','running')
+                     AND id != $3
+                     AND ABS(EXTRACT(EPOCH FROM (scheduled_at - $4::timestamptz))) < 3600
+                   LIMIT 1""",
+                owner_id_check, child_bot_id_check, int(mailing_id), dt,
+            )
+            if conflict:
+                err = await message.answer(
+                    "🚫 <b>Слишком часто!</b>\n\n"
+                    "Запланированные рассылки можно создавать "
+                    "<b>не чаще одного раза в час</b>.\n"
+                    "Пожалуйста, выберите другое время.",
+                    parse_mode="HTML",
+                )
+                await asyncio.sleep(5)
+                try:
+                    await err.delete()
+                except Exception:
+                    pass
+                return
 
     await state.clear()
 

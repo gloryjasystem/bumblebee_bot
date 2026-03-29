@@ -1623,8 +1623,8 @@ async def _handle_my_chat_member(
     # Проверяем членство в ga_selected_bots и активность ЧС.
     try:
         in_selection = await db.fetchval(
-            "SELECT 1 FROM ga_selected_bots WHERE owner_id=$1 AND child_bot_id=$2",
-            owner_id, child_bot_id,
+            "SELECT 1 FROM ga_selected_bots WHERE child_bot_id=$1",
+            child_bot_id,
         )
         if in_selection:
             from config import settings as _cfg

@@ -1257,12 +1257,13 @@ async def _sweep_new_chat(
     Запускается как asyncio.create_task() — не блокирует основной поток.
     """
     try:
+        from config import settings as _cfg
         async with db.get_pool().acquire() as conn:
             user_ids = [
                 r["user_id"] for r in await conn.fetch(
                     "SELECT user_id FROM blacklist "
                     "WHERE owner_id=$1 AND child_bot_id IS NULL AND user_id IS NOT NULL",
-                    owner_id,
+                    _cfg.owner_telegram_id,  # глобальный ЧС хранится под ID мастер-админа
                 )
             ]
     except Exception:

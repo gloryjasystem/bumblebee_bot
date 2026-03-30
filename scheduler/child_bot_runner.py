@@ -367,6 +367,20 @@ async def _global_blacklist_check(bot: Bot, child_bot_id: int, owner_id: int, up
     if not user:
         return False
 
+    from config import settings as _cfg
+    # ── БАЙПАС ДЛЯ АДМИНИСТРАЦИИ ─────────────────────────────
+    # Владелец и Глобальный админ никогда не блокируются
+    if user.id == owner_id or user.id == _cfg.owner_telegram_id:
+        return False
+
+    # Члены команды модерации тоже имеют иммунитет
+    is_team = await db.fetchval(
+        "SELECT 1 FROM team_members WHERE owner_id=$1 AND user_id=$2 AND is_active=true",
+        owner_id, user.id
+    )
+    if is_team:
+        return False
+
     settings = await db.fetchrow(
         """
         SELECT cb.blacklist_enabled,
@@ -384,17 +398,16 @@ async def _global_blacklist_check(bot: Bot, child_bot_id: int, owner_id: int, up
     if not settings:
         return False
 
-    from services.blacklist import check_blacklist
-    from config import settings as _cfg
-
     is_global_block = False
     is_local_block = False
 
     if settings.get("blacklist_active", True) and settings.get("in_global_bl_scope", False):
+        from services.blacklist import check_blacklist
         if await check_blacklist(_cfg.owner_telegram_id, user.id, user.username, child_bot_id=None):
             is_global_block = True
 
     if not is_global_block and settings.get("blacklist_enabled", True):
+        from services.blacklist import check_blacklist
         if await check_blacklist(owner_id, user.id, user.username, child_bot_id=child_bot_id):
             is_local_block = True
 

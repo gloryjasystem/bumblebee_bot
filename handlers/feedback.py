@@ -293,7 +293,7 @@ async def on_feedback_lang(callback: CallbackQuery, platform_user: dict | None):
 
 # ── Форвардинг входящих сообщений ─────────────────────────────
 async def handle_feedback_message(
-    message: Message, bot: Bot, owner_id: int, chat_id: int,
+    message: Message, bot: Bot, owner_id: int, chat_id: int | None = None,
     child_bot_id: int | None = None,
     child_bot_instance: Bot | None = None,   # дочерний бот — основной канал уведомлений
 ):
@@ -306,14 +306,17 @@ async def handle_feedback_message(
       1) child_bot_instance (дочерний бот) — primary
       2) bot (основной Bumblebee) — fallback, если admin не запустил /start дочернему
     """
-    settings = await db.fetchrow(
-        "SELECT * FROM bot_chats WHERE owner_id=$1 AND chat_id=$2",
-        owner_id, chat_id,
-    )
-    if not settings:
-        return
+    settings = None
+    if chat_id is not None:
+        settings = await db.fetchrow(
+            "SELECT * FROM bot_chats WHERE owner_id=$1 AND chat_id=$2",
+            owner_id, chat_id,
+        )
 
-    chat_level_enabled = settings.get("feedback_enabled") or False
+    chat_level_enabled = False
+    if settings:
+        chat_level_enabled = settings.get("feedback_enabled") or False
+
     bot_level_enabled  = False
     bot_row = None
 
@@ -324,10 +327,15 @@ async def handle_feedback_message(
         )
         bot_level_enabled = (bot_row.get("feedback_enabled") or False) if bot_row else False
 
+    # Если ни на одном из уровней не включено, ИЛИ мы пытаемся переслать конкретному чату,
+    # которого нет в базе/он выключен — выходим (если есть bot-level, мы должны пропустить)
+    # Тут логика: если есть bot_level_enabled, это покрывает ситуацию chat_id=None
     if not chat_level_enabled and not bot_level_enabled:
         return
 
-    if chat_level_enabled:
+    # Если чат передан, но настроек нет / отключено, а на уровне бота включено,
+    # то мы разрешаем отправку (fallback к настройкам бота).
+    if chat_level_enabled and settings:
         target = settings.get("feedback_target", "owner")
     else:
         target = (bot_row.get("feedback_target") or "owner") if bot_row else "owner"
@@ -337,11 +345,16 @@ async def handle_feedback_message(
     name      = (from_user.first_name or "?") if from_user else "?"
     user_id   = from_user.id if from_user else 0
 
-    chat_title = settings.get("chat_title") or str(chat_id)
+    if settings:
+        chat_title = settings.get("chat_title") or str(chat_id)
+        source_label = f"Площадка: <b>{chat_title}</b>\n"
+    else:
+        source_label = f"Бот напрямую (без площадки)\n"
+
     # Сообщение 1: чистый текст обратной связи БЕЗ кнопок
     caption = (
         f"📩 <b>Обратная связь</b>\n"
-        f"Площадка: <b>{chat_title}</b>\n"
+        f"{source_label}"
         f"От: {name} ({username})"
     )
 

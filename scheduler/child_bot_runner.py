@@ -1208,6 +1208,8 @@ async def _handle_message(bot: Bot, child_bot_id: int, owner_id: int, message):
         # пользователь ещё не нажимал /start и нет записи в bot_users.
         # Но если автоответчик (keyword или общий) уже ответил — не пересылаем.
         if not suppress_feedback:
+            # Сначала пытаемся найти привязанные площадки, у которых включена обратная связь 
+            # (или включена глобально для бота)
             chats = await db.fetch(
                 """
                 SELECT bc.owner_id, bc.chat_id
@@ -1219,50 +1221,64 @@ async def _handle_message(bot: Bot, child_bot_id: int, owner_id: int, message):
                 """,
                 child_bot_id,
             )
+            
+            from handlers.feedback import handle_feedback_message
+            sent_owners: set = set()
+            
+            async def _try_forward(oid: int, cid: int | None):
+                if oid in sent_owners:
+                    return
+                # Не пересылать если отправитель — владелец или его команда
+                if user.id == oid:
+                    logger.debug(f"[FEEDBACK] Skipping: user {user.id} is the owner")
+                    return
+                is_team = await db.fetchval(
+                    "SELECT 1 FROM team_members WHERE user_id=$1 AND owner_id=$2 AND is_active=true",
+                    user.id, oid,
+                )
+                if is_team:
+                    logger.debug(f"[FEEDBACK] Skipping: user {user.id} is a team member")
+                    return
+                # Не пересылать если пользователь заблокирован по feedback
+                is_blocked = await db.fetchval(
+                    "SELECT feedback_blocked FROM bot_users WHERE user_id=$1 AND owner_id=$2 LIMIT 1",
+                    user.id, oid,
+                )
+                if is_blocked:
+                    logger.debug(f"[FEEDBACK] Skipping: user {user.id} is feedback_blocked for owner {oid}")
+                    return
+                
+                sent_owners.add(oid)
+                # child_bot_instance=bot → уведомления идут через дочернего бота, не через основной
+                await handle_feedback_message(
+                    message, _main_bot, oid, cid, child_bot_id,
+                    child_bot_instance=bot,
+                )
+
             if chats:
-                from handlers.feedback import handle_feedback_message
-                sent_owners: set = set()
                 for ch in chats:
-                    oid = ch["owner_id"]
-                    if oid in sent_owners:
-                        continue
-                    # Не пересылать если отправитель — владелец или его команда
-                    if user.id == oid:
-                        logger.debug(f"[FEEDBACK] Skipping: user {user.id} is the owner")
-                        continue
-                    is_team = await db.fetchval(
-                        "SELECT 1 FROM team_members WHERE user_id=$1 AND owner_id=$2 AND is_active=true",
-                        user.id, oid,
-                    )
-                    if is_team:
-                        logger.debug(f"[FEEDBACK] Skipping: user {user.id} is a team member")
-                        continue
-                    # Не пересылать если пользователь заблокирован по feedback
-                    is_blocked = await db.fetchval(
-                        "SELECT feedback_blocked FROM bot_users WHERE user_id=$1 AND owner_id=$2 LIMIT 1",
-                        user.id, oid,
-                    )
-                    if is_blocked:
-                        logger.debug(f"[FEEDBACK] Skipping: user {user.id} is feedback_blocked for owner {oid}")
-                        continue
-                    sent_owners.add(oid)
-                    # child_bot_instance=bot → уведомления идут через дочернего бота, не через основной
-                    await handle_feedback_message(
-                        message, _main_bot, oid, ch["chat_id"], child_bot_id,
-                        child_bot_instance=bot,
-                    )
-                if sent_owners:
-                    logger.info(f"[FEEDBACK] Forwarded msg from user {user.id} to {len(sent_owners)} owner(s)")
-                    # Подтверждение пользователю что сообщение получено
-                    try:
-                        await bot.send_message(
-                            user.id,
-                            "Сообщение отправлено!",
-                        )
-                    except Exception:
-                        pass
+                    await _try_forward(ch["owner_id"], ch["chat_id"])
             else:
-                logger.debug(f"[FEEDBACK] No feedback-enabled chats for user {user.id}")
+                # Если площадок нет (бот работает без привязки к каналу), проверяем глобальные настройки бота
+                bot_info = await db.fetchrow(
+                    "SELECT owner_id, feedback_enabled FROM child_bots WHERE id=$1",
+                    child_bot_id
+                )
+                if bot_info and bot_info["feedback_enabled"]:
+                    await _try_forward(bot_info["owner_id"], None)
+
+            if sent_owners:
+                logger.info(f"[FEEDBACK] Forwarded msg from user {user.id} to {len(sent_owners)} owner(s)")
+                # Подтверждение пользователю что сообщение получено
+                try:
+                    await bot.send_message(
+                        user.id,
+                        "Сообщение отправлено!",
+                    )
+                except Exception:
+                    pass
+            else:
+                logger.debug(f"[FEEDBACK] No feedback-enabled targets for user {user.id}")
 
 
 

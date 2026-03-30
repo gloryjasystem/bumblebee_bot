@@ -272,19 +272,40 @@ async def send_captcha(bot: Bot, event: ChatJoinRequest, settings_row: dict):
             _captcha_timeout(bot, event, settings_row, msg.message_id)
         )
     except Exception as e:
-        logger.error(f"[CAPTCHA SEND ERROR] Could not send to {user.id}: {e}")
-        # Пользователь не открыл диалог с ботом
+        logger.warning(f"[CAPTCHA] Child bot failed to DM user={user.id}: {e} — trying main bot fallback")
+        # Fallback: пробуем отправить через главного бота (работает даже если
+        # пользователь заблокировал дочернего бота, т.к. с главным у него диалог может быть открыт)
+        try:
+            from scheduler.child_bot_runner import _main_bot as _fb_bot
+            if _fb_bot:
+                _pending[key] = event  # восстанавливаем pending для fallback-бота
+                if captcha_media:
+                    fb_msg = await _fb_bot.send_photo(
+                        user.id, captcha_media, caption=caption,
+                        parse_mode="HTML", reply_markup=kb,
+                    )
+                else:
+                    fb_msg = await _fb_bot.send_message(
+                        user.id, caption, parse_mode="HTML", reply_markup=kb,
+                    )
+                _captcha_msg_ids[key] = fb_msg.message_id
+                asyncio.create_task(
+                    _captcha_timeout(_fb_bot, event, settings_row, fb_msg.message_id)
+                )
+                logger.info(f"[CAPTCHA] Sent via main bot fallback to user={user.id} ✅")
+                return
+        except Exception as fb_e:
+            logger.error(f"[CAPTCHA] Main bot fallback also failed for user={user.id}: {fb_e}")
+        # Оба бота не смогли — очищаем pending и применяем autoaccept-логику
         _pending.pop(key, None)
         _expected.pop(key, None)
-        # Если автопринятие включено — принимаем; если выключено — оставляем на ручное
         if settings_row.get("autoaccept"):
             await event.approve()
             from handlers.join_requests import _register_user, _send_welcome
             await _register_user(settings_row["owner_id"], event.chat.id, user)
             await _send_welcome(bot, event.chat.id, user, settings_row)
         else:
-            # Автопринятие выключено: оставляем заявку pending для ручного одобрения
-            logger.info(f"[CAPTCHA] DM failed, autoaccept=off — leaving {user.id} pending for manual review")
+            logger.info(f"[CAPTCHA] Both bots failed DM for user={user.id} — leaving pending for manual review")
 
 
 

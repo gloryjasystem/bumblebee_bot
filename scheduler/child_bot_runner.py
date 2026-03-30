@@ -421,6 +421,11 @@ async def _handle_child_update(
     try:
         # Супер-перехват Капкана (Blacklist) на любое действие
         if await _global_blacklist_check(bot, child_bot_id, owner_id, update):
+            if update.callback_query:
+                try:
+                    await update.callback_query.answer("❌ Вы заблокированы", show_alert=True)
+                except Exception:
+                    pass
             return  # Игнорируем и блокируем всё дальнейшее выполнение
         # ── Бот добавлен/удалён из чата ──────────────────────
         if update.my_chat_member:
@@ -507,12 +512,17 @@ async def _handle_fb_reply_callback(bot: Bot, child_bot_id: int, callback):
                 await callback.answer("❌ Нет доступа к этому действию.", show_alert=True)
                 return
 
-        # Извлекаем имя из текста уведомления (строка «От: Имя (@username)»)
+        # Извлекаем имя из текста уведомления
         target_name, target_username = "пользователю", ""
         if callback.message and callback.message.text:
             for line in callback.message.text.splitlines():
-                if line.startswith("От:"):
-                    raw = line.replace("От:", "").strip()
+                l_lower = line.lower()
+                if line.startswith("От:") or "сообщение от " in l_lower:
+                    if ":" in line:
+                        raw = line.split(":", 1)[1].strip()
+                    else:
+                        raw = line.split("от ", 1)[-1].rstrip("!").strip()
+
                     if " (" in raw:
                         target_name     = raw.split(" (")[0].strip()
                         target_username = raw.split(" (")[1].rstrip(")")
@@ -533,12 +543,21 @@ async def _handle_fb_reply_callback(bot: Bot, child_bot_id: int, callback):
             "owner_id":            owner_id,
         }
 
-        # Редактируем сообщение 2 в режим ввода (prompt, скриншот 3)
+        # Редактируем сообщение 2 в режим ввода (prompt)
+        from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+        cancel_kb = InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(
+                text="❌ Отмена",
+                callback_data=f"fbr_cancel:{child_bot_id}:{target_user_id}:{owner_id}",
+            )
+        ]])
         try:
             await callback.message.edit_text(
                 f"✉️ <b>Напишите ответ для {name_display}:</b>\n\n"
-                f"Следующее сообщение, которое вы напишете в этот бот, будет отправлено пользователю.",
+                f"Следующее сообщение, которое вы напишете в этот бот, будет отправлено пользователю.\n"
+                f"Для отмены нажмите кнопку ниже или введите /cancel",
                 parse_mode="HTML",
+                reply_markup=cancel_kb,
             )
         except Exception as edit_err:
             logger.debug(f"[FB_REPLY CB] Could not edit notification: {edit_err}")

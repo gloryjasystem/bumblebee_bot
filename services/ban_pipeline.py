@@ -388,11 +388,16 @@ async def _fast_worker(
             _drain_queue(queue)
             return
 
+        # ── 1. Получение задачи вне блока try...finally ──
         try:
+            # Используем wait_for для периодической проверки stop_event
             _, numeric_id = await asyncio.wait_for(queue.get(), timeout=1.0)
         except asyncio.TimeoutError:
             continue
+        except asyncio.CancelledError:
+            return
 
+        # ── 2. Процесс задачи с гарантированным task_done() ──
         try:
             already, local_id = await _smart_resolve(
                 owner_id=owner_id,
@@ -432,8 +437,7 @@ async def _fast_worker(
             results["error"] += 1
         finally:
             queue.task_done()
-
-        _report_progress(bot, results, notify_chat_id, status_msg_id)
+            _report_progress(bot, results, notify_chat_id, status_msg_id)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -464,21 +468,18 @@ async def _slow_worker(
             return
 
         if api_dead_event.is_set():
-            # Circuit Breaker OPEN: дропаем все оставшиеся задачи
-            try:
-                while True:
-                    queue.get_nowait()
-                    results["error"] += 1
-                    queue.task_done()
-            except asyncio.QueueEmpty:
-                pass
+            _drain_queue(queue)
             return
 
+        # ── 1. Получение задачи вне блока try...finally ──
         try:
             username, _ = await asyncio.wait_for(queue.get(), timeout=1.0)
         except asyncio.TimeoutError:
             continue
+        except asyncio.CancelledError:
+            return
 
+        # ── 2. Процесс задачи с гарантированным task_done() ──
         try:
             already, local_id = await _smart_resolve(
                 owner_id=owner_id,
@@ -497,32 +498,18 @@ async def _slow_worker(
 
             # Если ID не нашли локально — идём в внешний API (только если разрешено)
             if resolved_id is None and not use_api:
-                # Локальный ЧС: RapidAPI запрещён для экономии токенов.
-                # Сохраняем @username с user_id=NULL для пассивного детектора.
-                # Как только пользователь появится в канале, бот поймает его ID
-                # через incoming Update и немедленно забанит (логика в check_blacklist).
                 if action == "ban":
                     await _save_to_blacklist(owner_id, 0, username, child_bot_id)
-                    # Перезаписываем: сохраняем только username (NULL-запись)
                     await db.execute(
                         "UPDATE blacklist SET user_id = NULL WHERE owner_id=$1 "
                         "AND LOWER(username)=$2 AND child_bot_id IS NOT DISTINCT FROM $3 AND user_id=0",
                         owner_id, username.lower(), child_bot_id,
                     )
                     results["ok"] += 1
-                    logger.info(
-                        "[SLOW %d] @%s queued for passive detection (no API)",
-                        worker_id, username,
-                    )
+                    logger.info("[SLOW %d] @%s queued for passive detection (no API)", worker_id, username)
                 else:
-                    # При unban: если записи нет вообще — просто пропускаем
-                    logger.info(
-                        "[SLOW %d] @%s not in BL locally, skipping unban (no API)",
-                        worker_id, username,
-                    )
-                queue.task_done()
-                _report_progress(bot, results, notify_chat_id, status_msg_id)
-                continue
+                    logger.info("[SLOW %d] @%s not in BL locally, skipping unban (no API)", worker_id, username)
+                continue  # finally: task_done() сработает
 
             if resolved_id is None:
                 # Арендуем токен RPM bucket перед запросом к API
@@ -540,25 +527,24 @@ async def _slow_worker(
                 except asyncio.TimeoutError:
                     logger.warning("[SLOW %d] @%s: RapidAPI timeout (30s), skipping", worker_id, username)
                     results["error"] += 1
-                    queue.task_done()
-                    _report_progress(bot, results, notify_chat_id, status_msg_id)
                     continue
 
                 except UserNotFoundError:
                     logger.info("[SLOW %d] @%s not found", worker_id, username)
                     await _save_resolve_error(owner_id, username, child_bot_id, "not_found")
                     results["not_found"] += 1
-                    queue.task_done()
-                    _report_progress(bot, results, notify_chat_id, status_msg_id)
                     continue
 
                 except RateLimitError as e:
                     # Circuit breaker HALF-OPEN: пауза + джиттер + вернуть в очередь
                     wait = e.retry_after * (1.0 + random.uniform(0.0, 0.3))
                     logger.warning("[SLOW %d] Rate limit 429, sleeping %.1fs + jitter", worker_id, wait)
-                    queue.task_done()
+                    # Вызываем таск_дан сейчас, т.к. кладем копию обратно (новый таск)
+                    # await queue.put((username, None))
+                    # НО! Мы можем просто вызвать task_done в finally и сделать put здесь.
+                    # put() увеличит counter, task_done() уменьшит. Все верно.
                     await asyncio.sleep(wait)
-                    await queue.put((username, None))   # повторная попытка
+                    await queue.put((username, None))
                     continue
 
                 except InvalidApiKeyError:
@@ -567,13 +553,11 @@ async def _slow_worker(
                     api_dead_event.set()
                     stop_event.set()
                     asyncio.create_task(_send_key_error(bot, notify_chat_id, status_msg_id))
-                    queue.task_done()
-                    return
+                    return # finally: task_done() сработает перед выходом из функции
 
                 except aiohttp.ClientError as e:
                     logger.warning("[SLOW %d] Network error for @%s: %s", worker_id, username, e)
                     results["error"] += 1
-                    queue.task_done()
                     continue
 
             if resolved_id:
@@ -602,8 +586,7 @@ async def _slow_worker(
             results["error"] += 1
         finally:
             queue.task_done()
-
-        _report_progress(bot, results, notify_chat_id, status_msg_id)
+            _report_progress(bot, results, notify_chat_id, status_msg_id)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

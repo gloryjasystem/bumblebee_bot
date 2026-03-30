@@ -1833,6 +1833,7 @@ async def _handle_join_request(bot: Bot, child_bot_id: int, event: ChatJoinReque
                captcha_buttons_raw, captcha_button_style,
                captcha_greet, captcha_accept_now, captcha_accept_all,
                captcha_animation, captcha_anim_file_id, captcha_anim_type,
+               captcha_media, captcha_delete,
                filter_rtl, filter_hieroglyph, filter_no_photo,
                join_limit_enabled, join_limit_punishment,
                join_limit_period_min, join_limit_count,
@@ -1968,6 +1969,9 @@ async def _handle_join_request(bot: Bot, child_bot_id: int, event: ChatJoinReque
             "captcha_animation":        chat_settings.get("captcha_animation") or False,
             "captcha_anim_file_id":     chat_settings.get("captcha_anim_file_id"),
             "captcha_anim_type":        chat_settings.get("captcha_anim_type"),
+            "captcha_media":            chat_settings.get("captcha_media"),      # фото капчи
+            "captcha_delete":           chat_settings.get("captcha_delete") or False,  # удалять после прохождения
+            "autoaccept":               chat_settings.get("autoaccept") or False,  # фоллбэк если ЛК недоступна
             "welcome_text":             chat_settings.get("welcome_text"),
             "owner_id":                 owner_id,
             "invite_link_url":          invite_link_url,   # для трекинга статистики

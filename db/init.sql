@@ -508,3 +508,6 @@ CREATE TABLE IF NOT EXISTS platform_user_notes (
     note            TEXT,
     UNIQUE(owner_id, target_user_id)
 );
+
+-- Откат: удаляем временную колонку welcome_sent если она существует
+ALTER TABLE bot_users DROP COLUMN IF EXISTS welcome_sent;

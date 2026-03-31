@@ -322,3 +322,4 @@ async def run_scheduled_mailings():
         mailing_id = row["id"]
         logger.info(f"[scheduled_mailings] starting mailing id={mailing_id}")
         asyncio.create_task(run_mailing(mailing_id, _bot))
+        await asyncio.sleep(2.0)  # Плавный запуск независимых рассылок

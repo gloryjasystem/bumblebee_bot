@@ -338,60 +338,66 @@ async def run_mailing(mailing_id: int, bot: Bot,
             if not curr_bot:
                 continue
 
-            try:
-                sent_file_id = None
-                sent_msg_id = None
-                child_media_id = _child_media_ids.get(try_bot_id)
+            for attempt in range(max_retries := 3):
+                try:
+                    sent_file_id = None
+                    sent_msg_id = None
+                    child_media_id = _child_media_ids.get(try_bot_id)
 
-                if _media_bytes is not None and child_media_id is None:
-                    from aiogram.types import BufferedInputFile
-                    filename = f"media.{mailing.get('media_type', 'bin')}"
-                    override = BufferedInputFile(_media_bytes, filename=filename)
-                    sent_file_id, sent_msg_id = await _send_message(
-                        curr_bot, rec["user_id"], mailing, kb, user_dict, media_override=override
-                    )
-                    if sent_file_id:
-                        _child_media_ids[try_bot_id] = sent_file_id
-                elif child_media_id is not None:
-                    sent_file_id, sent_msg_id = await _send_message(
-                        curr_bot, rec["user_id"], mailing, kb, user_dict, media_override=child_media_id
-                    )
-                else:
-                    sent_file_id, sent_msg_id = await _send_message(
-                        curr_bot, rec["user_id"], mailing, kb, user_dict
-                    )
-
-                success = True
-                if sent_msg_id and (mailing.get("pin_message") or mailing.get("delete_after_send")):
-                    from datetime import timedelta, datetime, timezone
-                    _pin_until = datetime.now(timezone.utc) + timedelta(hours=24) if mailing.get("pin_message") else None
-                    try:
-                        await db.execute(
-                            """INSERT INTO mailing_sent_messages
-                               (mailing_id, child_bot_id, tg_user_id, tg_message_id, pin_until, delete_after)
-                               VALUES ($1, $2, $3, $4, $5, $6)""",
-                            mailing_id, try_bot_id if try_bot_id > 0 else None, rec["user_id"], sent_msg_id,
-                            _pin_until, bool(mailing.get("delete_after_send", False))
+                    if _media_bytes is not None and child_media_id is None:
+                        from aiogram.types import BufferedInputFile
+                        filename = f"media.{mailing.get('media_type', 'bin')}"
+                        override = BufferedInputFile(_media_bytes, filename=filename)
+                        sent_file_id, sent_msg_id = await _send_message(
+                            curr_bot, rec["user_id"], mailing, kb, user_dict, media_override=override
                         )
-                    except Exception:
-                        pass
-                break # Успешная отправка, переходим к следующему пользователю
+                        if sent_file_id:
+                            _child_media_ids[try_bot_id] = sent_file_id
+                    elif child_media_id is not None:
+                        sent_file_id, sent_msg_id = await _send_message(
+                            curr_bot, rec["user_id"], mailing, kb, user_dict, media_override=child_media_id
+                        )
+                    else:
+                        sent_file_id, sent_msg_id = await _send_message(
+                            curr_bot, rec["user_id"], mailing, kb, user_dict
+                        )
 
-            except TelegramForbiddenError:
-                # В кампании пропускаем и пробуем следующий бот.
-                # Если бот один или это последний бот и все выдали Forbidden:
-                if not campaign_id:
-                    await db.execute(
-                        "UPDATE bot_users SET is_active=false WHERE owner_id=$1 AND user_id=$2",
-                        owner_id, rec["user_id"]
-                    )
-            except TelegramRetryAfter as e:
-                logger.warning(f"Mailing {mailing_id}: rate limit {e.retry_after}s on bot {try_bot_id}")
-                await asyncio.sleep(e.retry_after)
-                continue # Retry с этим же ботом через цикл "bots_to_try" слишком сложно, проще заигнорить или пустить на следующий бот
-            except Exception as e:
-                logger.warning(f"Mailing {mailing_id}: failed on bot {try_bot_id} to {rec['user_id']}: {e}")
-                # Other errors, just try the next bot.
+                    success = True
+                    if sent_msg_id and (mailing.get("pin_message") or mailing.get("delete_after_send")):
+                        from datetime import timedelta, datetime, timezone
+                        _pin_until = datetime.now(timezone.utc) + timedelta(hours=24) if mailing.get("pin_message") else None
+                        try:
+                            await db.execute(
+                                """INSERT INTO mailing_sent_messages
+                                   (mailing_id, child_bot_id, tg_user_id, tg_message_id, pin_until, delete_after)
+                                   VALUES ($1, $2, $3, $4, $5, $6)""",
+                                mailing_id, try_bot_id if try_bot_id > 0 else None, rec["user_id"], sent_msg_id,
+                                _pin_until, bool(mailing.get("delete_after_send", False))
+                            )
+                        except Exception:
+                            pass
+                    break # Успешная отправка, выходим из цикла попыток
+
+                except TelegramForbiddenError:
+                    # В кампании пропускаем и пробуем следующий бот.
+                    # Если бот один или это последний бот и все выдали Forbidden:
+                    if not campaign_id:
+                        await db.execute(
+                            "UPDATE bot_users SET is_active=false WHERE owner_id=$1 AND user_id=$2",
+                            owner_id, rec["user_id"]
+                        )
+                    break # Не пытаемся снова, переходим к следующему боту/юзеру
+                except TelegramRetryAfter as e:
+                    logger.warning(f"Mailing {mailing_id}: rate limit {e.retry_after}s on bot {try_bot_id} (attempt {attempt + 1}/{max_retries})")
+                    await asyncio.sleep(e.retry_after + 1.0)
+                    continue # Пробуем снова в цикле попыток для этого же бота
+                except Exception as e:
+                    logger.warning(f"Mailing {mailing_id}: failed on bot {try_bot_id} to {rec['user_id']}: {e}")
+                    # Other errors, just break and try the next bot.
+                    break
+
+            if success:
+                break # Если отправили успешно - не пробуем другие child bots в bots_to_try
 
         if success:
             sent += 1

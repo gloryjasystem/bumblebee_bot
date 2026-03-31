@@ -191,13 +191,23 @@ def _extract_id(data: dict, username: str) -> int:
     Извлекает числовой Telegram ID из тела ответа RapidAPI.
 
     Поддерживаемые форматы:
-      - {"result": {"id": 123456789}}         — основной формат
-      - {"id": 123456789}                     — упрощённый формат
-      - {"user": {"id": 123456789}}           — альтернативный формат
-
-    Raises:
-        UserNotFoundError — если ID не найден ни в одном из форматов.
+      - {"result": {"id": 123456789, "username": "..."}}         — основной формат
+      - {"id": 123456789, "username": "..."}                     — упрощённый формат
+      - {"user": {"id": 123456789, "username": "..."}}           — альтернативный формат
     """
+    
+    # ── Проверка на поддельный/ошибочный ответ от API ─────────────────────────
+    # Защита от багов провайдера (когда он шлёт всем один и тот же ID с HTTP 200)
+    resp_username = (
+        (data.get("result") if isinstance(data.get("result"), dict) else {}).get("username") or
+        data.get("username") or
+        (data.get("user") if isinstance(data.get("user"), dict) else {}).get("username")
+    )
+    if resp_username and str(resp_username).lower() != username.lower():
+        raise UserNotFoundError(
+            f"API mismatch: requested @{username}, but API returned @{resp_username}"
+        )
+
     # Пробуем все известные пути в порядке приоритета
     candidates = [
         data.get("result", {}).get("id") if isinstance(data.get("result"), dict) else None,

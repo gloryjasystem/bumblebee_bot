@@ -1555,6 +1555,12 @@ async def _handle_my_chat_member(
             "SELECT 1 FROM platform_users WHERE user_id=$1", from_user.id,
         )
         if not is_our_client:
+            # Может быть member команды владельца (администратор канала)?
+            is_our_client = await db.fetchval(
+                "SELECT 1 FROM team_members WHERE user_id=$1 AND owner_id=$2 AND is_active=true",
+                from_user.id, owner_id,
+            )
+        if not is_our_client:
             # Посторонний добавил бота в свой канал — немедленно покидаем
             logger.warning(
                 f"[MCM] ANTI-SPAM: bot @{bot_username} added to chat={chat.id} by unknown "

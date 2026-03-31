@@ -466,6 +466,8 @@ async def _slow_worker(
     action:         str,
     use_api:        bool = True,
 ) -> None:
+    # Объявляем global в начале функции — Python требует это до первого использования
+    global _api_flood_wait_until, _api_backoff_time
     while True:
         if stop_event.is_set():
             _drain_queue(queue)
@@ -523,8 +525,6 @@ async def _slow_worker(
                 continue  # finally: task_done() сработает
 
             if resolved_id is None:
-                global _api_flood_wait_until, _api_backoff_time
-
                 # Арендуем токен RPM bucket перед запросом к API
                 await slow_bucket.acquire(jitter=TG_BAN_JITTER)
                 try:

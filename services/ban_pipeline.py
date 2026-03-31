@@ -502,10 +502,8 @@ async def _slow_worker(
             )
             if already and action == "ban":
                 logger.info("[SLOW %d] @%s already in BL, enforcing ban...", worker_id, username)
-                results["already_in_bl"] += 1
             elif not already and action == "unban":
                 logger.info("[SLOW %d] @%s not in BL, enforcing unban anyway...", worker_id, username)
-                results["already_in_bl"] += 1
 
             resolved_id: Optional[int] = local_id
 
@@ -518,9 +516,16 @@ async def _slow_worker(
                         "AND LOWER(username)=$2 AND child_bot_id IS NOT DISTINCT FROM $3 AND user_id=0",
                         owner_id, username.lower(), child_bot_id,
                     )
-                    results["ok"] += 1
+                    if already:
+                        results["already_in_bl"] += 1
+                    else:
+                        results["ok"] += 1
                     logger.info("[SLOW %d] @%s queued for passive detection (no API)", worker_id, username)
                 else:
+                    if not already:
+                        results["already_in_bl"] += 1
+                    else:
+                        results["ok"] += 1
                     logger.info("[SLOW %d] @%s not in BL locally, skipping unban (no API)", worker_id, username)
                 continue  # finally: task_done() сработает
 
@@ -582,14 +587,18 @@ async def _slow_worker(
                     if total_banned > 0:
                         await _increment_blocked_count(owner_id, banned, is_global=(child_bot_id is None))
                     await _save_to_blacklist(owner_id, resolved_id, username, child_bot_id)
-                    if not already:
+                    if already:
+                        results["already_in_bl"] += 1
+                    else:
                         results["ok"] += 1
                     logger.info("[SLOW %d] Banned user=%d in %d chats", worker_id, resolved_id, total_banned)
                 else:
                     if total_banned > 0:
                         await _increment_blocked_count(owner_id, banned, is_global=(child_bot_id is None), is_unban=True)
                     await _remove_from_blacklist(owner_id, resolved_id, child_bot_id)
-                    if already:
+                    if not already:
+                        results["already_in_bl"] += 1
+                    else:
                         results["ok"] += 1
                     logger.info("[SLOW %d] Unbanned user=%d in %d chats", worker_id, resolved_id, total_banned)
             else:

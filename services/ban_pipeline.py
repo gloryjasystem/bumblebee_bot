@@ -64,6 +64,9 @@ TG_BAN_JITTER: float = 0.2        # ±20% джиттер для каждого s
 FAST_WORKERS: int = 4             # Для числовых ID (без API)
 SLOW_WORKERS: int = 1             # Для @username (с API — ограничен RPM)
 
+# Максимальное количество попыток API на один username (защита от вечного цикла)
+MAX_API_RETRIES: int = 5
+
 # Прогресс-бар
 PROGRESS_INTERVAL: float = 3.0   # Минимальный интервал обновления (сек)
 
@@ -265,7 +268,7 @@ async def start_ban_pipeline(
     for uid in unique_ids:
         await fast_queue.put((None, uid))
     for uname in unique_usernames:
-        await slow_queue.put((uname, None))
+        await slow_queue.put((uname, None, 0))  # (username, resolved_id, retries)
 
     # ── Stop / Circuit Breaker events ────────────────────────────────────
     stop_event     = asyncio.Event()
@@ -486,7 +489,8 @@ async def _slow_worker(
 
         # ── 1. Получение задачи вне блока try...finally ──
         try:
-            username, _ = await asyncio.wait_for(queue.get(), timeout=1.0)
+            item = await asyncio.wait_for(queue.get(), timeout=1.0)
+            username, _, retries = item if len(item) == 3 else (*item, 0)
         except asyncio.TimeoutError:
             continue
         except asyncio.CancelledError:
@@ -544,10 +548,14 @@ async def _slow_worker(
                     _api_backoff_time = 5.0  # Успех — сбрасываем кулдаун
 
                 except asyncio.TimeoutError:
-                    logger.warning("[SLOW %d] @%s: RapidAPI timeout (30s), backing off %.1fs", worker_id, username, _api_backoff_time)
+                    if retries >= MAX_API_RETRIES:
+                        logger.error("[SLOW %d] @%s: max retries (%d) exceeded on timeout — marking as error", worker_id, username, MAX_API_RETRIES)
+                        results["error"] += 1
+                        continue
+                    logger.warning("[SLOW %d] @%s: RapidAPI timeout (30s), backing off %.1fs (attempt %d/%d)", worker_id, username, _api_backoff_time, retries + 1, MAX_API_RETRIES)
                     _api_flood_wait_until = time.monotonic() + _api_backoff_time
                     _api_backoff_time = min(60.0, _api_backoff_time * 2.0)
-                    await queue.put((username, None))
+                    await queue.put((username, None, retries + 1))
                     continue
 
                 except UserNotFoundError:
@@ -558,12 +566,16 @@ async def _slow_worker(
                     continue
 
                 except RateLimitError as e:
+                    if retries >= MAX_API_RETRIES:
+                        logger.error("[SLOW %d] @%s: max retries (%d) exceeded on 429 — marking as error", worker_id, username, MAX_API_RETRIES)
+                        results["error"] += 1
+                        continue
                     # Exponential Backoff для 429 ошибки
                     wait = max(float(e.retry_after), _api_backoff_time) * (1.0 + random.uniform(0.0, 0.3))
-                    logger.warning("[SLOW %d] Rate limit 429, sleeping %.1fs + jitter", worker_id, wait)
+                    logger.warning("[SLOW %d] Rate limit 429, sleeping %.1fs + jitter (attempt %d/%d)", worker_id, wait, retries + 1, MAX_API_RETRIES)
                     _api_flood_wait_until = time.monotonic() + wait
                     _api_backoff_time = min(60.0, _api_backoff_time * 2.0)
-                    await queue.put((username, None))
+                    await queue.put((username, None, retries + 1))
                     continue
 
                 except InvalidApiKeyError:

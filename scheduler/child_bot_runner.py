@@ -238,7 +238,7 @@ async def start_child_bot(child_bot_id: int, owner_id: int, bot_username: str, t
 
 def stop_child_bot(child_bot_id: int) -> None:
     task = _running_bots.pop(child_bot_id, None)
-    if task and not task.done():
+    if isinstance(task, asyncio.Task) and not task.done():
         task.cancel()
 
 
@@ -253,7 +253,7 @@ async def stop_all_child_bots() -> None:
     tasks = []
     for bot_id in bot_ids:
         task = _running_bots.pop(bot_id, None)
-        if task and not task.done():
+        if isinstance(task, asyncio.Task) and not task.done():
             task.cancel()
             tasks.append(task)
     if tasks:

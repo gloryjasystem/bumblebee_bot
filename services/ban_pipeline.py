@@ -475,6 +475,13 @@ async def _slow_worker(
             _drain_queue(queue)
             return
 
+        # ── Глобальный flood wait: ждём ПЕРЕД получением задачи ──────────
+        # Это предотвращает немедленную повторную обработку юзера из очереди
+        # после 429/timeout, когда он был возвращён через queue.put().
+        _now = time.monotonic()
+        if _api_flood_wait_until > _now:
+            await asyncio.sleep(_api_flood_wait_until - _now)
+
         # ── 1. Получение задачи вне блока try...finally ──
         try:
             username, _ = await asyncio.wait_for(queue.get(), timeout=1.0)
@@ -517,9 +524,6 @@ async def _slow_worker(
 
             if resolved_id is None:
                 global _api_flood_wait_until, _api_backoff_time
-                now = time.monotonic()
-                if _api_flood_wait_until > now:
-                    await asyncio.sleep(_api_flood_wait_until - now)
 
                 # Арендуем токен RPM bucket перед запросом к API
                 await slow_bucket.acquire(jitter=TG_BAN_JITTER)

@@ -587,15 +587,13 @@ async def _slow_worker(
                     _api_backoff_time = 5.0  # Успех — сбрасываем кулдаун
 
                 except asyncio.TimeoutError:
-                    if retries >= 1:  # Максимум 2 попытки (retries=0, retries=1)
-                        logger.error("[SLOW %d] @%s: RapdiAPI timeout (15s) 2nd attempt failed — marking as error", worker_id, username)
-                        results["error"] += 1
-                        await _save_resolve_error(owner_id, username, child_bot_id, "timeout")
-                        continue
-                    
-                    logger.warning("[SLOW %d] @%s: RapidAPI timeout (15s), pause 5.0s before 2nd attempt", worker_id, username)
-                    _api_flood_wait_until = time.monotonic() + 5.0
-                    await queue.put((username, None, retries + 1))
+                    # ИДЕАЛЬНАЯ ОПТИМИЗАЦИЯ: Если RapidAPI ушел в таймаут (15с),
+                    # аккаунт почти наверняка удален или заблокирован (мертв).
+                    # Не делаем никаких повторных попыток (!), чтобы очередь летела.
+                    # Засчитываем в "Не найдено", так как для системы этого юзера не существует.
+                    logger.info("[SLOW %d] @%s: RapidAPI timeout (15s) — skipping (no retries)", worker_id, username)
+                    results["not_found"] += 1
+                    await _save_resolve_error(owner_id, username, child_bot_id, "timeout")
                     continue
 
                 except UserNotFoundError:

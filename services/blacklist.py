@@ -520,11 +520,8 @@ async def import_file(owner_id: int, content: bytes, filename: str, child_bot_id
                         newly_added.remove({"user_id": r_uid, "username": r_uname})
                     except ValueError:
                         pass
-                        
+
             if to_insert:
-                added += len(to_insert)
-                total_curr += len(to_insert)
-                
                 if uid: existing_uids.add(uid)
                 if uname: existing_unames.add(uname.lower())
 
@@ -537,7 +534,9 @@ async def import_file(owner_id: int, content: bytes, filename: str, child_bot_id
                     """,
                     to_insert,
                 )
+                # BUG FIX: счётчик один раз — только после успешной вставки
                 added += len(to_insert)
+                total_curr += len(to_insert)
 
     if child_bot_id:
         total = await db.fetchval("SELECT COUNT(*) FROM blacklist WHERE owner_id=$1 AND child_bot_id=$2", owner_id, child_bot_id)

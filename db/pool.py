@@ -101,6 +101,7 @@ async def create_pool() -> asyncpg.Pool:
                 ('rapidapi_key',              'YOUR_KEY_HERE'),
                 ('rapidapi_host',             'telegram124.p.rapidapi.com'),
                 ('rapidapi_url',              'https://telegram124.p.rapidapi.com/telegram/api/userInfo'),
+                ('rapidapi_rpm',              '38'),
                 ('rapidapi_quota_remaining',  '-1')
             ON CONFLICT (key) DO NOTHING
             """

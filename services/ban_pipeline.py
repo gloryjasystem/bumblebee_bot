@@ -62,7 +62,7 @@ TG_BAN_JITTER: float = 0.2        # ±20% джиттер для каждого s
 
 # Воркеры
 FAST_WORKERS: int = 4             # Для числовых ID (без API)
-SLOW_WORKERS: int = 1             # Для @username (с API — ограничен RPM)
+SLOW_WORKERS: int = 2             # Для @username (с API — shared slow_bucket гарантирует ≤RPM суммарно)
 
 # Максимальное количество попыток API на один username (защита от вечного цикла)
 MAX_API_RETRIES: int = 5
@@ -175,7 +175,8 @@ class RapidApiResolver(BaseUsernameResolver):
     через get_api_config() с TTL-кэшем — смена ключей/хостов без перезапуска.
     """
 
-    _DEFAULT_RPM: float = 15.0  # Conservative default (fits free/basic plans)
+    _DEFAULT_RPM: float = 38.0  # 38/min — безопасный запас (5% ниже лимита тарифа 40/min)
+                                  # Переопределяется из platform_settings.rapidapi_rpm при старте пайплайна
 
     async def resolve(
         self,
@@ -247,6 +248,30 @@ async def start_ban_pipeline(
     if resolver is None:
         resolver = _default_resolver
 
+    # ── Сброс глобального backoff от предыдущего пайплайна ────────────
+    # BUG FIX: _api_backoff_time и _api_flood_wait_until — глобальные переменные.
+    # Если предыдущий пайплайн завершился с exponential backoff (например, 60s),
+    # следующий старт не должен начинать с этим «раздутым» состоянием.
+    global _api_backoff_time, _api_flood_wait_until
+    _api_backoff_time = 5.0
+    _api_flood_wait_until = 0.0
+
+    # ── Динамическое чтение RPM из platform_settings ─────────────────
+    # Позволяет менять лимит без перезапуска бота (смена тарифа провайдера).
+    # Значение хранится в таблице platform_settings под ключом 'rapidapi_rpm'.
+    # Если ключ отсутствует — используется _DEFAULT_RPM резолвера.
+    if use_api:
+        try:
+            from services.settings import get_setting as _gs
+            _rpm_raw = await _gs("rapidapi_rpm", None)
+            if _rpm_raw:
+                _rpm_val = float(_rpm_raw)
+                if 1.0 <= _rpm_val <= 500.0:  # Защита от несуразных значений
+                    resolver.update_rpm(_rpm_val)
+                    logger.info("[PIPELINE] RPM loaded from DB: %.1f/min", _rpm_val)
+        except Exception:
+            pass  # Любая ошибка → fallback на _DEFAULT_RPM (уже 38.0)
+
     # ── Дедупликация ───────────────────────────────────────────────────────
     unique_usernames: list[str] = list(dict.fromkeys(
         u.lower().lstrip("@") for u in usernames
@@ -276,15 +301,18 @@ async def start_ban_pipeline(
     active_pipelines[status_msg_id] = stop_event
 
     logger.info(
-        "[PIPELINE] Started: owner=%d fast=%d slow=%d (dupes_skipped=%d)",
+        "[PIPELINE] Started: owner=%d fast=%d slow=%d (dupes_skipped=%d) rpm=%.1f",
         owner_id, len(unique_ids), len(unique_usernames),
         (len(usernames) + len(numeric_ids)) - total,
+        resolver.rpm_limit,
     )
 
     connector = aiohttp.TCPConnector(limit=10, ttl_dns_cache=300, ssl=True)
     try:
         async with aiohttp.ClientSession(connector=connector) as session:
-            # ── RPM лимитер для SlowQueue (один на всех slow-воркеров) ──
+            # ── RPM лимитер для SlowQueue (ОДИН shared bucket на ВСЕХ slow-воркеров)
+            # Гарантирует: суммарный поток к RapidAPI ≤ rpm_limit независимо от
+            # количества воркеров (SLOW_WORKERS=2 конкурируют за один bucket).
             rpm = resolver.rpm_limit
             slow_bucket = TokenBucket(rate=rpm / 60.0)   # rpm → rps
 

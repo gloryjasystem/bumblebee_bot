@@ -62,7 +62,7 @@ TG_BAN_JITTER: float = 0.2        # ±20% джиттер для каждого s
 
 # Воркеры
 FAST_WORKERS: int = 4             # Для числовых ID (без API)
-SLOW_WORKERS: int = 1             # 1 Воркер, так как RapidAPI (особенно на дешевых тарифах) режет параллельность
+SLOW_WORKERS: int = 5             # 5 Воркеров: золотой баланс скорости и лимитов параллельности RapidAPI
 
 # Максимальное количество попыток API на один username (защита от вечного цикла)
 MAX_API_RETRIES: int = 5
@@ -184,8 +184,8 @@ class RapidApiResolver(BaseUsernameResolver):
         username: str,
     ) -> tuple[int, Optional[int]]:
         from services.rapidapi_client import username_to_id
-        # Передаем timeout=23.0 до RapidAPI, иначе там стоял невидимый дефолт 10с
-        return await username_to_id(session, username, timeout=23.0)
+        # Жестко обрываем поиск мертвых душ через 14 секунд
+        return await username_to_id(session, username, timeout=14.0)
 
     @property
     def rpm_limit(self) -> float:
@@ -580,7 +580,7 @@ async def _slow_worker(
                 try:
                     tg_id, quota = await asyncio.wait_for(
                         resolver.resolve(session, username),
-                        timeout=25.0,  # Безопасный таймаут: даем провайдеру время
+                        timeout=15.0,  # Запас для внутреннего таймаута (14с)
                     )
                     resolved_id = tg_id
 
@@ -590,16 +590,11 @@ async def _slow_worker(
                     _api_backoff_time = 5.0  # Успех — сбрасываем кулдаун
 
                 except asyncio.TimeoutError:
-                    if retries >= 1:  # Максимум 2 попытки (retries=0, retries=1)
-                        logger.warning("[SLOW %d] @%s: RapidAPI timeout (25s) 2nd attempt failed — skipping", worker_id, username)
-                        results["not_found"] += 1
-                        await _save_resolve_error(owner_id, username, child_bot_id, "timeout")
-                        continue
-                    
-                    logger.info("[SLOW %d] @%s: RapidAPI timeout (25s), retrying once...", worker_id, username)
-                    # Фиксированная пауза 5с перед второй попыткой (без глобальной блокировки)
-                    await asyncio.sleep(5.0)
-                    await queue.put((username, None, retries + 1))
+                    # Если юзер не резолвится за 14 секунд, он мертв/забанен Телеграмом.
+                    # Не делаем повторов. Сбрасываем и идем дальше.
+                    logger.info("[SLOW %d] @%s: RapidAPI timeout (14s) — skipping dead account", worker_id, username)
+                    results["not_found"] += 1
+                    await _save_resolve_error(owner_id, username, child_bot_id, "timeout")
                     continue
 
                 except UserNotFoundError:

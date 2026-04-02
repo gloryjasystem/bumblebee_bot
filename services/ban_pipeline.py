@@ -183,7 +183,9 @@ class RapidApiResolver(BaseUsernameResolver):
         session: aiohttp.ClientSession,
         username: str,
     ) -> tuple[int, Optional[int]]:
-        return await username_to_id(session, username)
+        from services.rapidapi_client import username_to_id
+        # Передаем timeout=23.0 до RapidAPI, иначе там стоял невидимый дефолт 10с
+        return await username_to_id(session, username, timeout=23.0)
 
     @property
     def rpm_limit(self) -> float:

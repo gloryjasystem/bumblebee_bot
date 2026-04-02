@@ -24,6 +24,7 @@ router = Router()
 class ChannelFSM(StatesGroup):
     waiting_for_token        = State()   # Ввод токена
     waiting_for_chat_verify  = State()   # Ввод @username или ID канала для проверки
+    waiting_for_retoken      = State()   # Ввод НОВОГО токена для нерабочего бота
 
 
 
@@ -155,7 +156,7 @@ async def on_bot_frozen(callback: CallbackQuery):
 # 1б. Настройки бота (уровень 2)
 # ══════════════════════════════════════════════════════════════
 @router.callback_query(F.data.startswith("bot_settings:"))
-async def on_bot_settings(callback: CallbackQuery, platform_user: dict | None):
+async def on_bot_settings(callback: CallbackQuery, state: FSMContext, platform_user: dict | None):
     if not platform_user:
         return
     child_bot_id = int(callback.data.split(":")[1])
@@ -181,6 +182,40 @@ async def on_bot_settings(callback: CallbackQuery, platform_user: dict | None):
     is_owner = bot["owner_id"] == user_id
     # Все запросы к БД идут через реального владельца бота
     owner_id = bot["owner_id"]
+
+    # --- ДОБАВЛЕНО: Проверка валидности токена бота ---
+    from aiogram import Bot
+    from aiogram.exceptions import TelegramUnauthorizedError
+    from services.security import decrypt_token
+    token_str = decrypt_token(bot["token_encrypted"])
+    try:
+        temp_bot = Bot(token=token_str)
+        await temp_bot.get_me()
+        await temp_bot.session.close()
+    except TelegramUnauthorizedError:
+        # Токен отозван или бот удален
+        await temp_bot.session.close()
+        await state.set_state(ChannelFSM.waiting_for_retoken)
+        await state.update_data(child_bot_id=child_bot_id)
+        msg = await navigate(
+            callback,
+            "🚫 Бот недоступен, перевыпустите и пришлите токен или удалите бота.\n\n"
+            "<blockquote>ℹ️ Чтобы перевыпустить токен: нужно перейти в @BotFather ➔ my bots ➔ "
+            "выбрать нужного бота ➔ API Token ➔ Revoke current token ➔ скопировать новый токен "
+            "и отправить его сюда.</blockquote>\n\n"
+            "Выберите действие 🔽",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🗑 Удалить бот", callback_data=f"bot_delete:{child_bot_id}")],
+                [InlineKeyboardButton(text="◀️ Назад", callback_data="menu:channels")],
+            ]),
+        )
+        if msg:
+            await state.update_data(prompt_msg_id=msg.message_id)
+        return
+    except Exception as e:
+        logger.error(f"Error checking bot token {child_bot_id}: {e}")
+        await temp_bot.session.close()
+    # --- КОНЕЦ ДОБАВЛЕНИЯ ---
 
     from datetime import date, timedelta
     today     = date.today()
@@ -812,6 +847,80 @@ async def on_token_received(message: Message, state: FSMContext, platform_user: 
             invite_msg_id, platform_user["user_id"]
         )
 
+
+
+# ══════════════════════════════════════════════════════════════
+# 3б. Перевыпуск сломанного токена (Удаление / Восстановление)
+# ══════════════════════════════════════════════════════════════
+@router.message(ChannelFSM.waiting_for_retoken)
+async def on_retoken_received(message: Message, state: FSMContext, platform_user: dict | None):
+    if not platform_user:
+        return
+
+    data = await state.get_data()
+    child_bot_id = data.get("child_bot_id")
+    prompt_msg_id = data.get("prompt_msg_id")
+
+    if not child_bot_id:
+        await state.clear()
+        return
+
+    raw_token = message.text.strip() if message.text else ""
+    msg = await message.answer("⏳ Проверяю новый токен...")
+
+    if ":" not in raw_token or len(raw_token) < 30:
+        await msg.edit_text("❌ Неверный формат токена. Введите правильный токен из @BotFather.")
+        return
+
+    from aiogram import Bot
+    from aiogram.exceptions import TelegramUnauthorizedError
+    try:
+        temp_bot = Bot(token=raw_token)
+        me = await temp_bot.get_me()
+        await temp_bot.session.close()
+    except TelegramUnauthorizedError:
+        await msg.edit_text("❌ Токен недействителен. Проверьте токен и попробуйте снова.")
+        return
+    except Exception as e:
+        logger.error(f"Error checking new token: {e}")
+        await msg.edit_text("❌ Временная ошибка проверки токена. Попробуйте позже.")
+        return
+
+    from services.security import encrypt_token
+    encrypted = encrypt_token(raw_token)
+
+    # Перезаписываем данные бота на новый токен (если юзернейм/ID сменились — тоже перезаписываем)
+    await db.execute(
+        """
+        UPDATE child_bots
+        SET bot_id = $1, bot_username = $2, bot_name = $3, token_encrypted = $4
+        WHERE id = $5 AND owner_id = $6
+        """,
+        me.id, me.username or "", me.full_name, encrypted,
+        child_bot_id, platform_user["user_id"]
+    )
+
+    # Запускаем поллинг заново
+    try:
+        from scheduler.child_bot_runner import start_child_bot
+        await start_child_bot(child_bot_id, platform_user["user_id"], me.username or "", encrypted)
+    except Exception as e:
+        logger.warning(f"Could not restart child bot runner: {e}")
+
+    await state.clear()
+
+    # Удаляем служебные сообщения
+    try:
+        if prompt_msg_id:
+            await message.bot.delete_message(chat_id=message.chat.id, message_id=prompt_msg_id)
+        await message.delete()
+        await msg.delete()
+    except Exception:
+        pass
+
+    # Имитируем нажатие пользователя, чтобы пустить в меню настроек
+    fake_cb = CallbackQuery(id="0", from_user=message.from_user, chat_instance="0", data=f"bot_settings:{child_bot_id}", message=message)
+    await on_bot_settings(fake_cb, state, platform_user)
 
 
 # ══════════════════════════════════════════════════════════════

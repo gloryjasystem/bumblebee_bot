@@ -918,9 +918,17 @@ async def on_retoken_received(message: Message, state: FSMContext, platform_user
     except Exception:
         pass
 
-    # Имитируем нажатие пользователя, чтобы пустить в меню настроек
-    fake_cb = CallbackQuery(id="0", from_user=message.from_user, chat_instance="0", data=f"bot_settings:{child_bot_id}", message=message)
-    await on_bot_settings(fake_cb, state, platform_user)
+    # Направляем пользователя в настройки бота через inline-кнопку (безопасно, без фейковых CallbackQuery)
+    bot_username = me.username or "bot"
+    await message.answer(
+        f"✅ <b>Токен успешно обновлён!</b>\n\n"
+        f"🤖 Бот @{bot_username} снова активен и готов к работе.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="⚙️ Открыть настройки", callback_data=f"bot_settings:{child_bot_id}")],
+            [InlineKeyboardButton(text="◀️ Мои боты", callback_data="menu:channels")],
+        ]),
+        parse_mode="HTML",
+    )
 
 
 # ══════════════════════════════════════════════════════════════

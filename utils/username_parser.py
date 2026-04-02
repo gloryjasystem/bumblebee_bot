@@ -20,8 +20,9 @@ logger = logging.getLogger(__name__)
 
 # ── Регулярные выражения ──────────────────────────────────────────────────────
 
-# Числовой Telegram ID: опциональный минус (каналы) + только цифры
-_NUMERIC_RE = re.compile(r"^-?\d+$")
+# Числовой Telegram ID: опциональный минус (каналы) + минимум 5 цифр
+# Это защищает от парсинга порядковых номеров строк (например, "1. username") как ID
+_NUMERIC_RE = re.compile(r"^-?\d{5,}$")
 
 # Валидный @username по правилам Telegram:
 #   - Начинается с буквы (не цифры/подчёркивания)
@@ -177,23 +178,42 @@ def _is_valid_username(username: str) -> bool:
 def _flatten_csv(text: str) -> str:
     """
     Разворачивает CSV в плоскую строку токенов через пробел.
-    Первую строку пропускаем если она выглядит как заголовок (не содержит @/цифр).
+    Умный парсинг: если в первой строке есть заголовки 'username' или 'id',
+    извлекает данные ТОЛЬКО из этих колонок (защита от случайных совпадений в First Name).
     """
     reader = csv.reader(io.StringIO(text))
     rows   = list(reader)
+    if not rows:
+        return ""
 
-    # Эвристика: если первая ячейка первой строки — текстовый заголовок
-    start = 0
-    if rows and rows[0]:
-        first_cell = rows[0][0].strip().lower()
-        if first_cell in ("username", "user_id", "id", "user", "name", "#"):
-            start = 1
+    header = [str(col).strip().lower() for col in rows[0]]
+    username_col = -1
+    id_col = -1
+
+    # Поиск нужных столбцов в заголовке
+    for i, col in enumerate(header):
+        if col in ("username", "user_name", "юзернейм"):
+            username_col = i
+        elif col in ("id", "user_id", "userid", "tg_id"):
+            id_col = i
 
     tokens = []
-    for row in rows[start:]:
-        for cell in row:
-            cell = cell.strip()
-            if cell:
-                tokens.append(cell)
+
+    if username_col != -1 or id_col != -1:
+        # Нашли заголовки — берём данные строго из них
+        for row in rows[1:]:
+            if username_col != -1 and username_col < len(row):
+                val = row[username_col].strip()
+                if val: tokens.append(val)
+            if id_col != -1 and id_col < len(row):
+                val = row[id_col].strip()
+                if val: tokens.append(val)
+    else:
+        # Fallback: заголовков нет, извлекаем всё (пропускаем столбец №, если есть)
+        start = 1 if header and header[0] in ("#", "n", "number", "№") else 0
+        for row in rows[start:]:
+            for cell in row:
+                cell = cell.strip()
+                if cell: tokens.append(cell)
 
     return " ".join(tokens)

@@ -62,7 +62,7 @@ TG_BAN_JITTER: float = 0.2        # ±20% джиттер для каждого s
 
 # Воркеры
 FAST_WORKERS: int = 4             # Для числовых ID (без API)
-SLOW_WORKERS: int = 2             # Для @username (с API — shared slow_bucket гарантирует ≤RPM суммарно)
+SLOW_WORKERS: int = 5             # Увеличено до 5! Shared slow_bucket гарантирует ≤RPM суммарно.
 
 # Максимальное количество попыток API на один username (защита от вечного цикла)
 MAX_API_RETRIES: int = 5
@@ -578,7 +578,7 @@ async def _slow_worker(
                 try:
                     tg_id, quota = await asyncio.wait_for(
                         resolver.resolve(session, username),
-                        timeout=30.0,
+                        timeout=15.0,
                     )
                     resolved_id = tg_id
                     if quota is not None:
@@ -587,13 +587,14 @@ async def _slow_worker(
                     _api_backoff_time = 5.0  # Успех — сбрасываем кулдаун
 
                 except asyncio.TimeoutError:
-                    if retries >= MAX_API_RETRIES:
-                        logger.error("[SLOW %d] @%s: max retries (%d) exceeded on timeout — marking as error", worker_id, username, MAX_API_RETRIES)
+                    if retries >= 1:  # Максимум 2 попытки (retries=0, retries=1)
+                        logger.error("[SLOW %d] @%s: RapdiAPI timeout (15s) 2nd attempt failed — marking as error", worker_id, username)
                         results["error"] += 1
+                        await _save_resolve_error(owner_id, username, child_bot_id, "timeout")
                         continue
-                    logger.warning("[SLOW %d] @%s: RapidAPI timeout (30s), backing off %.1fs (attempt %d/%d)", worker_id, username, _api_backoff_time, retries + 1, MAX_API_RETRIES)
-                    _api_flood_wait_until = time.monotonic() + _api_backoff_time
-                    _api_backoff_time = min(60.0, _api_backoff_time * 2.0)
+                    
+                    logger.warning("[SLOW %d] @%s: RapidAPI timeout (15s), pause 5.0s before 2nd attempt", worker_id, username)
+                    _api_flood_wait_until = time.monotonic() + 5.0
                     await queue.put((username, None, retries + 1))
                     continue
 

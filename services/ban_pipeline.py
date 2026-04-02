@@ -62,7 +62,7 @@ TG_BAN_JITTER: float = 0.2        # ±20% джиттер для каждого s
 
 # Воркеры
 FAST_WORKERS: int = 4             # Для числовых ID (без API)
-SLOW_WORKERS: int = 5             # Увеличено до 5! Shared slow_bucket гарантирует ≤RPM суммарно.
+SLOW_WORKERS: int = 10            # Увеличено до 10 для 100% утилизации 38 RPM при таймаутах
 
 # Максимальное количество попыток API на один username (защита от вечного цикла)
 MAX_API_RETRIES: int = 5

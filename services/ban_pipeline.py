@@ -441,17 +441,21 @@ async def _fast_worker(
                 child_bot_id=child_bot_id,
             )
             if action == "ban":
+                # ОПТИМИЗАЦИЯ: пропускаем повторный бан тех, кто уже в ЧС.
+                # Раньше система делала ban API-вызовы во ВСЕХ чатах для каждой из
+                # «уже заблокированных» записей — это и было главной причиной торможения
+                # при файлах с большим количеством дубликатов (>3000 «Уже в ЧС»).
                 if already:
-                    logger.info("[FAST %d] id=%d already in BL, enforcing ban...", worker_id, numeric_id)
                     results["already_in_bl"] += 1
-                
+                    logger.debug("[FAST %d] id=%d already in BL — skip re-ban", worker_id, numeric_id)
+                    continue  # finally: queue.task_done() отработает
+
                 banned = await _process_in_all_chats(owner_id, numeric_id, child_bot_id, action=action)
                 total_banned = sum(banned.values())
                 if total_banned > 0:
                     await _increment_blocked_count(owner_id, banned, is_global=(child_bot_id is None))
-                if not already:
-                    results["ok"] += 1
-                    await _save_to_blacklist(owner_id, numeric_id, None, child_bot_id)
+                results["ok"] += 1
+                await _save_to_blacklist(owner_id, numeric_id, None, child_bot_id)
                 logger.info("[FAST %d] Banned user=%d in %d chats", worker_id, numeric_id, total_banned)
             else:
                 if not already:
@@ -532,9 +536,16 @@ async def _slow_worker(
                 numeric_id=None,
                 child_bot_id=child_bot_id,
             )
+            # ОПТИМИЗАЦИЯ: пропускаем запись уже в ЧС — не тратим RPM-квоту RapidAPI
+            # и не делаем повторный бан во всех чатах (самое затратное место).
+            # До этой правки 3560 «Уже в ЧС» записей провоцировали одинаковое число
+            # API-вызовов — отсюда торможение к 5000+ записям при повторной загрузке файла.
             if already and action == "ban":
-                logger.info("[SLOW %d] @%s already in BL, enforcing ban...", worker_id, username)
-            elif not already and action == "unban":
+                results["already_in_bl"] += 1
+                logger.debug("[SLOW %d] @%s already in BL — skip API + re-ban", worker_id, username)
+                continue  # finally: queue.task_done() отработает
+
+            if not already and action == "unban":
                 logger.info("[SLOW %d] @%s not in BL, enforcing unban anyway...", worker_id, username)
 
             resolved_id: Optional[int] = local_id
@@ -810,6 +821,27 @@ async def _smart_resolve(
 async def _save_to_blacklist(
     owner_id: int, tg_id: int, source_username: Optional[str], child_bot_id: Optional[int],
 ) -> None:
+    # Сначала пытаемся обновить существующую запись (вставленную при импорте файла),
+    # у которой есть только username, но user_id = NULL
+    if source_username:
+        try:
+            await db.execute(
+                """
+                UPDATE blacklist 
+                SET user_id = $1 
+                WHERE owner_id = $2 
+                  AND lower(username) = $3
+                  AND child_bot_id IS NOT DISTINCT FROM $4
+                  AND user_id IS NULL
+                """,
+                tg_id, owner_id, source_username.lower().lstrip("@"), child_bot_id
+            )
+        except Exception as _upd_err:
+            # Редкий случай: unique constraint — user_id уже есть в другой записи.
+            # Безопасно игнорируем; INSERT ниже тоже сделает ON CONFLICT DO NOTHING.
+            logger.debug("_save_to_blacklist UPDATE skipped (constraint): %s", _upd_err)
+
+    # Затем пытаемся вставить новую запись (если её вообще не было)
     await db.execute(
         """
         INSERT INTO blacklist (owner_id, user_id, username, source_username, child_bot_id)

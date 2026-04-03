@@ -94,7 +94,8 @@ async def cmd_dbcheck(message: Message):
 
 
 class BotNetworkFSM(StatesGroup):
-    waiting_search = State()
+    waiting_search          = State()   # Управление общей базой
+    waiting_platform_search = State()   # Боты платформы
 
 
 BOTS_PER_PAGE = 7
@@ -234,6 +235,7 @@ async def _show_admin_panel(message_or_cb, role: str, owner_id: int, admin_id: i
             InlineKeyboardButton(text="🚫 Глобальный ЧС",     callback_data=f"ga_bl:{owner_id}"),
             InlineKeyboardButton(text="👥 База пользователей", callback_data=f"ga_users:{owner_id}")
         ],
+        [InlineKeyboardButton(text="🤖 Боты платформы",        callback_data=f"ga_platform:{admin_id}:0")],
         [InlineKeyboardButton(text="🗄️ Управление общей базой", callback_data=f"ga_bots:{owner_id}:0")],
         [InlineKeyboardButton(text="⚙️ Управление пользователями", callback_data=f"ga_manage_users:{owner_id}")],
         [InlineKeyboardButton(text="❌ Закрыть панель", callback_data=f"ga_close:{owner_id}")]
@@ -820,6 +822,13 @@ async def on_ga_pu_bots(callback: CallbackQuery):
 async def on_ga_pu_bot_detail(callback: CallbackQuery):
     parts = callback.data.split(":")
     bot_id, target_uid, admin_owner_id = int(parts[1]), int(parts[2]), int(parts[3])
+    # :p суффикс = пришли из раздела «Боты платформы», Назад ведёт туда же
+    from_platform = len(parts) > 4 and parts[4] == "p"
+    back_cb = (
+        f"ga_platform:{admin_owner_id}:0" if from_platform
+        else f"ga_pu_bots:{target_uid}:{admin_owner_id}"
+    )
+    back_label = "◀️ Назад к ботам" if not from_platform else "◀️ Назад к реестру"
     async with get_pool().acquire() as conn:
         bot_row = await conn.fetchrow("SELECT bot_username FROM child_bots WHERE id=$1", bot_id)
         chats = await conn.fetch(
@@ -848,8 +857,14 @@ async def on_ga_pu_bot_detail(callback: CallbackQuery):
             InlineKeyboardButton(text=action_text, callback_data=f"ga_pu_chat_toggle:{ch['id']}:{bot_id}:{target_uid}:{admin_owner_id}"),
             InlineKeyboardButton(text="🗑 Удалить",  callback_data=f"ga_pu_chat_del:{ch['id']}:{bot_id}:{target_uid}:{admin_owner_id}"),
         ])
+        kb.append([
+            InlineKeyboardButton(
+                text="⚙️ Настройки площадки",
+                callback_data=f"ga_enter:{ch['chat_id']}:{bot_id}:{target_uid}:{admin_owner_id}"
+            )
+        ])
     kb.append([InlineKeyboardButton(text="🗑 Удалить бот целиком", callback_data=f"ga_pu_bot_del:{bot_id}:{target_uid}:{admin_owner_id}")])
-    kb.append([InlineKeyboardButton(text="◀️ Назад к ботам",       callback_data=f"ga_pu_bots:{target_uid}:{admin_owner_id}")])
+    kb.append([InlineKeyboardButton(text=back_label,              callback_data=back_cb)])
     total_subs = sum(ch['subs'] or 0 for ch in chats)
     await navigate(
         callback,
@@ -864,6 +879,68 @@ async def on_ga_pu_bot_detail(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("ga_pu_noop"))
 async def on_ga_pu_noop(callback: CallbackQuery):
     await callback.answer()
+
+
+# ═══ Режим управления: вход и выход ════════════════════════════
+
+@router.callback_query(F.data.startswith("ga_enter:"))
+async def on_ga_enter(callback: CallbackQuery):
+    """Активировать режим управления и перейти в настройки площадки."""
+    role, _ = await get_admin_context(callback.from_user.id, callback.from_user.username)
+    if not role:
+        return await callback.answer("❌ Недостаточно прав", show_alert=True)
+
+    parts = callback.data.split(":")
+    chat_id, bot_id, target_uid, admin_owner_id = int(parts[1]), int(parts[2]), int(parts[3]), int(parts[4])
+    back_to_platform = len(parts) > 5 and parts[5] == "p"
+
+    from utils.god_mode import enter as god_enter
+    god_enter(callback.from_user.id, target_uid)
+
+    logger.info(f"[GOD MODE] Admin {callback.from_user.id} вошёл в режим управления: target_uid={target_uid} chat_id={chat_id}")
+
+    # Получаем platform_user цели (уже после god_enter Middleware будет подменять,
+    # но в этом хендлере он (миддлвере) уже запущен до god_enter, поэтому запрашиваем вручную)
+    async with get_pool().acquire() as conn:
+        target_pu = await conn.fetchrow(
+            "SELECT * FROM platform_users WHERE user_id=$1", target_uid
+        )
+    if not target_pu:
+        from utils.god_mode import exit_mode as god_exit
+        god_exit(callback.from_user.id)
+        return await callback.answer("❌ Пользователь не найден", show_alert=True)
+
+    # Переходим в настройки площадки (нативный хендлер)
+    from handlers.channels import on_channel_by_chat
+    fake_cb = callback.model_copy(update={"data": f"channel_by_chat:{chat_id}"})
+    await on_channel_by_chat(fake_cb, dict(target_pu))
+    await callback.answer("✅ Режим управления активирован")
+
+
+@router.callback_query(F.data.startswith("ga_exit:"))
+async def on_ga_exit(callback: CallbackQuery):
+    """Завершить режим управления и вернуться в карточку пользователя."""
+    parts = callback.data.split(":")
+    target_uid, admin_owner_id = int(parts[1]), int(parts[2])
+
+    from utils.god_mode import exit_mode as god_exit
+    god_exit(callback.from_user.id)
+
+    logger.info(f"[GOD MODE] Admin {callback.from_user.id} вышел из режима управления: target_uid={target_uid}")
+
+    async with get_pool().acquire() as conn:
+        row = await conn.fetchrow("SELECT * FROM platform_users WHERE user_id=$1", target_uid)
+    if row:
+        await _show_platform_user_card(callback, admin_owner_id, row)
+    else:
+        await navigate(
+            callback,
+            "✅ Режим управления завершён.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="◀️ Назад", callback_data=f"ga_manage_users:{admin_owner_id}")]
+            ])
+        )
+    await callback.answer("✅ Управление завершено")
 
 
 @router.callback_query(F.data.startswith("ga_pu_chat_toggle:"))
@@ -3483,6 +3560,274 @@ async def on_bots_search_input(message: Message, state: FSMContext):
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
         )
+
+
+# ══════════════════════════════════════════════════════════════
+# 🤖 БОТЫ ПЛАТФОРМЫ
+# ══════════════════════════════════════════════════════════════
+
+async def _show_platform_bots_page(
+    callback: CallbackQuery,
+    admin_id: int,
+    page: int,
+    query: str = "",
+):
+    """Отрисовывает страницу списка всех дочерних ботов платформы."""
+    safe_query = query.lower().lstrip("@")
+    filter_sql = f"%{safe_query}%" if safe_query else "%"
+
+    async with get_pool().acquire() as conn:
+        total_count = await conn.fetchval(
+            """
+            SELECT COUNT(DISTINCT cb.id)
+            FROM child_bots cb
+            JOIN platform_users pu ON pu.user_id = cb.owner_id
+            WHERE LOWER(cb.bot_username) LIKE $1
+               OR LOWER(COALESCE(cb.bot_name,'')) LIKE $1
+               OR LOWER(COALESCE(pu.username,'')) LIKE $1
+            """,
+            filter_sql,
+        ) or 0
+
+        page_bots = await conn.fetch(
+            """
+            SELECT
+                cb.id, cb.bot_username, cb.owner_id,
+                pu.username AS owner_username, pu.first_name AS owner_name,
+                COUNT(DISTINCT bc.id)::int                    AS chat_count,
+                COALESCE(SUM(us.cnt)::int, 0)                AS total_users
+            FROM child_bots cb
+            JOIN platform_users pu ON pu.user_id = cb.owner_id
+            LEFT JOIN bot_chats bc
+                ON bc.child_bot_id = cb.id AND bc.is_active = true
+            LEFT JOIN (
+                SELECT chat_id, COUNT(*) AS cnt
+                FROM bot_users WHERE is_active = true GROUP BY chat_id
+            ) us ON us.chat_id = bc.chat_id
+            WHERE LOWER(cb.bot_username) LIKE $1
+               OR LOWER(COALESCE(cb.bot_name,'')) LIKE $1
+               OR LOWER(COALESCE(pu.username,'')) LIKE $1
+            GROUP BY cb.id, cb.bot_username, cb.owner_id,
+                     pu.username, pu.first_name
+            ORDER BY cb.created_at DESC
+            LIMIT $2 OFFSET $3
+            """,
+            filter_sql,
+            BOTS_PER_PAGE,
+            page * BOTS_PER_PAGE,
+        )
+
+    total_pages = max(1, (total_count + BOTS_PER_PAGE - 1) // BOTS_PER_PAGE)
+    page = max(0, min(page, total_pages - 1))
+
+    search_label = f"🔎 Запрос: «{query}»  " if query else ""
+    text = (
+        "🤖 <b>Боты платформы</b>\n"
+        "─────────────────────────────\n"
+        f"{search_label}"
+        f"Всего: <b>{total_count}</b>  │  Страница {page + 1} / {total_pages}"
+    )
+
+    kb = [
+        [
+            InlineKeyboardButton(text="🔍 По боту",    callback_data=f"ga_platform_search:{admin_id}:name"),
+            InlineKeyboardButton(text="🔍 По владельцу", callback_data=f"ga_platform_search:{admin_id}:owner"),
+        ]
+    ]
+    if query:
+        kb.append([InlineKeyboardButton(text="✖️ Сбросить поиск", callback_data=f"ga_platform:{admin_id}:0")])
+
+    for b in page_bots:
+        owner_tag = f"@{b['owner_username']}" if b['owner_username'] else str(b['owner_id'])
+        kb.append([InlineKeyboardButton(
+            text=f"🤖 @{b['bot_username']}  ·  {owner_tag}  ·  🏛{b['chat_count']} 👥{b['total_users']:,}",
+            callback_data=f"ga_pu_bot_detail:{b['id']}:{b['owner_id']}:{admin_id}:p",
+        )])
+
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton(text="◀️", callback_data=f"ga_platform:{admin_id}:{page - 1}"))
+    nav.append(InlineKeyboardButton(text=f"{page + 1}/{total_pages}", callback_data="ga_platform_noop"))
+    if page < total_pages - 1:
+        nav.append(InlineKeyboardButton(text="▶️", callback_data=f"ga_platform:{admin_id}:{page + 1}"))
+    if len(nav) > 1:
+        kb.append(nav)
+
+    kb.append([InlineKeyboardButton(text="◀️ Назад в панель", callback_data=f"ga_main:{admin_id}")])
+
+    await navigate(
+        callback,
+        text,
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=kb),
+    )
+
+
+@router.callback_query(F.data.startswith("ga_platform:"))
+async def on_ga_platform(callback: CallbackQuery):
+    """Список всех ботов платформы."""
+    role, _ = await get_admin_context(callback.from_user.id, callback.from_user.username)
+    if not role:
+        return await callback.answer("❌ Нет прав", show_alert=True)
+    parts = callback.data.split(":")
+    admin_id = int(parts[1])
+    page = int(parts[2]) if len(parts) > 2 else 0
+    await _show_platform_bots_page(callback, admin_id, page)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "ga_platform_noop")
+async def on_ga_platform_noop(callback: CallbackQuery):
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("ga_platform_search:"))
+async def on_ga_platform_search_start(callback: CallbackQuery, state: FSMContext):
+    """Запуск поиска: по названию бота или по владельцу."""
+    role, _ = await get_admin_context(callback.from_user.id, callback.from_user.username)
+    if not role:
+        return await callback.answer("❌ Нет прав", show_alert=True)
+    parts = callback.data.split(":")
+    admin_id = int(parts[1])
+    mode = parts[2] if len(parts) > 2 else "name"  # name | owner
+
+    await state.set_state(BotNetworkFSM.waiting_platform_search)
+    await state.update_data(
+        platform_admin_id=admin_id,
+        platform_search_mode=mode,
+        platform_prompt_msg_id=callback.message.message_id,
+    )
+
+    if mode == "owner":
+        prompt = (
+            "🔍 <b>Поиск по владельцу</b>\n"
+            "─────────────────────────────\n"
+            "Введите <b>часть @username</b> или <b>имя</b> владельца.\n"
+            "<i>Пример: ivan, news, mar</i>"
+        )
+    else:
+        prompt = (
+            "🔍 <b>Поиск по боту</b>\n"
+            "─────────────────────────────\n"
+            "Введите <b>часть названия</b> бота.\n"
+            "<i>Пример: shop, bot, rec</i>"
+        )
+
+    await callback.message.edit_text(
+        prompt,
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="❌ Отмена", callback_data=f"ga_platform_cancel:{admin_id}")]
+        ]),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("ga_platform_cancel:"))
+async def on_ga_platform_cancel(callback: CallbackQuery, state: FSMContext):
+    """Отмена поиска — возврат в список без фильтра."""
+    await state.clear()
+    admin_id = int(callback.data.split(":")[1])
+    await _show_platform_bots_page(callback, admin_id, 0)
+    await callback.answer()
+
+
+@router.message(BotNetworkFSM.waiting_platform_search)
+async def on_platform_search_input(message: Message, state: FSMContext):
+    """Обрабатывает введённый поисковый запрос для раздела Боты платформы."""
+    data = await state.get_data()
+    admin_id = data.get("platform_admin_id") or message.from_user.id
+    prompt_msg_id = data.get("platform_prompt_msg_id")
+    await state.clear()
+
+    # Убираем сообщение пользователя и промпт
+    try:
+        await message.delete()
+        if prompt_msg_id:
+            await message.bot.delete_message(chat_id=message.chat.id, message_id=prompt_msg_id)
+    except Exception:
+        pass
+
+    query = (message.text or "").strip().lstrip("@")
+    if not query:
+        # Пустой ввод — показываем полный список
+        fake_cb = message  # navigate умеет работать и с message, но _show_platform_bots_page ожидает callback
+        # Отправим новое сообщение с результатом
+        await message.answer(
+            "⚠️ Введите хотя бы 1 символ для поиска.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="◀️ Назад", callback_data=f"ga_platform:{admin_id}:0")]
+            ]),
+        )
+        return
+
+    # Запрашиваем результаты и отправляем новым сообщением
+    safe_query = query.lower()
+    filter_sql = f"%{safe_query}%"
+
+    async with get_pool().acquire() as conn:
+        total_count = await conn.fetchval(
+            """
+            SELECT COUNT(DISTINCT cb.id)
+            FROM child_bots cb
+            JOIN platform_users pu ON pu.user_id = cb.owner_id
+            WHERE LOWER(cb.bot_username) LIKE $1
+               OR LOWER(COALESCE(cb.bot_name,'')) LIKE $1
+               OR LOWER(COALESCE(pu.username,'')) LIKE $1
+            """,
+            filter_sql,
+        ) or 0
+
+        page_bots = await conn.fetch(
+            """
+            SELECT
+                cb.id, cb.bot_username, cb.owner_id,
+                pu.username AS owner_username,
+                COUNT(DISTINCT bc.id)::int                    AS chat_count,
+                COALESCE(SUM(us.cnt)::int, 0)                AS total_users
+            FROM child_bots cb
+            JOIN platform_users pu ON pu.user_id = cb.owner_id
+            LEFT JOIN bot_chats bc
+                ON bc.child_bot_id = cb.id AND bc.is_active = true
+            LEFT JOIN (
+                SELECT chat_id, COUNT(*) AS cnt
+                FROM bot_users WHERE is_active = true GROUP BY chat_id
+            ) us ON us.chat_id = bc.chat_id
+            WHERE LOWER(cb.bot_username) LIKE $1
+               OR LOWER(COALESCE(cb.bot_name,'')) LIKE $1
+               OR LOWER(COALESCE(pu.username,'')) LIKE $1
+            GROUP BY cb.id, cb.bot_username, cb.owner_id, pu.username
+            ORDER BY cb.created_at DESC
+            LIMIT 30
+            """,
+            filter_sql,
+        )
+
+    if not page_bots:
+        return await message.answer(
+            f"🔍 По запросу <b>«{query}»</b> ничего не найдено.",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="◀️ Назад к списку", callback_data=f"ga_platform:{admin_id}:0")]
+            ]),
+        )
+
+    kb = []
+    for b in page_bots:
+        owner_tag = f"@{b['owner_username']}" if b['owner_username'] else str(b['owner_id'])
+        kb.append([InlineKeyboardButton(
+            text=f"🤖 @{b['bot_username']}  ·  {owner_tag}  ·  🏛{b['chat_count']} 👥{b['total_users']:,}",
+            callback_data=f"ga_pu_bot_detail:{b['id']}:{b['owner_id']}:{admin_id}:p",
+        )])
+    kb.append([InlineKeyboardButton(text="◀️ Назад к списку", callback_data=f"ga_platform:{admin_id}:0")])
+
+    await message.answer(
+        f"🔍 <b>Результаты: «{query}»</b>\n"
+        f"─────────────────────────────\n"
+        f"Найдено: <b>{total_count}</b>",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=kb),
+    )
 
 
 # ──────────────────────────────────────────────────────────────

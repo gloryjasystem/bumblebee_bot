@@ -125,7 +125,18 @@ class OwnerMiddleware(BaseMiddleware):
             )
             # Пропускаем дальше штатно — не прерываем вызов handler
 
-        # ── 3. Владелец проекта / Совладелец: принудительно business ─────────
+        # ── 3. Режим управления: подмена контекста для суперадмина ────────────
+        from utils.god_mode import get_target as _god_get
+        _god_target = _god_get(user.id)
+        if _god_target:
+            _target_row = await db.fetchrow(
+                "SELECT * FROM platform_users WHERE user_id=$1", _god_target
+            )
+            if _target_row:
+                data["platform_user"] = dict(_target_row)
+                return await handler(event, data)
+
+        # ── 4. Владелец проекта / Совладелец: принудительно business ─────────
         username = (user.username or "").lower().lstrip("@")
         is_project_owner = (
             user.id == settings.owner_telegram_id

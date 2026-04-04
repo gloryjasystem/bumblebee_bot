@@ -180,6 +180,11 @@ async def on_bot_settings(callback: CallbackQuery, state: FSMContext, platform_u
         await callback.answer("Бот не найден", show_alert=True)
         return
     is_owner = bot["owner_id"] == user_id
+    # Если администратор находится в God Mode (управляет чужим аккаунтом) — принудительно
+    # отключаем права владельца, чтобы админ не видел кнопку «Удалить бот».
+    from utils.god_mode import get_target as _god_get
+    if _god_get(callback.from_user.id):
+        is_owner = False
     # Все запросы к БД идут через реального владельца бота
     owner_id = bot["owner_id"]
 
@@ -1159,19 +1164,6 @@ async def _show_channel_detail(callback: CallbackQuery, platform_user: dict, ch_
     ch_id_b = ch["id"]
     cbot_id = ch["child_bot_id"]
 
-    # ── Режим управления: индикатор и кнопка выхода ─────────────────────
-    from utils.god_mode import get_target as _god_get
-    _god_target = _god_get(callback.from_user.id)
-    if _god_target:
-        _pu_row = await db.fetchrow(
-            "SELECT username, first_name FROM platform_users WHERE user_id=$1", _god_target
-        )
-        _uname = (
-            f"@{_pu_row['username']}" if _pu_row and _pu_row.get("username")
-            else (_pu_row["first_name"] if _pu_row and _pu_row.get("first_name") else str(_god_target))
-        )
-        text = f"🔴 Режим управления: {_uname}\n──────────────\n\n" + text
-
     msg = await navigate(
         callback,
         text,
@@ -1192,13 +1184,6 @@ async def _show_channel_detail(callback: CallbackQuery, platform_user: dict, ch_
             [InlineKeyboardButton(text="📣 Обратная связь",      callback_data=f"ch_feedback:{chat_id}")],
             [InlineKeyboardButton(text=f"🗑 Удалить площадку",  callback_data=f"ch_delete:{ch_id_b}:{cbot_id}")],
             [InlineKeyboardButton(text="◀️ Назад",               callback_data=f"bot_chats_list:{cbot_id}")],
-            *(
-                [[InlineKeyboardButton(
-                    text="◀️ Завершить управление",
-                    callback_data=f"ga_exit:{_god_target}:{callback.from_user.id}"
-                )]]
-                if _god_target else []
-            ),
         ]),
     )
     # Сохраняем ID этого сообщения, чтобы уведомления о правах могли редактировать его

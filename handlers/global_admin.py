@@ -235,9 +235,8 @@ async def _show_admin_panel(message_or_cb, role: str, owner_id: int, admin_id: i
             InlineKeyboardButton(text="🚫 Глобальный ЧС",     callback_data=f"ga_bl:{owner_id}"),
             InlineKeyboardButton(text="👥 База пользователей", callback_data=f"ga_users:{owner_id}")
         ],
-        [InlineKeyboardButton(text="🤖 Боты платформы",        callback_data=f"ga_platform:{admin_id}:0")],
         [InlineKeyboardButton(text="🗄️ Управление общей базой", callback_data=f"ga_bots:{owner_id}:0")],
-        [InlineKeyboardButton(text="⚙️ Управление пользователями", callback_data=f"ga_manage_users:{owner_id}")],
+        [InlineKeyboardButton(text="🛠 Панель администрирования",  callback_data=f"ga_admin_hub:{owner_id}")],
         [InlineKeyboardButton(text="❌ Закрыть панель", callback_data=f"ga_close:{owner_id}")]
     ])
 
@@ -267,6 +266,30 @@ async def on_ga_close(callback: CallbackQuery):
     await callback.answer()
 
 
+@router.callback_query(F.data.startswith("ga_admin_hub:"))
+async def on_ga_admin_hub(callback: CallbackQuery):
+    """Hub: Панель администрирования — переход к пользователям или ботам."""
+    owner_id = int(callback.data.split(":")[1])
+    role, _ = await get_admin_context(callback.from_user.id, callback.from_user.username)
+    if not role:
+        return await callback.answer("❌ Недостаточно прав", show_alert=True)
+    kb = [
+        [InlineKeyboardButton(text="🔍 Пользователи платформы", callback_data=f"ga_manage_users:{owner_id}")],
+        [InlineKeyboardButton(text="🤖 Боты платформы",             callback_data=f"ga_platform:{callback.from_user.id}:0")],
+        [InlineKeyboardButton(text="◀️ Назад",                      callback_data=f"ga_main:{owner_id}")],
+    ]
+    await navigate(
+        callback,
+        "🛠 <b>Панель администрирования</b>\n"
+        "──────────────────────────\n\n"
+        "Управление ресурсами и пользователями платформы.\n"
+        "Выберите нужный раздел:",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=kb),
+    )
+    await callback.answer()
+
+
 @router.callback_query(F.data.startswith("ga_manage_users:"))
 async def on_ga_manage_users(callback: CallbackQuery, state: FSMContext):
     owner_id = int(callback.data.split(":")[1])
@@ -283,7 +306,7 @@ async def on_ga_manage_users(callback: CallbackQuery, state: FSMContext):
         "<code>@ivan_user</code>  или  <code>123456789</code>",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🚫 Отмена", callback_data=f"ga_main:{owner_id}")]
+            [InlineKeyboardButton(text="◀️ Назад", callback_data=f"ga_admin_hub:{owner_id}")]
         ])
     )
     if prompt_msg and hasattr(prompt_msg, 'message_id'):
@@ -3657,8 +3680,7 @@ async def _show_platform_bots_page(
     if len(nav) > 1:
         kb.append(nav)
 
-    kb.append([InlineKeyboardButton(text="◀️ Назад в панель", callback_data=f"ga_main:{admin_id}")])
-
+    kb.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"ga_admin_hub:{admin_id}")])
     await navigate(
         callback,
         text,

@@ -3658,17 +3658,37 @@ async def _show_platform_bots_page(
         kb.append([InlineKeyboardButton(text="✖️ Сбросить поиск", callback_data=f"ga_platform:{admin_id}:0")])
 
     for b in page_bots:
-        # Умная обрезка длинных юзернеймов, чтобы статистика всегда была видна
-        b_name = b['bot_username']
-        if len(b_name) > 12:
-            b_name = b_name[:10] + ".."
-            
-        o_tag = f"@{b['owner_username']}" if b['owner_username'] else str(b['owner_id'])
-        if len(o_tag) > 13:
-            o_tag = o_tag[:11] + ".."
+        # --- Динамическая обрезка для сохранения максимума букв ---
+        b_raw = b['bot_username']
+        o_raw = f"@{b['owner_username']}" if b['owner_username'] else str(b['owner_id'])
+        stats = f"  ·  📍 {b['chat_count']}  👥 {b['total_users']:,}"
+        
+        # Лимит всей строки кнопки (безопасный для Telegram) ~ 44 символа
+        # Константная часть: "🤖 @" (3) + "  ·  " (3) + статистика
+        fixed_len = 6 + len(stats)
+        avail = 44 - fixed_len
+        
+        if len(b_raw) + len(o_raw) > avail:
+            # Если не влезаем, распределяем место
+            if len(b_raw) > avail // 2 and len(o_raw) > avail // 2:
+                # Оба длинные — делим пополам
+                b_name = b_raw[:avail//2 - 1] + ".."
+                o_tag = o_raw[:avail - len(b_name) - 1] + "."
+            elif len(b_raw) > avail // 2:
+                # Бот длинный, владелец короткий
+                o_tag = o_raw
+                b_name = b_raw[:avail - len(o_tag) - 2] + ".."
+            else:
+                # Владелец длинный, бот короткий
+                b_name = b_raw
+                o_tag = o_raw[:avail - len(b_name) - 2] + ".."
+        else:
+            # Всё влезает целиком
+            b_name = b_raw
+            o_tag = o_raw
             
         kb.append([InlineKeyboardButton(
-            text=f"🤖 @{b_name}  ·  {o_tag}  ·  📍 {b['chat_count']}  👥 {b['total_users']:,}",
+            text=f"🤖 @{b_name}  ·  {o_tag}{stats}",
             callback_data=f"ga_pu_bot_detail:{b['id']}:{b['owner_id']}:{admin_id}:p",
         )])
 

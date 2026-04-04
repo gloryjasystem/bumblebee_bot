@@ -3663,27 +3663,29 @@ async def _show_platform_bots_page(
         o_raw = f"@{b['owner_username']}" if b['owner_username'] else str(b['owner_id'])
         stats = f"  ·  📍 {b['chat_count']}  👥 {b['total_users']:,}"
         
-        # Лимит всей строки кнопки (безопасный для Telegram) ~ 44 символа
+        # Лимит всей строки кнопки (увеличен до 58 для комфортного отображения)
         # Константная часть: "🤖 @" (3) + "  ·  " (3) + статистика
         fixed_len = 6 + len(stats)
-        avail = 44 - fixed_len
+        limit = 58
+        avail = limit - fixed_len
         
         if len(b_raw) + len(o_raw) > avail:
-            # Если не влезаем, распределяем место
+            # Обрезаем только если реально не влезаем в 58 символов
+            # Даем приоритет более важному — названию бота
             if len(b_raw) > avail // 2 and len(o_raw) > avail // 2:
-                # Оба длинные — делим пополам
+                # Если оба гиганты, делим поровну
                 b_name = b_raw[:avail//2 - 1] + ".."
                 o_tag = o_raw[:avail - len(b_name) - 1] + "."
-            elif len(b_raw) > avail // 2:
-                # Бот длинный, владелец короткий
+            elif len(b_raw) > avail - 10: 
+                # Если бот очень длинный, а владелец короткий
                 o_tag = o_raw
                 b_name = b_raw[:avail - len(o_tag) - 2] + ".."
             else:
-                # Владелец длинный, бот короткий
+                # Владелец очень длинный
                 b_name = b_raw
                 o_tag = o_raw[:avail - len(b_name) - 2] + ".."
         else:
-            # Всё влезает целиком
+            # Всё влезает — не обрезаем ничего!
             b_name = b_raw
             o_tag = o_raw
             

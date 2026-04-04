@@ -236,7 +236,7 @@ async def _show_admin_panel(message_or_cb, role: str, owner_id: int, admin_id: i
             InlineKeyboardButton(text="👥 База пользователей", callback_data=f"ga_users:{owner_id}")
         ],
         [InlineKeyboardButton(text="🗄️ Управление общей базой", callback_data=f"ga_bots:{owner_id}:0")],
-        [InlineKeyboardButton(text="🛠 Панель администрирования",  callback_data=f"ga_admin_hub:{owner_id}")],
+        [InlineKeyboardButton(text="🛠 Модерация платформы",  callback_data=f"ga_admin_hub:{owner_id}")],
         [InlineKeyboardButton(text="❌ Закрыть панель", callback_data=f"ga_close:{owner_id}")]
     ])
 
@@ -280,7 +280,7 @@ async def on_ga_admin_hub(callback: CallbackQuery):
     ]
     await navigate(
         callback,
-        "🛠 <b>Панель администрирования</b>\n"
+        "🛠 <b>Модерация платформы</b>\n"
         "──────────────────────────\n\n"
         "Управление ресурсами и пользователями платформы.\n"
         "Выберите нужный раздел:",

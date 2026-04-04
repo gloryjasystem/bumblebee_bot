@@ -832,7 +832,7 @@ async def on_ga_pu_bot_detail(callback: CallbackQuery):
     async with get_pool().acquire() as conn:
         bot_row = await conn.fetchrow("SELECT bot_username FROM child_bots WHERE id=$1", bot_id)
         chats = await conn.fetch(
-            "SELECT bc.id, bc.chat_title, bc.chat_type, bc.is_active, "
+            "SELECT bc.id, bc.chat_id, bc.chat_title, bc.chat_type, bc.is_active, "
             "COUNT(bu.user_id) FILTER (WHERE bu.is_active=true) AS subs "
             "FROM bot_chats bc "
             "LEFT JOIN bot_users bu ON bu.chat_id=bc.chat_id AND bu.owner_id=bc.owner_id "
@@ -857,10 +857,14 @@ async def on_ga_pu_bot_detail(callback: CallbackQuery):
             InlineKeyboardButton(text=action_text, callback_data=f"ga_pu_chat_toggle:{ch['id']}:{bot_id}:{target_uid}:{admin_owner_id}"),
             InlineKeyboardButton(text="🗑 Удалить",  callback_data=f"ga_pu_chat_del:{ch['id']}:{bot_id}:{target_uid}:{admin_owner_id}"),
         ])
+        chat_id = ch.get('chat_id')
+        if not chat_id:
+            continue
+        
         kb.append([
             InlineKeyboardButton(
                 text="⚙️ Настройки площадки",
-                callback_data=f"ga_enter:{ch['chat_id']}:{bot_id}:{target_uid}:{admin_owner_id}"
+                callback_data=f"ga_enter:{chat_id}:{bot_id}:{target_uid}:{admin_owner_id}"
             )
         ])
     kb.append([InlineKeyboardButton(text="🗑 Удалить бот целиком", callback_data=f"ga_pu_bot_del:{bot_id}:{target_uid}:{admin_owner_id}")])

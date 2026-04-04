@@ -3660,7 +3660,7 @@ async def _show_platform_bots_page(
     for b in page_bots:
         owner_tag = f"@{b['owner_username']}" if b['owner_username'] else str(b['owner_id'])
         kb.append([InlineKeyboardButton(
-            text=f"🤖 @{b['bot_username']}  ·  {owner_tag}  ·  📢{b['chat_count']} 👥{b['total_users']:,}",
+            text=f"🤖 @{b['bot_username']}  ·  {owner_tag}  ·  📍 {b['chat_count']}  👥 {b['total_users']:,}",
             callback_data=f"ga_pu_bot_detail:{b['id']}:{b['owner_id']}:{admin_id}:p",
         )])
 

@@ -2401,25 +2401,18 @@ async def on_ga_bl(callback: CallbackQuery, state: FSMContext = None):
             "SELECT COUNT(*) FROM blacklist WHERE owner_id=$1 AND child_bot_id IS NULL", owner_id
         ) or 0
 
-        if selected_bot_ids:
-            # Локальные ЧС — уникальные записи в базах выбранных ботов (только child_bot_id)
-            local_record_count = await conn.fetchval("""
-                SELECT COUNT(DISTINCT COALESCE(user_id::text, lower(username)))
-                FROM blacklist
-                WHERE child_bot_id = ANY($1::int[])
-                  AND child_bot_id IS NOT NULL
-            """, selected_bot_ids) or 0
+        # Локальные ЧС — уникальные записи по ботам из выборки.
+        # Запрос всегда выполняется: ANY('{}') корректно вернёт 0 если список пуст.
+        local_record_count = await conn.fetchval("""
+            SELECT COUNT(DISTINCT COALESCE(user_id::text, lower(username)))
+            FROM blacklist
+            WHERE child_bot_id = ANY($1::int[])
+        """, selected_bot_ids) or 0
 
-            # Суммарные блокировки
-            total_global_blocked = sum((r['global_blocked_count'] or 0) for r in selected_bots)
-            total_local_blocked = sum((r['blocked_count'] or 0) for r in selected_bots)
-            # Всего блокировок = локальные + глобальные
-            total_all_blocked = total_global_blocked + total_local_blocked
-        else:
-            local_record_count = 0
-            total_global_blocked = 0
-            total_all_blocked = 0
-            total_local_blocked = 0
+        # Суммарные блокировки (исторические счётчики из child_bots)
+        total_global_blocked = sum((r['global_blocked_count'] or 0) for r in selected_bots)
+        total_local_blocked = sum((r['blocked_count'] or 0) for r in selected_bots)
+        total_all_blocked = total_global_blocked + total_local_blocked
 
         bl_count = global_record_count + local_record_count
         total_blocked = total_all_blocked
@@ -2440,7 +2433,7 @@ async def on_ga_bl(callback: CallbackQuery, state: FSMContext = None):
         f"{shield}\n\n"
         f"🗄 <b>База ЧС: {bl_count} записей</b>\n"
         f"├ Глобальный (наш): <b>{global_record_count}</b>\n"
-        f"└ ЧС владельцев ботов: <b>{local_record_count}</b>\n\n"
+        f"└ ЧС ботов из выборки: <b>{local_record_count}</b>\n\n"
         f"🛡 <b>Нейтрализовано угроз: {total_blocked:,}</b>\n"
         f"├ Нашим глоб. ЧС: <b>{total_global_blocked:,}</b>\n"
         f"└ Личными ЧС владельцев: <b>{total_local_blocked:,}</b>\n\n"

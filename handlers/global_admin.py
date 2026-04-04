@@ -3658,9 +3658,17 @@ async def _show_platform_bots_page(
         kb.append([InlineKeyboardButton(text="✖️ Сбросить поиск", callback_data=f"ga_platform:{admin_id}:0")])
 
     for b in page_bots:
-        owner_tag = f"@{b['owner_username']}" if b['owner_username'] else str(b['owner_id'])
+        # Умная обрезка длинных юзернеймов, чтобы статистика всегда была видна
+        b_name = b['bot_username']
+        if len(b_name) > 12:
+            b_name = b_name[:10] + ".."
+            
+        o_tag = f"@{b['owner_username']}" if b['owner_username'] else str(b['owner_id'])
+        if len(o_tag) > 13:
+            o_tag = o_tag[:11] + ".."
+            
         kb.append([InlineKeyboardButton(
-            text=f"🤖 @{b['bot_username']}  ·  {owner_tag}  ·  📍 {b['chat_count']}  👥 {b['total_users']:,}",
+            text=f"🤖 @{b_name}  ·  {o_tag}  ·  📍 {b['chat_count']}  👥 {b['total_users']:,}",
             callback_data=f"ga_pu_bot_detail:{b['id']}:{b['owner_id']}:{admin_id}:p",
         )])
 

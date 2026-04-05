@@ -180,11 +180,8 @@ async def on_bot_settings(callback: CallbackQuery, state: FSMContext, platform_u
         await callback.answer("Бот не найден", show_alert=True)
         return
     is_owner = bot["owner_id"] == user_id
-    # Если администратор находится в God Mode (управляет чужим аккаунтом) — принудительно
-    # отключаем права владельца, чтобы админ не видел кнопку «Удалить бот».
     from utils.god_mode import get_target as _god_get
-    if _god_get(callback.from_user.id):
-        is_owner = False
+    is_god_mode = bool(_god_get(callback.from_user.id))
     # Все запросы к БД идут через реального владельца бота
     owner_id = bot["owner_id"]
 
@@ -384,7 +381,7 @@ async def on_bot_settings(callback: CallbackQuery, state: FSMContext, platform_u
     btn_protection = InlineKeyboardButton(text=("🔒 Защита" if is_free else "🛡 Защита"),   callback_data="paywall:protection" if is_free else f"bs_protection:{child_bot_id}")
 
     if is_owner:
-        # Владелец: Защита + Управление в одной строке, плюс Удалить бот
+        # Владелец: Защита + Управление в одной строке
         keyboard = [
             [InlineKeyboardButton(text="✅ Обработка заявок",  callback_data=f"bs_requests:{child_bot_id}")],
             [
@@ -400,9 +397,12 @@ async def on_bot_settings(callback: CallbackQuery, state: FSMContext, platform_u
                 InlineKeyboardButton(text="⚙️ Управление",     callback_data=f"bs_settings:{child_bot_id}"),
             ],
             [InlineKeyboardButton(text="📣 Обратная связь",    callback_data=f"bs_feedback:{child_bot_id}")],
-            [InlineKeyboardButton(text="🗑 Удалить бот",       callback_data=f"bot_delete:{child_bot_id}")],
-            [InlineKeyboardButton(text="◀️ Назад",             callback_data="menu:channels")],
         ]
+        # Опасную кнопку показываем только если администратор НЕ в режиме управления
+        if not is_god_mode:
+            keyboard.append([InlineKeyboardButton(text="🗑 Удалить бот", callback_data=f"bot_delete:{child_bot_id}")])
+            
+        keyboard.append([InlineKeyboardButton(text="◀️ Назад", callback_data="menu:channels")])
     else:
         # Admin: без Управления и Удалить бот, Защита — отдельной строкой
         keyboard = [

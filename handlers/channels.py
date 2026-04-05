@@ -1182,7 +1182,7 @@ async def _show_channel_detail(callback: CallbackQuery, platform_user: dict, ch_
                 InlineKeyboardButton(text="⚙️ Управление",       callback_data=f"ch_settings:{ch_id_b}"),
             ],
             [InlineKeyboardButton(text="📣 Обратная связь",      callback_data=f"ch_feedback:{chat_id}")],
-            [InlineKeyboardButton(text=f"🗑 Удалить площадку",  callback_data=f"ch_delete:{ch_id_b}:{cbot_id}")],
+            [InlineKeyboardButton(text=f"🗑 Удалить площадку",  callback_data=f"ch_delete:{ch_id_b}:{cbot_id}:c:{chat_id}")],
             [InlineKeyboardButton(text="◀️ Назад",               callback_data=f"bot_chats_list:{cbot_id}")],
         ]),
     )
@@ -1341,15 +1341,21 @@ async def on_ch_delete(callback: CallbackQuery, platform_user: dict | None):
         return
     parts = callback.data.split(":")
     ch_id = int(parts[1])
-    cbot_id = int(parts[2]) if len(parts) > 2 else None
-    back_cb = f"bot_chats_list:{cbot_id}" if cbot_id else "menu:channels"
+    cbot_id = int(parts[2]) if len(parts) > 2 and parts[2] else None
+    source = parts[3] if len(parts) > 3 else None
+    chat_id = parts[4] if len(parts) > 4 else None
+
+    if source == "c" and chat_id:
+        cancel_cb = f"channel_by_chat:{chat_id}"
+    else:
+        cancel_cb = f"channel_in_bot:{ch_id}:{cbot_id or ''}"
 
     await navigate(
         callback,
         "⚠️ <b>Удалить площадку?</b>\n\nВся история, настройки и ЧС для этой площадки будут удалены.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="✅ Да, удалить", callback_data=f"ch_delete_confirm:{ch_id}:{cbot_id or ''}")],
-            [InlineKeyboardButton(text="🚫 Отмена",      callback_data=f"channel_in_bot:{ch_id}:{cbot_id or ''}")],
+            [InlineKeyboardButton(text="🚫 Отмена",      callback_data=cancel_cb)],
         ]),
     )
 

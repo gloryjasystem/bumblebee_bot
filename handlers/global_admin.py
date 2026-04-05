@@ -950,18 +950,16 @@ async def on_ga_exit(callback: CallbackQuery):
 
     logger.info(f"[GOD MODE] Admin {callback.from_user.id} вышел из режима управления: target_uid={target_uid}")
 
-    async with get_pool().acquire() as conn:
-        row = await conn.fetchrow("SELECT * FROM platform_users WHERE user_id=$1", target_uid)
-    if row:
-        await _show_platform_user_card(callback, admin_owner_id, row)
-    else:
+    role, owner_id = await get_admin_context(callback.from_user.id, callback.from_user.username)
+    if not role:
+        # На всякий случай, если права пропали во время сессии
         await navigate(
             callback,
             "✅ Режим управления завершён.",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="◀️ Назад", callback_data=f"ga_manage_users:{admin_owner_id}")]
-            ])
         )
+    else:
+        await _show_admin_panel(callback, role, owner_id, admin_id=callback.from_user.id)
+        
     await callback.answer("✅ Управление завершено")
 
 

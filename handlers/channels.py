@@ -1164,27 +1164,33 @@ async def _show_channel_detail(callback: CallbackQuery, platform_user: dict, ch_
     ch_id_b = ch["id"]
     cbot_id = ch["child_bot_id"]
 
+    from utils.god_mode import get_target as _god_get
+    is_god_mode = bool(_god_get(callback.from_user.id))
+
+    keyboard = [
+        [InlineKeyboardButton(text="✅ Обработка заявок",    callback_data=f"ch_requests:{chat_id}")],
+        [
+            InlineKeyboardButton(text="💬 Сообщения",        callback_data=f"ch_messages:{chat_id}"),
+            InlineKeyboardButton(text="📨 Рассылка",         callback_data=f"ch_mailing:{chat_id}"),
+        ],
+        [
+            InlineKeyboardButton(text="🔗 Ссылки",           callback_data=f"ch_links:{chat_id}"),
+            InlineKeyboardButton(text="📍 Площадки",         callback_data=f"bot_chats_list:{cbot_id}"),
+        ],
+        [
+            InlineKeyboardButton(text="🛡 Защита",           callback_data=f"ch_protection:{chat_id}"),
+            InlineKeyboardButton(text="⚙️ Управление",       callback_data=f"ch_settings:{ch_id_b}"),
+        ],
+        [InlineKeyboardButton(text="📣 Обратная связь",      callback_data=f"ch_feedback:{chat_id}")],
+    ]
+    if not is_god_mode:
+        keyboard.append([InlineKeyboardButton(text=f"🗑 Удалить площадку",  callback_data=f"ch_delete:{ch_id_b}:{cbot_id}:c:{chat_id}")])
+    keyboard.append([InlineKeyboardButton(text="◀️ Назад",               callback_data=f"bot_chats_list:{cbot_id}")])
+
     msg = await navigate(
         callback,
         text,
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="✅ Обработка заявок",    callback_data=f"ch_requests:{chat_id}")],
-            [
-                InlineKeyboardButton(text="💬 Сообщения",        callback_data=f"ch_messages:{chat_id}"),
-                InlineKeyboardButton(text="📨 Рассылка",         callback_data=f"ch_mailing:{chat_id}"),
-            ],
-            [
-                InlineKeyboardButton(text="🔗 Ссылки",           callback_data=f"ch_links:{chat_id}"),
-                InlineKeyboardButton(text="📍 Площадки",         callback_data=f"bot_chats_list:{cbot_id}"),
-            ],
-            [
-                InlineKeyboardButton(text="🛡 Защита",           callback_data=f"ch_protection:{chat_id}"),
-                InlineKeyboardButton(text="⚙️ Управление",       callback_data=f"ch_settings:{ch_id_b}"),
-            ],
-            [InlineKeyboardButton(text="📣 Обратная связь",      callback_data=f"ch_feedback:{chat_id}")],
-            [InlineKeyboardButton(text=f"🗑 Удалить площадку",  callback_data=f"ch_delete:{ch_id_b}:{cbot_id}:c:{chat_id}")],
-            [InlineKeyboardButton(text="◀️ Назад",               callback_data=f"bot_chats_list:{cbot_id}")],
-        ]),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard),
     )
     # Сохраняем ID этого сообщения, чтобы уведомления о правах могли редактировать его
     # на месте вместо отправки нового сообщения снизу.

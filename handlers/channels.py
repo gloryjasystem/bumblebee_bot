@@ -1223,7 +1223,10 @@ async def on_channel_in_bot(callback: CallbackQuery, platform_user: dict | None)
     owner_id = platform_user["user_id"]
 
     ch = await db.fetchrow(
-        "SELECT * FROM bot_chats WHERE id=$1 AND owner_id=$2",
+        "SELECT bc.chat_id, bc.is_active, bc.added_at, bc.chat_type, bc.chat_title, cb.token_encrypted "
+        "FROM bot_chats bc "
+        "JOIN child_bots cb ON bc.child_bot_id = cb.id "
+        "WHERE bc.id=$1 AND bc.owner_id=$2",
         ch_id, owner_id,
     )
     if not ch:
@@ -1235,7 +1238,7 @@ async def on_channel_in_bot(callback: CallbackQuery, platform_user: dict | None)
     back_cb = f"bot_chats_list:{child_bot_id}" if child_bot_id else "menu:channels"
 
     # ── Особый экран: не хватает прав администратора ──────────────────────────
-    reason = ch.get("deactivation_reason")
+    reason = ch.get("deactivation_reason") if "deactivation_reason" in ch else None
     if not ch["is_active"] and reason and reason.startswith("perm:"):
         missing_rights = reason.split("perm:", 1)[1]
         msg_text = (
@@ -1253,16 +1256,27 @@ async def on_channel_in_bot(callback: CallbackQuery, platform_user: dict | None)
     status_label = "🟢 Включена" if ch["is_active"] else "🔴 Выключена"
     added = ch["added_at"].strftime("%d.%m.%Y") if ch.get("added_at") else "—"
 
-    clean_id = str(ch['chat_id'])
-    if clean_id.startswith("-100"):
-        clean_id = clean_id[4:]
-    else:
-        clean_id = clean_id.lstrip("-")
-    chat_url = f"https://t.me/c/{clean_id}/999999999"
+    # Динамическое получение ссылки-приглашения, чтобы зайти мог каждый (в т.ч. из God Mode)
+    chat_url = None
+    try:
+        from aiogram import Bot
+        from services.security import decrypt_token
+        temp_bot = Bot(token=decrypt_token(ch["token_encrypted"]))
+        invite_link = await temp_bot.export_chat_invite_link(ch["chat_id"])
+        chat_url = invite_link
+        await temp_bot.session.close()
+    except Exception as e:
+        logger.warning(f"Не удалось получить invite link для чата {ch['chat_id']}: {e}")
+        try:
+            await temp_bot.session.close()
+        except Exception:
+            pass
+
+    title_html = f"<a href='{chat_url}'>{title}</a>" if chat_url else title
 
     await navigate(
         callback,
-        f"📍 <b>Площадка:</b> {type_icon} <a href='{chat_url}'>{title}</a>\n\n"
+        f"📍 <b>Площадка:</b> {type_icon} {title_html}\n\n"
         f"📅 <b>Дата добавления:</b> {added}\n\n"
         f"Выберите действие ⬇️",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[

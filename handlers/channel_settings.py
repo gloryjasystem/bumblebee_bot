@@ -1791,18 +1791,28 @@ async def on_ch_settings(callback: CallbackQuery, platform_user: dict | None):
     chat_id = ch["chat_id"]
 
     toggle_text = "🟢 Активна" if ch["is_active"] else "🔴 Выключена"
-    
-    clean_id = str(chat_id)
-    if clean_id.startswith("-100"):
-        clean_id = clean_id[4:]
-    else:
-        clean_id = clean_id.lstrip("-")
-    chat_url = f"https://t.me/c/{clean_id}/999999999"
     type_icon = "📢" if ch.get("chat_type") == "channel" else "👥"
+
+    chat_url = None
+    try:
+        from aiogram import Bot
+        from services.security import decrypt_token
+        temp_bot = Bot(token=decrypt_token(ch["token_encrypted"]))
+        invite_link = await temp_bot.export_chat_invite_link(chat_id)
+        chat_url = invite_link
+        await temp_bot.session.close()
+    except Exception as e:
+        logger.warning(f"Не удалось получить invite link для чата {chat_id} (ch_settings): {e}")
+        try:
+            await temp_bot.session.close()
+        except Exception:
+            pass
+            
+    title_html = f"<a href='{chat_url}'>{ch['chat_title']}</a>" if chat_url else ch['chat_title']
 
     await callback.message.edit_text(
         f"⚙️ <b>Управление площадкой</b>\n\n"
-        f"{type_icon} <a href='{chat_url}'>{ch['chat_title']}</a>\n"
+        f"{type_icon} {title_html}\n"
         f"🤖 Бот: @{ch['bot_username'] or '—'}\n"
         f"📅 Подключена: {added}\n"
         f"🕐 Часовой пояс: {tz}",

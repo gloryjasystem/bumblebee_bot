@@ -1253,9 +1253,16 @@ async def on_channel_in_bot(callback: CallbackQuery, platform_user: dict | None)
     status_label = "🟢 Включена" if ch["is_active"] else "🔴 Выключена"
     added = ch["added_at"].strftime("%d.%m.%Y") if ch.get("added_at") else "—"
 
+    clean_id = str(ch['chat_id'])
+    if clean_id.startswith("-100"):
+        clean_id = clean_id[4:]
+    else:
+        clean_id = clean_id.lstrip("-")
+    chat_url = f"https://t.me/c/{clean_id}/999999999"
+
     await navigate(
         callback,
-        f"📍 <b>Площадка:</b> {type_icon} {title}\n\n"
+        f"📍 <b>Площадка:</b> {type_icon} <a href='{chat_url}'>{title}</a>\n\n"
         f"📅 <b>Дата добавления:</b> {added}\n\n"
         f"Выберите действие ⬇️",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[

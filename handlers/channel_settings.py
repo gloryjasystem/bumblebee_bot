@@ -1791,10 +1791,18 @@ async def on_ch_settings(callback: CallbackQuery, platform_user: dict | None):
     chat_id = ch["chat_id"]
 
     toggle_text = "🟢 Активна" if ch["is_active"] else "🔴 Выключена"
+    
+    clean_id = str(chat_id)
+    if clean_id.startswith("-100"):
+        clean_id = clean_id[4:]
+    else:
+        clean_id = clean_id.lstrip("-")
+    chat_url = f"https://t.me/c/{clean_id}/999999999"
+    type_icon = "📢" if ch.get("chat_type") == "channel" else "👥"
 
     await callback.message.edit_text(
         f"⚙️ <b>Управление площадкой</b>\n\n"
-        f"📢 {ch['chat_title']}\n"
+        f"{type_icon} <a href='{chat_url}'>{ch['chat_title']}</a>\n"
         f"🤖 Бот: @{ch['bot_username'] or '—'}\n"
         f"📅 Подключена: {added}\n"
         f"🕐 Часовой пояс: {tz}",

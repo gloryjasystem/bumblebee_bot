@@ -493,6 +493,13 @@ async def _register_user(owner_id: int, chat_id: int, user,
 
 async def _send_welcome(bot: Bot, chat_id: int, user, settings_row: dict):
     """Отправляет приветствие новому пользователю в личку."""
+    try:
+        from handlers.captcha import cleanup_captcha_and_send_welcome
+        await cleanup_captcha_and_send_welcome(bot, chat_id, user.id)
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).debug(f"[CAPTCHA CLEANUP] Failed before welcome: {e}")
+
     text_tpl = settings_row.get("welcome_text") or ""
     media_fid = settings_row.get("welcome_media")
     media_type = settings_row.get("welcome_media_type")

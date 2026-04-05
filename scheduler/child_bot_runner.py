@@ -1857,6 +1857,11 @@ async def _delayed_approve_join_request(bot: Bot, owner_id: int, chat_id: int, u
         if invite_link_url:
             await _track_invite_link(invite_link_url, user)
         # Приветственное сообщение
+        try:
+            from handlers.captcha import cleanup_captcha_and_send_welcome
+            await cleanup_captcha_and_send_welcome(bot, chat_id, user.id)
+        except Exception:
+            pass
         if welcome:
             await _try_send_dm(bot, user.id, welcome)
     except Exception as e:

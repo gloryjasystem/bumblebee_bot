@@ -388,15 +388,15 @@ async def _show_platform_user_card(message_or_cb, admin_owner_id: int, row):
         blocked_mark = ""
 
     text = (
-        "👤 <b>Карточка пользователя платформы</b>\n\n"
-        f"🧾  <b>ID:</b> <code>{uid}</code>\n"
-        f"🔗  <b>Username:</b> {uname}\n"
-        f"👤  <b>Имя:</b> {name}\n"
-        f"📅  <b>Регистрация:</b> {reg}\n\n"
-        "📊 <b>Статистика</b>\n"
-        f"📎  <b>Тариф:</b> {tariff}  (до {until})\n"
-        f"🤖  <b>Ботов:</b> {bots_count}    📡  <b>Каналов:</b> {chats_count}\n"
-        f"👥  <b>Пользователей:</b> {users_count:,}    🚫  <b>В своём ЧС:</b> {bl_count:,}"
+        "👤 <b>ИНФОРМАЦИЯ</b>\n"
+        f"┝ 🧾 <b>ID:</b> <code>{uid}</code>\n"
+        f"┝ 🔗 <b>Username:</b> {uname}\n"
+        f"┝ 👤 <b>Имя:</b> {name}\n"
+        f"┕ 📅 <b>Регистрация:</b> {reg}\n\n"
+        "📊 <b>СТАТИСТИКА</b>\n"
+        f"┝ 📎 <b>Тариф:</b> {tariff}  (до {until})\n"
+        f"┝ 🤖 <b>Ботов:</b> {bots_count}  ·  📡 <b>Каналов:</b> {chats_count}\n"
+        f"┕ 👥 <b>Пользователей:</b> {users_count:,}  ·  🚫 <b>В своём ЧС:</b> {bl_count:,}"
         f"{blocked_mark}{note_text}"
     )
     kb = [

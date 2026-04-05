@@ -907,7 +907,7 @@ async def on_ga_pu_noop(callback: CallbackQuery):
 # ═══ Режим управления: вход и выход ════════════════════════════
 
 @router.callback_query(F.data.startswith("ga_enter_bot:"))
-async def on_ga_enter_bot(callback: CallbackQuery):
+async def on_ga_enter_bot(callback: CallbackQuery, state: FSMContext):
     """Активировать режим управления и перейти в настройки бота."""
     role, _ = await get_admin_context(callback.from_user.id, callback.from_user.username)
     if not role:
@@ -935,7 +935,7 @@ async def on_ga_enter_bot(callback: CallbackQuery):
     # Переходим в общие настройки бота 
     from handlers.channels import on_bot_settings
     fake_cb = callback.model_copy(update={"data": f"bot_settings:{bot_id}"})
-    await on_bot_settings(fake_cb, dict(target_pu))
+    await on_bot_settings(fake_cb, state, dict(target_pu))
     await callback.answer("✅ Режим управления активирован")
 
 

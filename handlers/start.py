@@ -364,7 +364,7 @@ async def on_settings_history(callback: CallbackQuery, platform_user: dict | Non
                 f"📅 <b>{dt}</b>\n"
                 f"📦 Тариф: {t_label} ({p_label})\n"
                 f"💵 Сумма: {amount:.2f} $\n"
-                f"────────────────\n"
+                f"\n"
             )
 
     await navigate(

@@ -36,8 +36,8 @@ async def navigate(
                 else (_pu_row["first_name"] if _pu_row.get("first_name") else str(_god_target))
             )
             # Добавляем плашку, только если её ещё нет (защита от дублирования)
-            indicator = f"🔴 Режим управления: {_uname}\n──────────────\n\n"
-            if not text.startswith("🔴 Режим управления"):
+            indicator = f"🔴 <b>Режим управления:</b> <code>{_uname}</code>\n\n"
+            if not text.startswith("🔴 <b>Режим управления"):
                 text = indicator + text
 
             # Добавляем кнопку выхода, создавая КОПИЮ клавиатуры

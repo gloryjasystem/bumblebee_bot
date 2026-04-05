@@ -280,9 +280,8 @@ async def on_ga_admin_hub(callback: CallbackQuery):
     ]
     await navigate(
         callback,
-        "🛠 <b>Модерация платформы</b>\n"
-        "──────────────────────────\n\n"
-        "Управление ресурсами и пользователями платформы.\n"
+        "🛠 <b>Модерация платформы</b>\n\n"
+        "<blockquote>Управление ресурсами и пользователями платформы.</blockquote>\n\n"
         "Выберите нужный раздел:",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=kb),
@@ -299,11 +298,10 @@ async def on_ga_manage_users(callback: CallbackQuery, state: FSMContext):
     await state.set_state(StaffFSM.waiting_user_search)
     prompt_msg = await navigate(
         callback,
-        "⚙️ <b>Управление пользователями</b>\n"
-        "──────────────────────────────\n\n"
-        "Введите <b>@username</b> или <b>Telegram ID</b> клиента платформы,\n"
-        "чтобы открыть его карточку:\n\n"
-        "<code>@ivan_user</code>  или  <code>123456789</code>",
+        "⚙️ <b>Управление пользователями</b>\n\n"
+        "<blockquote>Введите <b>@username</b> или <b>Telegram ID</b> клиента платформы,\n"
+        "чтобы открыть его карточку.</blockquote>\n\n"
+        "Пример: <code>@ivan_user</code>  или  <code>123456789</code>",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="◀️ Назад", callback_data=f"ga_admin_hub:{owner_id}")]
@@ -390,13 +388,12 @@ async def _show_platform_user_card(message_or_cb, admin_owner_id: int, row):
         blocked_mark = ""
 
     text = (
-        "👤 <b>Карточка пользователя платформы</b>\n"
-        "──────────────────────────────\n\n"
+        "👤 <b>Карточка пользователя платформы</b>\n\n"
         f"🧾  <b>ID:</b> <code>{uid}</code>\n"
         f"🔗  <b>Username:</b> {uname}\n"
         f"👤  <b>Имя:</b> {name}\n"
         f"📅  <b>Регистрация:</b> {reg}\n\n"
-        "────── 📊 Статистика ──────\n"
+        "📊 <b>Статистика</b>\n"
         f"📎  <b>Тариф:</b> {tariff}  (до {until})\n"
         f"🤖  <b>Ботов:</b> {bots_count}    📡  <b>Каналов:</b> {chats_count}\n"
         f"👥  <b>Пользователей:</b> {users_count:,}    🚫  <b>В своём ЧС:</b> {bl_count:,}"
@@ -835,7 +832,7 @@ async def on_ga_pu_bots(callback: CallbackQuery):
     kb.append([InlineKeyboardButton(text="◀️ Назад к карточке", callback_data=f"ga_pu_card:{target_uid}:{admin_owner_id}")])
     await navigate(
         callback,
-        f"🤖 <b>Боты {uname}</b>\n──────────────────────────",
+        "🤖 <b>Боты пользователя</b>\n\n",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
     )
@@ -892,7 +889,7 @@ async def on_ga_pu_bot_detail(callback: CallbackQuery):
     await navigate(
         callback,
         f"📡 <b>Площадки {bname}</b>\n"
-        f"──────────────────────────\n"
+        f"📊 <b>Статистика бота</b>\n"
         f"Всего площадок: {len(chats)}  ·  Подписчиков: {total_subs:,}",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
@@ -1242,8 +1239,7 @@ async def on_ga_team(callback: CallbackQuery):
     staff_block = "\n".join(lines) if lines else "❎ Список пуст. Добавьте первого сотрудника."
 
     text = (
-        "⚙️ <b>Управление Сотрудниками</b>\n"
-        "─────────────────────────────\n"
+        "👥 <b>Управление сотрудниками</b>\n\n"
         f"👷 Всего сотрудников: <b>{len(rows)}</b>\n\n"
         f"{staff_block}\n\n"
         "ℹ️ Сотрудник видит ЧС, базу аудитории и запускает рассылки, но не имеет доступа к финансам."
@@ -1498,10 +1494,9 @@ async def on_ga_audit(callback: CallbackQuery):
 
     if not rows:
         text = (
-            "📜 <b>Журнал действий</b>\n"
-            "─────────────────────────────\n"
-            "❎ Действий пока не зафиксировано.\n"
-            "\n<i>Журнал заполняется при блокировках, добавлении админов и других действиях.</i>"
+            "📜 <b>Журнал действий</b>\n\n"
+            "<blockquote>Действий пока не зафиксировано.</blockquote>\n\n"
+            "<i>Журнал заполняется при блокировках и других административных действиях.</i>"
         )
     else:
         ACTION_ICONS = {
@@ -1513,8 +1508,7 @@ async def on_ga_audit(callback: CallbackQuery):
             "bot_toggle": "⚡️",
         }
         lines = [
-            "📜 <b>Журнал действий</b> (25 последних)\n"
-            "─────────────────────────────"
+            "📜 <b>Журнал действий</b> (последние 25)\n\n"
         ]
         for r in rows:
             dt = r['created_at'].strftime("%d.%m %H:%M")
@@ -1534,7 +1528,7 @@ async def cmd_admin_help(message: Message):
     if not role:
         return await message.answer("❌ У вас нет доступа к командам глобального управления.")
         
-    text = "🌐 <b>Справка по Глобальному Управлению</b>\n\n"
+    text = "🌐 <b>Служебные команды</b>\n\n"
     if role == 'owner':
         text += (
             "<b>Только для Владельца:</b>\n"
@@ -1649,9 +1643,7 @@ async def cmd_admins(message: Message):
 # 📊 АНАЛИТИКА — вспомогательные функции
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-_FRAME_TOP    = "┌────────────────────────────\n"
-_FRAME_BOTTOM = "└────────────────────────────"
-_FRAME_LINE   = "│ "
+_FRAME_LINE   = "┃ "
 
 _PERIOD_META = {
     "today": ("Сегодня",    "date_trunc('day', {col} AT TIME ZONE 'UTC') = current_date"),
@@ -1783,12 +1775,11 @@ async def _build_audience_text(period: str, conn, owner_id: int = 0) -> str:
 
     sep = "─" * 8
     return (
-        f"👥 <b>АУДИТОРИЯ</b>  —  <b>{label}</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"{sep} Общая статистика {sep}\n"
+        f"👥 <b>Аудитория</b>  —  <b>{label}</b>\n\n"
+        f"📊 <b>Общая статистика</b>\n"
         f"👤  Всего:  <b>{total_all:,}</b>    🆕  Новых {label.lower()}:  <b>{new_period:,}</b>\n"
         f"✅  Платных:  <b>{paid_total:,}</b>    💡  Бесплатных:  <b>{free_total:,}</b>\n\n"
-        f"{sep} Сегменты по тарифам {sep}\n"
+        f"📎 <b>Сегменты по тарифам</b>\n"
         f"💡  Free:  <b>{leads:,}</b>\n"
         f"🌱  Start:  <b>{start_c:,}</b>\n"
         f"⭐  Pro:  <b>{pro_c:,}</b>\n"
@@ -1869,19 +1860,18 @@ async def _build_finance_text(period: str, conn, owner_id: int = 0) -> str:
     disc_line = f"🏷  Скидок:  <b>${total_disc_sum:,.2f}</b>  ({total_disc_cnt} шт.)\n" if total_disc_cnt > 0 else ""
 
     return (
-        f"💰 <b>ФИНАНСЫ</b>  —  <b>{label}</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"{sep} Платежи {sep}\n"
+        f"💰 <b>Финансы</b>  —  <b>{label}</b>\n\n"
+        f"💳 <b>Платежи</b>\n"
         f"⏳  В ожидании:  <b>{pending_cnt}</b>  •  <b>${pending_sum:,.2f}</b>\n"
         f"✅  Оплачено:  <b>{paid_cnt}</b>  •  <b>${paid_sum:,.2f}</b>\n"
         f"❌  Отмены/Просрочено:  <b>{cancelled}</b>\n"
         f"📈  Конверсия:  <b>{conversion}%</b>\n\n"
-        f"{sep} Доходы {sep}\n"
+        f"📈 <b>Доходы</b>\n"
         f"💵  Итого:  <b>${total_sum:,.2f}</b>  ({total_cnt_r} платежей)\n"
         f"📊  Средний чек:  <b>${avg_check:,.2f}</b>\n"
         f"🏆  Топ-тариф:  <b>{top_label}</b>\n"
         f"{disc_line}\n"
-        f"{sep} По тарифам {sep}\n"
+        f"🏷 <b>По тарифам</b>\n"
         f"{breakdown or 'Нет оплат за период\n'}"
     )
 
@@ -2422,8 +2412,8 @@ async def on_ga_bl(callback: CallbackQuery, state: FSMContext = None):
         toggle_text = "☑️ ЧС: Выключен 🔴"
 
     text = (
-        "🚫 <b>Глобальный Чёрный Список</b>\n\n"
-        f"{shield}\n\n"
+        "🚫 <b>Глобальный чёрный список</b>\n\n"
+        f"<blockquote>{shield}</blockquote>\n\n"
         f"🗄 <b>База ЧС: {bl_count} записей</b>\n"
         f"├ Глобальный (наш): <b>{global_record_count}</b>\n"
         f"└ ЧС ботов из выборки: <b>{local_record_count}</b>\n\n"
@@ -2499,8 +2489,7 @@ async def on_ga_bl_clear_confirm(callback: CallbackQuery):
         return await callback.answer("🗑 Ваш Глобальный Чёрный Список уже абсолютно пуст!", show_alert=True)
 
     text = (
-        "⚠️ <b>Очистка Глобального ЧС</b>\n"
-        "─────────────────────────────\n"
+        "⚠️ <b>Очистка глобального ЧС</b>\n\n"
         "Вы уверены, что хотите безвозвратно удалить <b>ВЕСЬ</b> ваш глобальный черный список бота?\n\n"
         "✅ <i>Не переживайте: локальные базы данных пользователей (черные списки в их дочерних ботах) "
         "затронуты <b>НЕ будут</b>. Удаляются только глобальные блокировки!</i>\n\n"
@@ -2865,8 +2854,7 @@ async def _show_ga_users(message_or_cb, admin_id: int, owner_id: int):
         dead_users = total_users - alive_users
 
     text = (
-        "👥 <b>Сводная База Аудитории</b>\n"
-        "─────────────────────────────\n"
+        "👥 <b>Сводная база аудитории</b>\n\n"
         f"🗂️ Ботов в выборке: <b>{net_bots}</b>\n"
         "Показываются пользователи только из ботов, отмеченных в '🗄️ Управление общей базой'.\n\n"
         f"👥 Уникальных пользователей: <b>{total_users:,}</b>\n"
@@ -3111,9 +3099,8 @@ async def on_ga_broadcast_segment(callback: CallbackQuery, state: FSMContext):
     s_desc = seg_desc.get(segment, f"<b>Сегмент: {segment}</b>")
 
     text = (
-        f"Выбран сегмент:\n{s_desc}\n"
-        "─────────────────────────────\n"
-        "Отправьте сообщение (текст, фото, видео), которое нужно разослать.\n\n"
+        f"Выбран сегмент:\n{s_desc}\n\n"
+        "<blockquote>Отправьте сообщение (текст, фото, видео), которое нужно разослать.</blockquote>\n\n"
         "❌ <i>Для отмены нажмите кнопку ниже.</i>"
     )
     kb = [[InlineKeyboardButton(text="❌ Отмена", callback_data=f"ga_broadcast:{owner_id}")]]
@@ -3296,8 +3283,7 @@ async def _show_bots_network_page(callback: CallbackQuery, owner_id: int, page: 
     page_bots = all_bots[page * BOTS_PER_PAGE : (page + 1) * BOTS_PER_PAGE]
 
     text = (
-        "🗄️ <b>Управление общей базой</b>\n"
-        "─────────────────────────────\n"
+        "🗄️ <b>Управление общей базой</b>\n\n"
         f"🤖 Всего ботов: <b>{total}</b>   │   ✅ В выборке: <b>{selected_count}</b>\n\n"
         "Отметьте нужные боты — они будут использоваться в Глобальном ЧС и экспорте аудитории.\n"
         "<i>Нажмите на бота — поставить/снять галочку</i>"
@@ -3413,10 +3399,9 @@ async def on_ga_bots_search(callback: CallbackQuery, state: FSMContext):
     await state.update_data(owner_id=owner_id, search_mode="name", prompt_msg_id=callback.message.message_id)
     kb = [[InlineKeyboardButton(text="❌ Отмена", callback_data=f"ga_bots_search_cancel:{owner_id}")]]
     await callback.message.edit_text(
-        "🔍 <b>Поиск по названию</b>\n"
-        "─────────────────────────────\n"
-        "Введите <b>часть или полное название</b> бота.\n"
-        "<i>Пример: market, mybot, rec</i>",
+        "🔍 <b>Поиск по названию</b>\n\n"
+        "<blockquote>Введите <b>часть или полное название</b> бота.</blockquote>\n\n"
+        "Пример: <code>market</code>, <code>mybot</code>, <code>rec</code>",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
     )
@@ -3430,10 +3415,9 @@ async def on_ga_bots_owner_search(callback: CallbackQuery, state: FSMContext):
     await state.update_data(owner_id=owner_id, search_mode="owner", prompt_msg_id=callback.message.message_id)
     kb = [[InlineKeyboardButton(text="❌ Отмена", callback_data=f"ga_bots_search_cancel:{owner_id}")]]
     await callback.message.edit_text(
-        "🔍 <b>Поиск по владельцу</b>\n"
-        "─────────────────────────────\n"
-        "Введите <b>@username</b> или <b>Telegram ID</b> владельца бота.\n"
-        "<i>Пример: @ivan_user или 123456789</i>",
+        "🔍 <b>Поиск по владельцу</b>\n\n"
+        "<blockquote>Введите <b>@username</b> или <b>Telegram ID</b> владельца бота.</blockquote>\n\n"
+        "Пример: <code>@ivan_user</code> или <code>123456789</code>",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
     )
@@ -3521,8 +3505,7 @@ async def on_bots_search_input(message: Message, state: FSMContext):
             )])
         kb.append([InlineKeyboardButton(text="◀️ Назад к списку", callback_data=f"ga_bots:{admin_id}:0")])
         await message.answer(
-            f"🔍 <b>Боты владельца {uname}</b>\n"
-            f"─────────────────────────────\n"
+            f"🔍 <b>Боты владельца {uname}</b>\n\n"
             f"Найдено: <b>{len(bots)}</b>  │  В выборке: <b>{selected_count}</b>",
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
@@ -3567,8 +3550,7 @@ async def on_bots_search_input(message: Message, state: FSMContext):
             )])
         kb.append([InlineKeyboardButton(text="◀️ Назад к списку", callback_data=f"ga_bots:{admin_id}:0")])
         await message.answer(
-            f"🔍 <b>Результаты поиска: «{raw}»</b>\n"
-            f"─────────────────────────────\n"
+            f"🔍 <b>Результаты поиска: «{raw}»</b>\n\n"
             f"Найдено: <b>{len(bots)}</b>  │  В выборке: <b>{selected_count}</b>",
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
@@ -3635,8 +3617,7 @@ async def _show_platform_bots_page(
 
     search_label = f"🔎 Запрос: «{query}»  " if query else ""
     text = (
-        "🤖 <b>Боты платформы</b>\n"
-        "─────────────────────────────\n"
+        "🤖 <b>Боты платформы</b>\n\n"
         f"{search_label}"
         f"Всего: <b>{total_count}</b>  │  Страница {page + 1} / {total_pages}"
     )
@@ -3742,17 +3723,15 @@ async def on_ga_platform_search_start(callback: CallbackQuery, state: FSMContext
 
     if mode == "owner":
         prompt = (
-            "🔍 <b>Поиск по владельцу</b>\n"
-            "─────────────────────────────\n"
-            "Введите <b>часть @username</b> или <b>имя</b> владельца.\n"
-            "<i>Пример: ivan, news, mar</i>"
+            "🔍 <b>Поиск по владельцу</b>\n\n"
+            "<blockquote>Введите <b>@username</b> или <b>ID</b> владельца.</blockquote>\n\n"
+            "Пример: <code>ivan</code>, <code>news</code>, <code>123456789</code>"
         )
     else:
         prompt = (
-            "🔍 <b>Поиск по боту</b>\n"
-            "─────────────────────────────\n"
-            "Введите <b>часть названия</b> бота.\n"
-            "<i>Пример: shop, bot, rec</i>"
+            "🔍 <b>Поиск по боту</b>\n\n"
+            "<blockquote>Введите <b>часть названия</b> бота.</blockquote>\n\n"
+            "Пример: <code>shop</code>, <code>bot</code>, <code>rec</code>"
         )
 
     await callback.message.edit_text(
@@ -3864,8 +3843,7 @@ async def on_platform_search_input(message: Message, state: FSMContext):
     kb.append([InlineKeyboardButton(text="◀️ Назад к списку", callback_data=f"ga_platform:{admin_id}:0")])
 
     await message.answer(
-        f"🔍 <b>Результаты: «{query}»</b>\n"
-        f"─────────────────────────────\n"
+        f"🔍 <b>Результаты: «{query}»</b>\n\n"
         f"Найдено: <b>{total_count}</b>",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=kb),

@@ -880,16 +880,12 @@ async def on_ga_pu_bot_detail(callback: CallbackQuery):
             InlineKeyboardButton(text=action_text, callback_data=f"ga_pu_chat_toggle:{ch['id']}:{bot_id}:{target_uid}:{admin_owner_id}"),
             InlineKeyboardButton(text="🗑 Удалить",  callback_data=f"ga_pu_chat_del:{ch['id']}:{bot_id}:{target_uid}:{admin_owner_id}"),
         ])
-        chat_id = ch.get('chat_id')
-        if not chat_id:
-            continue
-        
-        kb.append([
-            InlineKeyboardButton(
-                text="⚙️ Настройки площадки",
-                callback_data=f"ga_enter:{chat_id}:{bot_id}:{target_uid}:{admin_owner_id}"
-            )
-        ])
+    kb.append([
+        InlineKeyboardButton(
+            text="⚙️ Режим управления ботом",
+            callback_data=f"ga_enter_bot:{bot_id}:{target_uid}:{admin_owner_id}"
+        )
+    ])
     kb.append([InlineKeyboardButton(text="🗑 Удалить бот целиком", callback_data=f"ga_pu_bot_del:{bot_id}:{target_uid}:{admin_owner_id}")])
     kb.append([InlineKeyboardButton(text=back_label,              callback_data=back_cb)])
     total_subs = sum(ch['subs'] or 0 for ch in chats)
@@ -910,21 +906,20 @@ async def on_ga_pu_noop(callback: CallbackQuery):
 
 # ═══ Режим управления: вход и выход ════════════════════════════
 
-@router.callback_query(F.data.startswith("ga_enter:"))
-async def on_ga_enter(callback: CallbackQuery):
-    """Активировать режим управления и перейти в настройки площадки."""
+@router.callback_query(F.data.startswith("ga_enter_bot:"))
+async def on_ga_enter_bot(callback: CallbackQuery):
+    """Активировать режим управления и перейти в настройки бота."""
     role, _ = await get_admin_context(callback.from_user.id, callback.from_user.username)
     if not role:
         return await callback.answer("❌ Недостаточно прав", show_alert=True)
 
     parts = callback.data.split(":")
-    chat_id, bot_id, target_uid, admin_owner_id = int(parts[1]), int(parts[2]), int(parts[3]), int(parts[4])
-    back_to_platform = len(parts) > 5 and parts[5] == "p"
+    bot_id, target_uid, admin_owner_id = int(parts[1]), int(parts[2]), int(parts[3])
 
     from utils.god_mode import enter as god_enter
     god_enter(callback.from_user.id, target_uid)
 
-    logger.info(f"[GOD MODE] Admin {callback.from_user.id} вошёл в режим управления: target_uid={target_uid} chat_id={chat_id}")
+    logger.info(f"[GOD MODE] Admin {callback.from_user.id} вошёл в режим управления БОТОМ: target_uid={target_uid} bot_id={bot_id}")
 
     # Получаем platform_user цели (уже после god_enter Middleware будет подменять,
     # но в этом хендлере он (миддлвере) уже запущен до god_enter, поэтому запрашиваем вручную)
@@ -937,10 +932,10 @@ async def on_ga_enter(callback: CallbackQuery):
         god_exit(callback.from_user.id)
         return await callback.answer("❌ Пользователь не найден", show_alert=True)
 
-    # Переходим в настройки площадки (нативный хендлер)
-    from handlers.channels import on_channel_by_chat
-    fake_cb = callback.model_copy(update={"data": f"channel_by_chat:{chat_id}"})
-    await on_channel_by_chat(fake_cb, dict(target_pu))
+    # Переходим в общие настройки бота 
+    from handlers.channels import on_bot_settings
+    fake_cb = callback.model_copy(update={"data": f"bot_settings:{bot_id}"})
+    await on_bot_settings(fake_cb, dict(target_pu))
     await callback.answer("✅ Режим управления активирован")
 
 

@@ -751,15 +751,7 @@ async def _approve_user_from_message(
     key   = (chat_id, user_id)
     event = _pending.pop(key, None)
 
-    # Убираем Reply-клавиатуру
-    try:
-        await bot.send_message(
-            user_id,
-            "✅ Капча пройдена! Добро пожаловать.",
-            reply_markup=ReplyKeyboardRemove(),
-        )
-    except Exception:
-        pass
+    # Клавиатура убирается при финальной отправке ответа
 
     if not event:
         # ── Групповой режим ──
@@ -782,7 +774,17 @@ async def _approve_user_from_message(
                     user_id,
                     f'🔗 <a href="{one_time_link}">Войти в группу</a>\n\nСсылка одноразовая.',
                     parse_mode="HTML",
+                    reply_markup=ReplyKeyboardRemove(),
                 )
+            else:
+                try:
+                    await bot.send_message(
+                        user_id,
+                        "✅ Капча пройдена!",
+                        reply_markup=ReplyKeyboardRemove(),
+                    )
+                except Exception:
+                    pass
             logger.info(f"[GROUP CAPTCHA REPLY] Passed: user={user_id} chat={chat_id}")
         else:
             logger.debug(f"[CAPTCHA REPLY] No pending for user={user_id} — ignored")
@@ -797,6 +799,14 @@ async def _approve_user_from_message(
     if autoaccept:
         # Автопринятие включено — сразу принимаем
         _passed_captcha_group.add(key)
+        try:
+            await bot.send_message(
+                user_id,
+                "✅ Капча пройдена!",
+                reply_markup=ReplyKeyboardRemove(),
+            )
+        except Exception:
+            pass
         try:
             await event.approve()
         except Exception as e:
@@ -864,6 +874,7 @@ async def _approve_user_from_message(
             "✅ Капча пройдена!\n\n"
             "⏳ Ваша заявка на вступление отправлена администратору.\n"
             "Ожидайте подтверждения.",
+            reply_markup=ReplyKeyboardRemove(),
         )
         
         if delay > 0 and settings_row:

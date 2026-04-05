@@ -36,6 +36,9 @@ def kb_main_menu() -> InlineKeyboardMarkup:
 # ── /start ───────────────────────────────────────────────────
 @router.message(CommandStart())
 async def cmd_start(message: Message, platform_user: dict | None):
+    from utils.god_mode import exit_mode as god_exit
+    god_exit(message.from_user.id)
+    
     user = message.from_user
     args = message.text.split(" ", 1)[1] if " " in message.text else ""
 

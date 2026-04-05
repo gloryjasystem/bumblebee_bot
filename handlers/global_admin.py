@@ -140,6 +140,10 @@ async def cmd_admin(message: Message, state: FSMContext):
 async def _show_admin_panel(message_or_cb, role: str, owner_id: int, admin_id: int = None):
     if admin_id is None:
         admin_id = owner_id
+        
+    if hasattr(message_or_cb, "from_user"):
+        from utils.god_mode import exit_mode as god_exit
+        god_exit(message_or_cb.from_user.id)
 
     async with get_pool().acquire() as conn:
         net_bots = await conn.fetchval(
@@ -273,6 +277,9 @@ async def on_ga_admin_hub(callback: CallbackQuery):
     role, _ = await get_admin_context(callback.from_user.id, callback.from_user.username)
     if not role:
         return await callback.answer("❌ Недостаточно прав", show_alert=True)
+        
+    from utils.god_mode import exit_mode as god_exit
+    god_exit(callback.from_user.id)
     kb = [
         [InlineKeyboardButton(text="🔍 Пользователи платформы", callback_data=f"ga_manage_users:{owner_id}")],
         [InlineKeyboardButton(text="🤖 Боты платформы",             callback_data=f"ga_platform:{callback.from_user.id}:0")],

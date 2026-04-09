@@ -359,6 +359,11 @@ async def on_aa_export(callback: CallbackQuery, state: FSMContext):
         ]
         markup = InlineKeyboardMarkup(inline_keyboard=kb)
         
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass
+            
         msg = await callback.message.answer_document(doc, caption="📁 Результат анализа пересечения аудиторий.", reply_markup=markup)
         
         # Delete the document message after a timeout? Or just leave it.

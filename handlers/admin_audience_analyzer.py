@@ -74,13 +74,14 @@ async def _show_analyzer_panel(message_or_cb, owner_id: int, state: FSMContext, 
         offset_param = f"${len(args)}"
 
         page_channels = await conn.fetch(f"""
-            SELECT bc.chat_id, bc.chat_title, pu.username AS owner_username, pu.user_id AS owner_id,
-                   COALESCE((SELECT COUNT(*) FROM bot_users bu WHERE bu.chat_id = bc.chat_id AND bu.is_active = true), 0) as subscribers
+            SELECT bc.chat_id, MAX(bc.chat_title) as chat_title, MAX(pu.username) AS owner_username, MAX(pu.user_id) AS owner_id,
+                   COALESCE((SELECT COUNT(DISTINCT user_id) FROM bot_users bu WHERE bu.chat_id = bc.chat_id), 0) as stats_count
             FROM bot_chats bc
             JOIN child_bots cb ON cb.id = bc.child_bot_id
             JOIN platform_users pu ON pu.user_id = cb.owner_id
             WHERE {where_sql}
-            ORDER BY subscribers DESC
+            GROUP BY bc.chat_id
+            ORDER BY stats_count DESC
             LIMIT {limit_param} OFFSET {offset_param}
         """, *args)
 
@@ -109,7 +110,7 @@ async def _show_analyzer_panel(message_or_cb, owner_id: int, state: FSMContext, 
 
     for c in page_channels:
         mark = "✅" if c['chat_id'] in selected_channels else "☑️"
-        subs_text = _fmt_num(c['subscribers'])
+        subs_text = _fmt_num(c['stats_count'])
 
         chat_raw = c['chat_title'] or "Без назв."
         owner_raw = c['owner_username'] or str(c['owner_id'])
@@ -293,7 +294,7 @@ async def on_aa_analyze(callback: CallbackQuery, state: FSMContext):
         users = await conn.fetch(f"""
             SELECT user_id
             FROM bot_users
-            WHERE chat_id = ANY($1::bigint[]) AND is_active = true
+            WHERE chat_id = ANY($1::bigint[])
             GROUP BY user_id
             HAVING COUNT(DISTINCT chat_id) = {len(selected_channels)}
         """, selected_channels)

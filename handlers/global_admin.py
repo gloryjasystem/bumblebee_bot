@@ -868,6 +868,7 @@ async def on_ga_pu_bot_detail(callback: CallbackQuery):
         )
     bname = f"@{bot_row['bot_username']}" if bot_row else str(bot_id)
     kb = []
+    suffix = ":p" if from_platform else ""
     for ch in chats:
         status = "✅" if ch['is_active'] else "❌"
         ctype = "📡" if ch['chat_type'] == 'channel' else "👥"
@@ -881,8 +882,8 @@ async def on_ga_pu_bot_detail(callback: CallbackQuery):
             )
         ])
         kb.append([
-            InlineKeyboardButton(text=action_text, callback_data=f"ga_pu_chat_toggle:{ch['id']}:{bot_id}:{target_uid}:{admin_owner_id}"),
-            InlineKeyboardButton(text="🗑 Удалить",  callback_data=f"ga_pu_chat_del:{ch['id']}:{bot_id}:{target_uid}:{admin_owner_id}"),
+            InlineKeyboardButton(text=action_text, callback_data=f"ga_pu_chat_toggle:{ch['id']}:{bot_id}:{target_uid}:{admin_owner_id}{suffix}"),
+            InlineKeyboardButton(text="🗑 Удалить",  callback_data=f"ga_pu_chat_del:{ch['id']}:{bot_id}:{target_uid}:{admin_owner_id}{suffix}"),
         ])
     kb.append([
         InlineKeyboardButton(
@@ -890,7 +891,7 @@ async def on_ga_pu_bot_detail(callback: CallbackQuery):
             callback_data=f"ga_enter_bot:{bot_id}:{target_uid}:{admin_owner_id}"
         )
     ])
-    kb.append([InlineKeyboardButton(text="🗑 Удалить бот целиком", callback_data=f"ga_pu_bot_del:{bot_id}:{target_uid}:{admin_owner_id}")])
+    kb.append([InlineKeyboardButton(text="🗑 Удалить бот целиком", callback_data=f"ga_pu_bot_del:{bot_id}:{target_uid}:{admin_owner_id}{suffix}")])
     kb.append([InlineKeyboardButton(text=back_label,              callback_data=back_cb)])
     total_subs = sum(ch['subs'] or 0 for ch in chats)
     await navigate(
@@ -971,6 +972,7 @@ async def on_ga_exit(callback: CallbackQuery):
 async def on_ga_pu_chat_toggle(callback: CallbackQuery):
     parts = callback.data.split(":")
     chat_row_id, bot_id, target_uid, admin_owner_id = int(parts[1]), int(parts[2]), int(parts[3]), int(parts[4])
+    suffix = ":p" if len(parts) > 5 and parts[5] == "p" else ""
 
     async with get_pool().acquire() as conn:
         row = await conn.fetchrow(
@@ -986,7 +988,7 @@ async def on_ga_pu_chat_toggle(callback: CallbackQuery):
     # Если ЧС будет снова включён, они заново не пройдут при попытке вступить.
 
     # refresh the page
-    fake_cb = callback.model_copy(update={"data": f"ga_pu_bot_detail:{bot_id}:{target_uid}:{admin_owner_id}"})
+    fake_cb = callback.model_copy(update={"data": f"ga_pu_bot_detail:{bot_id}:{target_uid}:{admin_owner_id}{suffix}"})
     await on_ga_pu_bot_detail(fake_cb)
 
 
@@ -994,10 +996,11 @@ async def on_ga_pu_chat_toggle(callback: CallbackQuery):
 async def on_ga_pu_chat_del(callback: CallbackQuery):
     parts = callback.data.split(":")
     chat_row_id, bot_id, target_uid, admin_owner_id = int(parts[1]), int(parts[2]), int(parts[3]), int(parts[4])
+    suffix = ":p" if len(parts) > 5 and parts[5] == "p" else ""
     async with get_pool().acquire() as conn:
         await conn.execute("DELETE FROM bot_chats WHERE id=$1", chat_row_id)
     await callback.answer("🗑 Площадка удалена")
-    fake_cb = callback.model_copy(update={"data": f"ga_pu_bot_detail:{bot_id}:{target_uid}:{admin_owner_id}"})
+    fake_cb = callback.model_copy(update={"data": f"ga_pu_bot_detail:{bot_id}:{target_uid}:{admin_owner_id}{suffix}"})
     await on_ga_pu_bot_detail(fake_cb)
 
 
@@ -1005,11 +1008,17 @@ async def on_ga_pu_chat_del(callback: CallbackQuery):
 async def on_ga_pu_bot_del(callback: CallbackQuery):
     parts = callback.data.split(":")
     bot_id, target_uid, admin_owner_id = int(parts[1]), int(parts[2]), int(parts[3])
+    from_platform = len(parts) > 4 and parts[4] == "p"
     async with get_pool().acquire() as conn:
         await conn.execute("DELETE FROM child_bots WHERE id=$1", bot_id)
     await callback.answer("🗑 Бот удалён")
-    fake_cb = callback.model_copy(update={"data": f"ga_pu_bots:{target_uid}:{admin_owner_id}"})
-    await on_ga_pu_bots(fake_cb)
+    
+    if from_platform:
+        fake_cb = callback.model_copy(update={"data": f"ga_platform:{admin_owner_id}:0"})
+        await on_ga_platform(fake_cb)
+    else:
+        fake_cb = callback.model_copy(update={"data": f"ga_pu_bots:{target_uid}:{admin_owner_id}"})
+        await on_ga_pu_bots(fake_cb)
 
 
 # ═══ Управление тарифом ═══════════════════════════════════════════════════════
@@ -2871,6 +2880,7 @@ async def _show_ga_users(message_or_cb, admin_id: int, owner_id: int):
     )
 
     kb = [
+        [InlineKeyboardButton(text="📊 Анализ пересечений", callback_data=f"aa_start:{owner_id}")],
         [InlineKeyboardButton(text="📥 Выгрузить всю базу (CSV)", callback_data=f"ga_export_users:all:{owner_id}")],
         [InlineKeyboardButton(text="🟢 Выгрузить только живых", callback_data=f"ga_export_users:alive:{owner_id}")],
         [InlineKeyboardButton(text="◀️ Назад", callback_data=f"ga_main:{owner_id}")]

@@ -12,40 +12,64 @@ logger = logging.getLogger(__name__)
 router = Router()
 
 class AudienceAnalyzerFSM(StatesGroup):
-    waiting_search = State()
+    waiting_search_name = State()
+    waiting_search_owner = State()
 
 PAGE_SIZE = 5
 
-async def _get_admin_channels(owner_id: int):
-    async with get_pool().acquire() as conn:
-        # Get all channels for all active bots of this owner
-        channels = await conn.fetch("""
-            SELECT bc.chat_id, bc.chat_title, COUNT(bu.user_id) as subscribers
-            FROM bot_chats bc
-            JOIN child_bots cb ON cb.id = bc.child_bot_id
-            LEFT JOIN bot_users bu ON bu.chat_id = bc.chat_id AND bu.is_active = true
-            WHERE cb.owner_id = $1 AND bc.is_active = true
-            GROUP BY bc.chat_id, bc.chat_title
-            ORDER BY subscribers DESC
-        """, owner_id)
-        return [{"chat_id": dict(c)["chat_id"], "chat_title": dict(c)["chat_title"], "subscribers": dict(c)["subscribers"]} for c in channels]
-
-async def _show_analyzer_panel(message_or_cb, owner_id: int, state: FSMContext, page: int = 0, search_query: str = ""):
+async def _show_analyzer_panel(message_or_cb, owner_id: int, state: FSMContext, page: int = 0):
     data = await state.get_data()
     selected_channels = data.get("selected_channels", [])
+    search_query = data.get("search_query", "")
+    search_mode = data.get("search_mode", "name")
 
-    channels = await _get_admin_channels(owner_id)
-
+    safe_query = search_query.lower().lstrip("@")
+    
+    where_clauses = ["bc.is_active = true", "bc.chat_title IS NOT NULL"] 
+    args = []
+    
     if search_query:
-        channels = [c for c in channels if search_query.lower() in c['chat_title'].lower()]
-
-    total_channels = len(channels)
-    total_pages = (total_channels + PAGE_SIZE - 1) // PAGE_SIZE if total_channels > 0 else 1
-    page = max(0, min(page, total_pages - 1))
-
-    start_idx = page * PAGE_SIZE
-    end_idx = start_idx + PAGE_SIZE
-    page_channels = channels[start_idx:end_idx]
+        if search_mode == "owner":
+            if safe_query.lstrip("-").isdigit():
+                args.append(int(safe_query.lstrip("-")))
+                where_clauses.append(f"pu.user_id = ${len(args)}")
+            else:
+                args.append(f"%{safe_query}%")
+                where_clauses.append(f"LOWER(pu.username) LIKE ${len(args)}")
+        else:
+            args.append(f"%{safe_query}%")
+            where_clauses.append(f"LOWER(bc.chat_title) LIKE ${len(args)}")
+            
+    where_sql = " AND ".join(where_clauses)
+    
+    async with get_pool().acquire() as conn:
+        total_channels = await conn.fetchval(f"""
+            SELECT COUNT(DISTINCT bc.chat_id)
+            FROM bot_chats bc
+            JOIN child_bots cb ON cb.id = bc.child_bot_id
+            JOIN platform_users pu ON pu.user_id = cb.owner_id
+            WHERE {where_sql}
+        """, *args) or 0
+        
+        args.append(PAGE_SIZE)
+        limit_param = f"${len(args)}"
+        
+        total_pages = max(1, (total_channels + PAGE_SIZE - 1) // PAGE_SIZE)
+        page = max(0, min(page, total_pages - 1))
+        
+        args.append(page * PAGE_SIZE)
+        offset_param = f"${len(args)}"
+        
+        page_channels = await conn.fetch(f"""
+            SELECT bc.chat_id, bc.chat_title, pu.username AS owner_username, pu.user_id AS owner_id,
+                   COALESCE((SELECT COUNT(*) FROM bot_users bu WHERE bu.chat_id = bc.chat_id AND bu.is_active = true), 0) as subscribers
+            FROM bot_chats bc
+            JOIN child_bots cb ON cb.id = bc.child_bot_id
+            JOIN platform_users pu ON pu.user_id = cb.owner_id
+            WHERE {where_sql}
+            ORDER BY bc.id DESC
+            LIMIT {limit_param} OFFSET {offset_param}
+        """, *args)
 
     text = (
         "📊 <b>Анализ баз пользователей</b>\n\n"
@@ -54,30 +78,61 @@ async def _show_analyzer_panel(message_or_cb, owner_id: int, state: FSMContext, 
         f"✅ <i>Выбрано для анализа: {len(selected_channels)}</i>"
     )
     if search_query:
-        text += f"\n\n🔍 <i>Поиск:</i> <code>{search_query}</code>"
+        mode_str = "По владельцу" if search_mode == "owner" else "По названию"
+        text += f"\n\n🔍 <i>Поиск ({mode_str}):</i> <code>{search_query}</code>"
 
     kb = []
-    kb.append([InlineKeyboardButton(text="🔍 Поиск по названию", callback_data=f"aa_search:{owner_id}")])
+    kb.append([
+        InlineKeyboardButton(text="🔍 По названию", callback_data=f"aa_search:{owner_id}:name"),
+        InlineKeyboardButton(text="🔍 По владельцу", callback_data=f"aa_search:{owner_id}:owner"),
+    ])
+    
+    if search_query:
+        kb.append([InlineKeyboardButton(text="✖️ Сбросить поиск", callback_data=f"aa_reset_search:{owner_id}")])
     
     for c in page_channels:
-        mark = "✅" if c['chat_id'] in selected_channels else "❌"
+        mark = "✅" if c['chat_id'] in selected_channels else "☑️"
+        subs_text = f"{c['subscribers']:,}"
+        
+        chat_raw = c['chat_title'] or "Без названия"
+        owner_raw = c['owner_username'] or str(c['owner_id'])
+        
+        stats = f"  ·  👥 {subs_text}"
+        fixed_len = 3 + 4 + len(stats)
+        limit = 58
+        avail = limit - fixed_len
+        
+        if len(chat_raw) + len(owner_raw) > avail:
+            if len(owner_raw) > avail // 3 and len(chat_raw) > (avail - avail // 3):
+                o_tag = owner_raw[:max(1, avail//3 - 2)] + ".."
+                b_name = chat_raw[:max(1, avail - len(o_tag) - 2)] + ".."
+            elif len(chat_raw) > avail - 6:
+                o_tag = owner_raw
+                b_name = chat_raw[:max(1, avail - len(o_tag) - 2)] + ".."
+            else:
+                b_name = chat_raw
+                o_tag = owner_raw[:max(1, avail - len(b_name) - 2)] + ".."
+        else:
+            b_name = chat_raw
+            o_tag = owner_raw
+            
         kb.append([InlineKeyboardButton(
-            text=f"[{mark}] {c['chat_title']} — {c['subscribers']} пдп",
+            text=f"{mark} {b_name} (@{o_tag}){stats}",
             callback_data=f"aa_toggle:{owner_id}:{c['chat_id']}:{page}"
         )])
 
-    # Pagination
     nav_row = []
     if page > 0:
-        nav_row.append(InlineKeyboardButton(text="⬅️ Назад", callback_data=f"aa_page:{owner_id}:{page-1}"))
-    nav_row.append(InlineKeyboardButton(text=f"Стр. {page+1} из {total_pages}", callback_data="ignore"))
+        nav_row.append(InlineKeyboardButton(text="◀️", callback_data=f"aa_page:{owner_id}:{page-1}"))
+    nav_row.append(InlineKeyboardButton(text=f"{page+1} / {total_pages}", callback_data="ignore"))
     if page < total_pages - 1:
-        nav_row.append(InlineKeyboardButton(text="Вперед ➡️", callback_data=f"aa_page:{owner_id}:{page+1}"))
-    kb.append(nav_row)
+        nav_row.append(InlineKeyboardButton(text="▶️", callback_data=f"aa_page:{owner_id}:{page+1}"))
+    if len(nav_row) > 1:
+        kb.append(nav_row)
 
     kb.append([InlineKeyboardButton(text="♻️ Сбросить выбор", callback_data=f"aa_reset:{owner_id}")])
     kb.append([InlineKeyboardButton(text=f"📊 Найти совпадения ({len(selected_channels)})", callback_data=f"aa_analyze:{owner_id}")])
-    kb.append([InlineKeyboardButton(text="🔙 Назад", callback_data=f"ga_users:{owner_id}")])
+    kb.append([InlineKeyboardButton(text="◀️ Назад в Панель", callback_data=f"ga_users:{owner_id}")])
 
     markup = InlineKeyboardMarkup(inline_keyboard=kb)
     
@@ -104,9 +159,7 @@ async def on_aa_page(callback: CallbackQuery, state: FSMContext):
     parts = callback.data.split(":")
     owner_id = int(parts[1])
     page = int(parts[2])
-    data = await state.get_data()
-    search_query = data.get("search_query", "")
-    await _show_analyzer_panel(callback, owner_id, state, page=page, search_query=search_query)
+    await _show_analyzer_panel(callback, owner_id, state, page=page)
     await callback.answer()
 
 @router.callback_query(F.data.startswith("aa_toggle:"))
@@ -118,7 +171,6 @@ async def on_aa_toggle(callback: CallbackQuery, state: FSMContext):
 
     data = await state.get_data()
     selected_channels = data.get("selected_channels", [])
-    search_query = data.get("search_query", "")
 
     if chat_id in selected_channels:
         selected_channels.remove(chat_id)
@@ -126,14 +178,15 @@ async def on_aa_toggle(callback: CallbackQuery, state: FSMContext):
         selected_channels.append(chat_id)
     
     await state.update_data(selected_channels=selected_channels)
-    await _show_analyzer_panel(callback, owner_id, state, page=page, search_query=search_query)
+    await _show_analyzer_panel(callback, owner_id, state, page=page)
     await callback.answer()
 
 @router.callback_query(F.data.startswith("aa_reset:"))
 async def on_aa_reset(callback: CallbackQuery, state: FSMContext):
     parts = callback.data.split(":")
     owner_id = int(parts[1])
-    await state.update_data(selected_channels=[], search_query="")
+    # Сброс выбора, сброс параметров поиска
+    await state.update_data(selected_channels=[], search_query="", search_mode="name")
     await _show_analyzer_panel(callback, owner_id, state, page=0)
     await callback.answer()
 
@@ -141,21 +194,40 @@ async def on_aa_reset(callback: CallbackQuery, state: FSMContext):
 async def on_aa_search(callback: CallbackQuery, state: FSMContext):
     parts = callback.data.split(":")
     owner_id = int(parts[1])
+    search_mode = parts[2] if len(parts) > 2 else "name"
     
-    await state.set_state(AudienceAnalyzerFSM.waiting_search)
+    await state.update_data(search_mode=search_mode)
+    
+    if search_mode == "owner":
+        prompt_text = "🔍 <b>Поиск по владельцу</b>\n\n<blockquote>Введите <b>@username</b> или <b>ID</b> владельца канала.</blockquote>\n\nПример: <code>ivan</code>, <code>news</code>, <code>123456789</code>"
+        await state.set_state(AudienceAnalyzerFSM.waiting_search_owner)
+    else:
+        prompt_text = "🔍 <b>Поиск по названию</b>\n\n<blockquote>Введите часть названия канала для поиска.</blockquote>\n\nПример: <code>shop</code>, <code>bot</code>, <code>rec</code>"
+        await state.set_state(AudienceAnalyzerFSM.waiting_search_name)
+        
     prompt_msg = await navigate(
         callback,
-        "🔍 <b>Поиск канала</b>\n\n"
-        "Введите часть названия канала для поиска:",
+        prompt_text,
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔙 Отмена", callback_data=f"ga_users:{owner_id}")]
+            [InlineKeyboardButton(text="✖️ Отмена", callback_data=f"aa_reset_search:{owner_id}")]
         ])
     )
     if prompt_msg and hasattr(prompt_msg, 'message_id'):
         await state.update_data(prompt_msg_id=prompt_msg.message_id)
+    await callback.answer()
 
-@router.message(AudienceAnalyzerFSM.waiting_search)
+@router.callback_query(F.data.startswith("aa_reset_search:"))
+async def on_aa_reset_search(callback: CallbackQuery, state: FSMContext):
+    parts = callback.data.split(":")
+    owner_id = int(parts[1])
+    await state.update_data(search_query="")
+    await state.set_state(None)
+    await _show_analyzer_panel(callback, owner_id, state, page=0)
+    await callback.answer()
+
+@router.message(AudienceAnalyzerFSM.waiting_search_name)
+@router.message(AudienceAnalyzerFSM.waiting_search_owner)
 async def on_aa_search_input(message: Message, state: FSMContext):
     data = await state.get_data()
     role, owner_id = await get_admin_context(message.from_user.id, message.from_user.username)
@@ -174,7 +246,7 @@ async def on_aa_search_input(message: Message, state: FSMContext):
         pass
         
     await state.set_state(None)
-    await _show_analyzer_panel(message, owner_id, state, page=0, search_query=search_query)
+    await _show_analyzer_panel(message, owner_id, state, page=0)
 
 @router.callback_query(F.data.startswith("aa_analyze:"))
 async def on_aa_analyze(callback: CallbackQuery, state: FSMContext):

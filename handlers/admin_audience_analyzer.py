@@ -319,12 +319,12 @@ async def on_aa_analyze(callback: CallbackQuery, state: FSMContext):
 
     text = (
         "📈 <b>Результаты анализа</b>\n\n"
-        f"📑 Выбранные каналы ({len(selected_channels)}):\n"
+        f"📑 Выбранные площадки ({len(selected_channels)}):\n"
         f"{channels_list}\n\n"
-        f"🎯 <b>Найдено общих подписчиков:</b> {_fmt_num(len(user_ids))} чел.\n"
+        f"🎯 <b>Найдено общих пользователей:</b> {_fmt_num(len(user_ids))} чел.\n"
     )
     if len(selected_channels) > 1:
-        text += f"<i>(Они состоят во всех {len(selected_channels)} выбранных каналах одновременно)</i>"
+        text += f"<i>(Они присутствуют в базах всех {len(selected_channels)} выбранных площадок одновременно)</i>"
 
     # Сохраняем результат для экспорта
     await state.update_data(analyzed_user_ids=user_ids)

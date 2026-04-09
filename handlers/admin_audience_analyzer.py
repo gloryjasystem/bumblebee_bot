@@ -24,7 +24,7 @@ class AudienceAnalyzerFSM(StatesGroup):
     waiting_search_owner = State()
 
 
-PAGE_SIZE = 5
+PAGE_SIZE = 6
 
 
 def _fmt_num(n: int) -> str:
@@ -89,7 +89,8 @@ async def _show_analyzer_panel(message_or_cb, owner_id: int, state: FSMContext, 
     # ── Header ────────────────────────────────────────────────────────────────
     sel_count = len(selected_channels)
     text = (
-        "📊 <b>Анализ пересечения аудиторий</b>\n\n"
+        "📊 <b>Анализ пересечения аудиторий</b>\n"
+        "<i>Выберите каналы, чтобы найти общих подписчиков, состоящих в них одновременно.</i>\n\n"
         f"📁 Площадок в системе: <b>{total_channels}</b>  |  ✅ Выбрано: <b>{sel_count}</b>"
     )
 

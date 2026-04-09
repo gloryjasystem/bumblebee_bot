@@ -33,6 +33,7 @@ from handlers.messages import router as messages_router
 from handlers.global_admin import router as global_admin_router
 from handlers.group_events import router as group_events_router
 from handlers.feedback import router as feedback_router
+from handlers.admin_audience_analyzer import router as admin_audience_analyzer_router
 
 # ── Мидлвары ─────────────────────────────────────────────────
 from middlewares.owner_check import OwnerMiddleware
@@ -63,6 +64,7 @@ def build_dispatcher() -> Dispatcher:
 
     # !! global_admin_router ПЕРВЫМ — Command()-фильтры должны срабатывать
     # до catch-all хендлеров в messages_router
+    dp.include_router(admin_audience_analyzer_router)
     dp.include_router(global_admin_router)
     dp.include_router(start_router)
     dp.include_router(channels_router)

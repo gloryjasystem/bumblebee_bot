@@ -353,7 +353,13 @@ async def on_aa_export(callback: CallbackQuery, state: FSMContext):
                     f.write(f"{r['user_id']}{username_str} ({r['first_name'] or 'Аноним'})\n")
                     
         doc = FSInputFile(path, filename=f"audience_intersection.{ext}")
-        msg = await callback.message.answer_document(doc, caption="📁 Результат анализа пересечения аудиторий.")
+        
+        kb = [
+            [InlineKeyboardButton(text="◀️ Назад к Результатам анализа", callback_data=f"aa_analyze:{owner_id}")]
+        ]
+        markup = InlineKeyboardMarkup(inline_keyboard=kb)
+        
+        msg = await callback.message.answer_document(doc, caption="📁 Результат анализа пересечения аудиторий.", reply_markup=markup)
         
         # Delete the document message after a timeout? Or just leave it.
     finally:

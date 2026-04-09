@@ -23,9 +23,7 @@ class AudienceAnalyzerFSM(StatesGroup):
     waiting_search_name = State()
     waiting_search_owner = State()
 
-
-PAGE_SIZE = 6
-
+PAGE_SIZE = 5
 
 def _fmt_num(n: int) -> str:
     """Форматирование числа с пробелом как разделителем тысяч (русский стандарт)."""
@@ -98,11 +96,6 @@ async def _show_analyzer_panel(message_or_cb, owner_id: int, state: FSMContext, 
         mode_str = "По владельцу" if search_mode == "owner" else "По названию"
         text += f"\n🔍 <i>Поиск ({mode_str}):</i> <code>{search_query}</code>"
 
-    # Контекстная подсказка
-    if sel_count == 1:
-        text += "\n\n⚠️ <i>Выберите ещё минимум 1 канал для поиска пересечений.</i>"
-    elif sel_count >= 2:
-        text += f"\n\n💡 <i>Готово к анализу — нажмите «Найти совпадения».</i>"
 
     # ── Клавиатура ────────────────────────────────────────────────────────────
     kb = []
@@ -118,28 +111,30 @@ async def _show_analyzer_panel(message_or_cb, owner_id: int, state: FSMContext, 
         mark = "✅" if c['chat_id'] in selected_channels else "☑️"
         subs_text = _fmt_num(c['subscribers'])
 
-        chat_raw = c['chat_title'] or "Без названия"
+        chat_raw = c['chat_title'] or "Без назв."
         owner_raw = c['owner_username'] or str(c['owner_id'])
 
-        stats = f"  ·  👥 {subs_text}"
-        fixed_len = 3 + 4 + len(stats)
-        limit = 58
+        stats = f" 👥 {subs_text}"
+        
+        limit = 35
+        fixed_len = 2 + len(stats) # mark + space + stats
         avail = limit - fixed_len
 
-        if len(chat_raw) + len(owner_raw) > avail:
-            if len(owner_raw) > avail // 3 and len(chat_raw) > (avail - avail // 3):
-                o_tag = owner_raw[:max(1, avail // 3 - 2)] + ".."
-                b_name = chat_raw[:max(1, avail - len(o_tag) - 2)] + ".."
-            elif len(chat_raw) > avail - 6:
+        if len(chat_raw) + len(owner_raw) + 4 > avail: # +4 for " (@)"
+            if len(owner_raw) > 8:
+                o_tag = owner_raw[:6] + ".."
+            else:
                 o_tag = owner_raw
-                b_name = chat_raw[:max(1, avail - len(o_tag) - 2)] + ".."
+                
+            avail_for_name = avail - len(o_tag) - 4
+            if len(chat_raw) > avail_for_name:
+                b_name = chat_raw[:max(1, avail_for_name - 2)] + ".."
             else:
                 b_name = chat_raw
-                o_tag = owner_raw[:max(1, avail - len(b_name) - 2)] + ".."
         else:
             b_name = chat_raw
             o_tag = owner_raw
-
+            
         kb.append([InlineKeyboardButton(
             text=f"{mark} {b_name} (@{o_tag}){stats}",
             callback_data=f"aa_toggle:{owner_id}:{c['chat_id']}:{page}"
@@ -154,9 +149,11 @@ async def _show_analyzer_panel(message_or_cb, owner_id: int, state: FSMContext, 
     if len(nav_row) > 1:
         kb.append(nav_row)
 
-    kb.append([InlineKeyboardButton(text="♻️ Сбросить выбор", callback_data=f"aa_reset:{owner_id}")])
     kb.append([InlineKeyboardButton(text=f"📊 Найти совпадения ({sel_count})", callback_data=f"aa_analyze:{owner_id}")])
-    kb.append([InlineKeyboardButton(text="◀️ Назад в Панель", callback_data=f"ga_users:{owner_id}")])
+    kb.append([
+        InlineKeyboardButton(text="◀️ Назад", callback_data=f"ga_users:{owner_id}"),
+        InlineKeyboardButton(text="♻️ Сбросить", callback_data=f"aa_reset:{owner_id}")
+    ])
 
     markup = InlineKeyboardMarkup(inline_keyboard=kb)
 

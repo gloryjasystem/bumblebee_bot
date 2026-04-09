@@ -227,7 +227,7 @@ async def on_aa_search(callback: CallbackQuery, state: FSMContext):
         prompt_text = "🔍 <b>Поиск по владельцу</b>\n\n<blockquote>Введите <b>@username</b> или <b>ID</b> владельца канала.</blockquote>\n\nПример: <code>ivan</code>, <code>news</code>, <code>123456789</code>"
         await state.set_state(AudienceAnalyzerFSM.waiting_search_owner)
     else:
-        prompt_text = "🔍 <b>Поиск по названию</b>\n\n<blockquote>Введите часть названия канала для поиска.</blockquote>\n\nПример: <code>shop</code>, <code>bot</code>, <code>rec</code>"
+        prompt_text = "🔍 <b>Поиск по названию</b>\n\n<blockquote>Введите часть названия канала для поиска.</blockquote>\n\nПример: <code>shop</code>, <code>crypto</code>, <code>news</code>"
         await state.set_state(AudienceAnalyzerFSM.waiting_search_name)
 
     prompt_msg = await navigate(

@@ -300,17 +300,20 @@ async def on_aa_analyze(callback: CallbackQuery, state: FSMContext):
 
         user_ids = [r['user_id'] for r in users]
 
-        # Получаем названия каналов и размер их баз
+        # Получаем названия выбранных каналов
         channels_info = await conn.fetch("""
-            SELECT bc.chat_id, bc.chat_title,
-                   COALESCE((SELECT COUNT(*) FROM bot_users bu WHERE bu.chat_id = bc.chat_id AND bu.is_active = true), 0) as subscribers
+            SELECT bc.chat_title
             FROM bot_chats bc
             WHERE bc.chat_id = ANY($1::bigint[])
         """, selected_channels)
 
-    # Строим список каналов с размером базы
+    def _truncate(text: str, max_len: int = 34) -> str:
+        if not text: return "Без названия"
+        return text[:max_len-3] + "..." if len(text) > max_len else text
+
+    # Строим список каналов
     channels_list = "\n".join([
-        f"  • {r['chat_title']}  —  {_fmt_num(r['subscribers'])} подп."
+        f"  • {_truncate(r['chat_title'])}"
         for r in channels_info
     ])
 

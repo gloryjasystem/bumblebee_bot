@@ -2641,8 +2641,8 @@ async def on_bs_base(callback: CallbackQuery, platform_user: dict | None):
     ) or 0
 
     blocked_count = await db.fetchval(
-        "SELECT blocked_count FROM child_bots WHERE id=$1",
-        child_bot_id,
+        "SELECT SUM(blocked_count) FROM child_bots WHERE bot_username=$1 AND owner_id=$2",
+        bot_username, owner_id,
     ) or 0
 
     bl_status = "Включён 🟢" if bl_enabled else "Выключен 🔴"

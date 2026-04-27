@@ -296,9 +296,10 @@ async def on_settings_menu(callback: CallbackQuery, platform_user: dict | None):
             "SELECT COUNT(c.id) FROM bot_chats c JOIN child_bots b ON c.child_bot_id = b.id WHERE c.owner_id=$1 AND c.is_active=true", 
             platform_user["user_id"]
         )
+        from config import settings as _cfg
         bl_count = await conn.fetchval(
-            "SELECT COUNT(*) FROM blacklist WHERE owner_id=$1",
-            platform_user["user_id"]
+            "SELECT COUNT(*) FROM blacklist WHERE owner_id=$1 AND (owner_id != $2 OR child_bot_id IS NOT NULL)",
+            platform_user["user_id"], _cfg.owner_telegram_id
         )
 
     from config import TARIFFS, settings

@@ -1715,11 +1715,12 @@ async def _build_network_text(owner_id: int, conn) -> str:
         _cfg.owner_telegram_id
     ) or 0
     
-    # Локальные ЧС - уникальные записи по ВСЕМ ботам платформы
+    # Локальные ЧС - уникальные записи по ВСЕМ ботам платформы (кроме глобального ЧС)
     total_local_bl = await conn.fetchval(
         """SELECT COUNT(DISTINCT COALESCE(user_id::text, lower(username))) 
            FROM blacklist 
-           WHERE child_bot_id IS NOT NULL"""
+           WHERE owner_id != $1""",
+        _cfg.owner_telegram_id
     ) or 0
     
     # Всего предотвращено (все баны)
@@ -2380,13 +2381,14 @@ async def on_ga_bl(callback: CallbackQuery, state: FSMContext = None):
     async with get_pool().acquire() as conn:
         # 1. Получаем список выбранных ботов (с их id и обоими счетчиками блокировок)
         selected_bots = await conn.fetch("""
-            SELECT cb.id, cb.bot_username, cb.blocked_count, cb.global_blocked_count
+            SELECT cb.id, cb.bot_username, cb.blocked_count, cb.global_blocked_count, cb.owner_id
             FROM ga_selected_bots gsb
             JOIN child_bots cb ON cb.id = gsb.child_bot_id
             WHERE gsb.owner_id = $1
             ORDER BY gsb.selected_at ASC
         """, owner_id)
         selected_bot_ids = [r['id'] for r in selected_bots]
+        selected_owner_ids = list(set(r['owner_id'] for r in selected_bots))
 
         # 2. Вытаскиваем глобальный статус активности ЧС платформы
         pu_row = await conn.fetchrow(
@@ -2400,21 +2402,24 @@ async def on_ga_bl(callback: CallbackQuery, state: FSMContext = None):
             "SELECT COUNT(*) FROM blacklist WHERE owner_id=$1 AND child_bot_id IS NULL", owner_id
         ) or 0
 
-        # Локальные ЧС — уникальные записи по ботам из выборки.
-        # Запрос всегда выполняется: ANY('{}') корректно вернёт 0 если список пуст.
-        local_record_count = await conn.fetchval("""
-            SELECT COUNT(DISTINCT COALESCE(user_id::text, lower(username)))
-            FROM blacklist
-            WHERE child_bot_id = ANY($1::int[])
-        """, selected_bot_ids) or 0
+        # Локальные ЧС — уникальные записи по владельцам ботов из выборки.
+        if selected_owner_ids:
+            from config import settings as _cfg
+            local_record_count = await conn.fetchval("""
+                SELECT COUNT(DISTINCT COALESCE(user_id::text, lower(username)))
+                FROM blacklist
+                WHERE owner_id = ANY($1::bigint[]) AND owner_id != $2
+            """, selected_owner_ids, _cfg.owner_telegram_id) or 0
+        else:
+            local_record_count = 0
 
         # Суммарные блокировки (исторические счётчики из child_bots)
         total_global_blocked = sum((r['global_blocked_count'] or 0) for r in selected_bots)
-        total_local_blocked = sum((r['blocked_count'] or 0) for r in selected_bots)
-        total_all_blocked = total_global_blocked + total_local_blocked
+        total_all_blocked_raw = sum((r['blocked_count'] or 0) for r in selected_bots)
+        total_local_blocked = max(0, total_all_blocked_raw - total_global_blocked)
 
         bl_count = global_record_count + local_record_count
-        total_blocked = total_all_blocked
+        total_blocked = total_global_blocked + total_local_blocked
 
     bots_list = ("\n".join(f"• @{r['bot_username']}" for r in selected_bots)
                  if selected_bots else

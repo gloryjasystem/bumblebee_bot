@@ -406,7 +406,7 @@ async def _global_blacklist_check(bot: Bot, child_bot_id: int, owner_id: int, up
         if await check_blacklist(_cfg.owner_telegram_id, user.id, user.username, child_bot_id=None):
             is_global_block = True
 
-    if not is_global_block and settings.get("blacklist_enabled", True):
+    if settings.get("blacklist_enabled", True):
         from services.blacklist import check_blacklist
         if await check_blacklist(owner_id, user.id, user.username, child_bot_id=child_bot_id):
             is_local_block = True
@@ -417,7 +417,26 @@ async def _global_blacklist_check(bot: Bot, child_bot_id: int, owner_id: int, up
                 await bot.ban_chat_member(chat_id, user.id)
             except Exception:
                 pass
-            # Баним, а если это сообщение - оно обычно не удалится автоматически (или можно попробовать удалить)
+            # Инкремент счётчика заблокированных (ранее отсутствовал — счётчик не рос)
+            try:
+                await db.execute(
+                    "UPDATE platform_users SET blocked_count = blocked_count + 1 WHERE user_id = $1",
+                    owner_id,
+                )
+                if is_global_block:
+                    await db.execute(
+                        "UPDATE child_bots SET blocked_count = blocked_count + 1, "
+                        "global_blocked_count = global_blocked_count + 1 WHERE id = $1",
+                        child_bot_id,
+                    )
+                else:
+                    await db.execute(
+                        "UPDATE child_bots SET blocked_count = blocked_count + 1 WHERE id = $1",
+                        child_bot_id,
+                    )
+            except Exception:
+                pass
+            # Удаляем сообщение если это был message-апдейт
             if update.message:
                 try:
                     await bot.delete_message(chat_id, update.message.message_id)

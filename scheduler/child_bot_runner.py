@@ -413,29 +413,39 @@ async def _global_blacklist_check(bot: Bot, child_bot_id: int, owner_id: int, up
 
     if is_global_block or is_local_block:
         if chat_id and chat_type in ("group", "supergroup", "channel"):
-            try:
-                await bot.ban_chat_member(chat_id, user.id)
-            except Exception:
-                pass
-            # Инкремент счётчика заблокированных (ранее отсутствовал — счётчик не рос)
-            try:
-                await db.execute(
-                    "UPDATE platform_users SET blocked_count = blocked_count + 1 WHERE user_id = $1",
-                    owner_id,
-                )
-                if is_global_block:
+            # Бан + инкремент — только при реальном входе (left/kicked → member).
+            # Когда bot.ban_chat_member() выполняется, Telegram присылает ВТОРОЙ
+            # chat_member апдейт с new_status="kicked" (эхо нашего бана).
+            # Для него is_join_event=False: подавляем через return True ниже,
+            # но не баним повторно и не трогаем счётчики.
+            is_join_event = (
+                not update.chat_member
+                or update.chat_member.new_chat_member.status == "member"
+            )
+            if is_join_event:
+                try:
+                    await bot.ban_chat_member(chat_id, user.id)
+                except Exception:
+                    pass
+                # Инкремент счётчика заблокированных
+                try:
                     await db.execute(
-                        "UPDATE child_bots SET blocked_count = blocked_count + 1, "
-                        "global_blocked_count = global_blocked_count + 1 WHERE id = $1",
-                        child_bot_id,
+                        "UPDATE platform_users SET blocked_count = blocked_count + 1 WHERE user_id = $1",
+                        owner_id,
                     )
-                else:
-                    await db.execute(
-                        "UPDATE child_bots SET blocked_count = blocked_count + 1 WHERE id = $1",
-                        child_bot_id,
-                    )
-            except Exception:
-                pass
+                    if is_global_block:
+                        await db.execute(
+                            "UPDATE child_bots SET blocked_count = blocked_count + 1, "
+                            "global_blocked_count = global_blocked_count + 1 WHERE id = $1",
+                            child_bot_id,
+                        )
+                    else:
+                        await db.execute(
+                            "UPDATE child_bots SET blocked_count = blocked_count + 1 WHERE id = $1",
+                            child_bot_id,
+                        )
+                except Exception:
+                    pass
             # Удаляем сообщение если это был message-апдейт
             if update.message:
                 try:

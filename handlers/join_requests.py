@@ -100,7 +100,7 @@ async def on_join_request(event: ChatJoinRequest, bot: Bot):
         if child_bot_id:
             if is_global_block:
                 await db.execute(
-                    "UPDATE child_bots SET blocked_count = blocked_count + 1, global_blocked_count = global_blocked_count + 1 WHERE id = $1",
+                    "UPDATE child_bots SET global_blocked_count = global_blocked_count + 1 WHERE id = $1",
                     child_bot_id,
                 )
             else:
@@ -263,7 +263,7 @@ async def on_member_update(event: ChatMemberUpdated, bot: Bot):
             if child_bot_id:
                 if is_global_block:
                     await db.execute(
-                        "UPDATE child_bots SET blocked_count = blocked_count + 1, global_blocked_count = global_blocked_count + 1 WHERE id = $1",
+                        "UPDATE child_bots SET global_blocked_count = global_blocked_count + 1 WHERE id = $1",
                         child_bot_id,
                     )
                 else:

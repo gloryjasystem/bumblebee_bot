@@ -1719,7 +1719,7 @@ async def _build_network_text(owner_id: int, conn) -> str:
     total_local_bl = await conn.fetchval(
         """SELECT COUNT(DISTINCT COALESCE(user_id::text, lower(username))) 
            FROM blacklist 
-           WHERE owner_id != $1""",
+           WHERE NOT (owner_id = $1 AND child_bot_id IS NULL)""",
         _cfg.owner_telegram_id
     ) or 0
     
@@ -2408,15 +2408,14 @@ async def on_ga_bl(callback: CallbackQuery, state: FSMContext = None):
             local_record_count = await conn.fetchval("""
                 SELECT COUNT(DISTINCT COALESCE(user_id::text, lower(username)))
                 FROM blacklist
-                WHERE owner_id = ANY($1::bigint[]) AND owner_id != $2
+                WHERE owner_id = ANY($1::bigint[]) AND NOT (owner_id = $2 AND child_bot_id IS NULL)
             """, selected_owner_ids, _cfg.owner_telegram_id) or 0
         else:
             local_record_count = 0
 
         # Суммарные блокировки (исторические счётчики из child_bots)
         total_global_blocked = sum((r['global_blocked_count'] or 0) for r in selected_bots)
-        total_all_blocked_raw = sum((r['blocked_count'] or 0) for r in selected_bots)
-        total_local_blocked = max(0, total_all_blocked_raw - total_global_blocked)
+        total_local_blocked = sum((r['blocked_count'] or 0) for r in selected_bots)
 
         bl_count = global_record_count + local_record_count
         total_blocked = total_global_blocked + total_local_blocked

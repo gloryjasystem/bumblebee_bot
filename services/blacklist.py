@@ -181,7 +181,7 @@ async def add_to_blacklist(owner_id: int, user_id: int | None, username: str | N
         if user_id:
             exists = await db.fetchval("SELECT 1 FROM blacklist WHERE owner_id=$1 AND child_bot_id IS NULL AND user_id=$2", owner_id, user_id)
         else:
-            exists = await db.fetchval("SELECT 1 FROM blacklist WHERE owner_id=$1 AND child_bot_id IS NULL AND lower(username)=$3", owner_id, uname_lower)
+            exists = await db.fetchval("SELECT 1 FROM blacklist WHERE owner_id=$1 AND child_bot_id IS NULL AND lower(username)=$2", owner_id, uname_lower)
 
     if exists:
         return False  # уже в базе полностью

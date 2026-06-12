@@ -839,7 +839,7 @@ async def on_ga_pu_bots(callback: CallbackQuery):
     kb.append([InlineKeyboardButton(text="◀️ Назад к карточке", callback_data=f"ga_pu_card:{target_uid}:{admin_owner_id}")])
     await navigate(
         callback,
-        "🤖 <b>Боты пользователя</b>\n\n",
+        f"🤖 <b>Боты {uname}</b>\n\n" + "\n".join(lines),
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
     )
@@ -1153,7 +1153,9 @@ async def on_ga_pu_tariff_apply(callback: CallbackQuery):
         
     import asyncio
     from scheduler.child_bot_runner import sync_child_bots
-    asyncio.create_task(sync_child_bots(target_uid))
+    _t = asyncio.create_task(sync_child_bots(target_uid))
+    _background_tasks.add(_t)
+    _t.add_done_callback(_background_tasks.discard)
     await callback.answer("✅ Тариф обновлён", show_alert=True)
     # Go back to tariff screen refreshed
     fake_cb = callback.model_copy(update={"data": f"ga_pu_tariff:{target_uid}:{admin_owner_id}"})
@@ -2932,6 +2934,7 @@ async def _export_users_csv(bot: Bot, chat_id: int, owner_id: int, export_type: 
         """
         if export_type == "alive":
             base_query += " AND bu.is_active = true"
+        base_query += " ORDER BY bu.user_id, bu.is_active DESC, bu.joined_at ASC"
         async with get_pool().acquire() as conn:
             rows = await conn.fetch(base_query, owner_id)
         

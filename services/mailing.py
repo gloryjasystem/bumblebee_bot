@@ -295,160 +295,176 @@ async def run_mailing(mailing_id: int, bot: Bot,
                 f"Mailing will fail for all recipients."
             )
 
-    for rec in recipients:
-        control = _active_mailings.get(mailing_id, {})
-
-        if control.get("cancelled"):
-            break
-
-        while control.get("paused"):
-            await asyncio.sleep(1)
+    # Внешний guard: любое необработанное исключение в цикле раньше оставляло
+    # рассылку навсегда в статусе 'running', течью _active_mailings и незакрытые
+    # сессии дочерних ботов. Теперь — гарантированный терминальный статус + cleanup.
+    final_status = "failed"
+    try:
+        for rec in recipients:
             control = _active_mailings.get(mailing_id, {})
+
             if control.get("cancelled"):
                 break
 
-        user_dict = dict(rec)
-        user_dict["_chat_title"] = chat_title
-
-        # ---> Deduplication lock <---
-        if campaign_id:
-            import asyncpg
-            try:
-                await db.execute(
-                    "INSERT INTO mailing_campaign_sent (campaign_id, tg_user_id) VALUES ($1, $2)",
-                    campaign_id, rec["user_id"]
-                )
-            except asyncpg.exceptions.UniqueViolationError:
-                continue
-
-        bots_to_try = []
-        if campaign_bot_ids:
-            bots_to_try = [bid for bid in campaign_bot_ids if bid in _bots]
-        elif child_bot_instance:
-            bots_to_try = [child_bot_id]
-        else:
-            bots_to_try = [0] # 0 for main fallback bot
-
-        success = False
-        fatal_error = False
-
-        from aiogram.exceptions import TelegramForbiddenError, TelegramRetryAfter
-        for try_bot_id in bots_to_try:
-            curr_bot = _bots.get(try_bot_id) if try_bot_id > 0 and campaign_bot_ids else (child_bot_instance if try_bot_id > 0 else send_bot)
-            if not curr_bot:
-                continue
-
-            for attempt in range(max_retries := 3):
-                try:
-                    sent_file_id = None
-                    sent_msg_id = None
-                    child_media_id = _child_media_ids.get(try_bot_id)
-
-                    if _media_bytes is not None and child_media_id is None:
-                        from aiogram.types import BufferedInputFile
-                        filename = f"media.{mailing.get('media_type', 'bin')}"
-                        override = BufferedInputFile(_media_bytes, filename=filename)
-                        sent_file_id, sent_msg_id = await _send_message(
-                            curr_bot, rec["user_id"], mailing, kb, user_dict, media_override=override
-                        )
-                        if sent_file_id:
-                            _child_media_ids[try_bot_id] = sent_file_id
-                    elif child_media_id is not None:
-                        sent_file_id, sent_msg_id = await _send_message(
-                            curr_bot, rec["user_id"], mailing, kb, user_dict, media_override=child_media_id
-                        )
-                    else:
-                        sent_file_id, sent_msg_id = await _send_message(
-                            curr_bot, rec["user_id"], mailing, kb, user_dict
-                        )
-
-                    success = True
-                    if sent_msg_id and (mailing.get("pin_message") or mailing.get("delete_after_send")):
-                        from datetime import timedelta, datetime, timezone
-                        _pin_until = datetime.now(timezone.utc) + timedelta(hours=24) if mailing.get("pin_message") else None
-                        try:
-                            await db.execute(
-                                """INSERT INTO mailing_sent_messages
-                                   (mailing_id, child_bot_id, tg_user_id, tg_message_id, pin_until, delete_after)
-                                   VALUES ($1, $2, $3, $4, $5, $6)""",
-                                mailing_id, try_bot_id if try_bot_id > 0 else None, rec["user_id"], sent_msg_id,
-                                _pin_until, bool(mailing.get("delete_after_send", False))
-                            )
-                        except Exception:
-                            pass
-                    break # Успешная отправка, выходим из цикла попыток
-
-                except TelegramForbiddenError:
-                    # В кампании пропускаем и пробуем следующий бот.
-                    # Если бот один или это последний бот и все выдали Forbidden:
-                    if not campaign_id:
-                        await db.execute(
-                            "UPDATE bot_users SET is_active=false WHERE owner_id=$1 AND user_id=$2",
-                            owner_id, rec["user_id"]
-                        )
-                    break # Не пытаемся снова, переходим к следующему боту/юзеру
-                except TelegramRetryAfter as e:
-                    logger.warning(f"Mailing {mailing_id}: rate limit {e.retry_after}s on bot {try_bot_id} (attempt {attempt + 1}/{max_retries})")
-                    await asyncio.sleep(e.retry_after + 1.0)
-                    continue # Пробуем снова в цикле попыток для этого же бота
-                except Exception as e:
-                    logger.warning(f"Mailing {mailing_id}: failed on bot {try_bot_id} to {rec['user_id']}: {e}")
-                    # Other errors, just break and try the next bot.
+            while control.get("paused"):
+                await asyncio.sleep(1)
+                control = _active_mailings.get(mailing_id, {})
+                if control.get("cancelled"):
                     break
 
-            if success:
-                break # Если отправили успешно - не пробуем другие child bots в bots_to_try
+            user_dict = dict(rec)
+            user_dict["_chat_title"] = chat_title
 
-        if success:
-            sent += 1
-            await db.execute("UPDATE mailings SET sent_count=$1 WHERE id=$2", sent, mailing_id)
-        else:
-            errors += 1
+            # ---> Deduplication lock <---
             if campaign_id:
+                import asyncpg
                 try:
-                    await db.execute("DELETE FROM mailing_campaign_sent WHERE campaign_id=$1 AND tg_user_id=$2", campaign_id, rec["user_id"])
-                except Exception:
-                    pass
+                    await db.execute(
+                        "INSERT INTO mailing_campaign_sent (campaign_id, tg_user_id) VALUES ($1, $2)",
+                        campaign_id, rec["user_id"]
+                    )
+                except asyncpg.exceptions.UniqueViolationError:
+                    continue
 
-        speed = _active_mailings.get(mailing_id, {}).get("speed", "low")
-        await asyncio.sleep(SPEEDS.get(speed, 0.08))
+            bots_to_try = []
+            if campaign_bot_ids:
+                bots_to_try = [bid for bid in campaign_bot_ids if bid in _bots]
+            elif child_bot_instance:
+                bots_to_try = [child_bot_id]
+            else:
+                bots_to_try = [0] # 0 for main fallback bot
 
-        # Прогресс-колбэк каждые 5 секунд
-        now_ts = time.monotonic()
-        if progress_callback and (now_ts - last_notify_ts) >= 5:
-            last_notify_ts = now_ts
+            success = False
+            fatal_error = False
+
+            from aiogram.exceptions import TelegramForbiddenError, TelegramRetryAfter
+            for try_bot_id in bots_to_try:
+                curr_bot = _bots.get(try_bot_id) if try_bot_id > 0 and campaign_bot_ids else (child_bot_instance if try_bot_id > 0 else send_bot)
+                if not curr_bot:
+                    continue
+
+                for attempt in range(max_retries := 3):
+                    try:
+                        sent_file_id = None
+                        sent_msg_id = None
+                        child_media_id = _child_media_ids.get(try_bot_id)
+
+                        if _media_bytes is not None and child_media_id is None:
+                            from aiogram.types import BufferedInputFile
+                            filename = f"media.{mailing.get('media_type', 'bin')}"
+                            override = BufferedInputFile(_media_bytes, filename=filename)
+                            sent_file_id, sent_msg_id = await _send_message(
+                                curr_bot, rec["user_id"], mailing, kb, user_dict, media_override=override
+                            )
+                            if sent_file_id:
+                                _child_media_ids[try_bot_id] = sent_file_id
+                        elif child_media_id is not None:
+                            sent_file_id, sent_msg_id = await _send_message(
+                                curr_bot, rec["user_id"], mailing, kb, user_dict, media_override=child_media_id
+                            )
+                        else:
+                            sent_file_id, sent_msg_id = await _send_message(
+                                curr_bot, rec["user_id"], mailing, kb, user_dict
+                            )
+
+                        success = True
+                        if sent_msg_id and (mailing.get("pin_message") or mailing.get("delete_after_send")):
+                            from datetime import timedelta, datetime, timezone
+                            _pin_until = datetime.now(timezone.utc) + timedelta(hours=24) if mailing.get("pin_message") else None
+                            try:
+                                await db.execute(
+                                    """INSERT INTO mailing_sent_messages
+                                       (mailing_id, child_bot_id, tg_user_id, tg_message_id, pin_until, delete_after)
+                                       VALUES ($1, $2, $3, $4, $5, $6)""",
+                                    mailing_id, try_bot_id if try_bot_id > 0 else None, rec["user_id"], sent_msg_id,
+                                    _pin_until, bool(mailing.get("delete_after_send", False))
+                                )
+                            except Exception:
+                                pass
+                        break # Успешная отправка, выходим из цикла попыток
+
+                    except TelegramForbiddenError:
+                        # В кампании пропускаем и пробуем следующий бот.
+                        # Если бот один или это последний бот и все выдали Forbidden:
+                        if not campaign_id:
+                            await db.execute(
+                                "UPDATE bot_users SET is_active=false WHERE owner_id=$1 AND user_id=$2",
+                                owner_id, rec["user_id"]
+                            )
+                        break # Не пытаемся снова, переходим к следующему боту/юзеру
+                    except TelegramRetryAfter as e:
+                        logger.warning(f"Mailing {mailing_id}: rate limit {e.retry_after}s on bot {try_bot_id} (attempt {attempt + 1}/{max_retries})")
+                        await asyncio.sleep(e.retry_after + 1.0)
+                        continue # Пробуем снова в цикле попыток для этого же бота
+                    except Exception as e:
+                        logger.warning(f"Mailing {mailing_id}: failed on bot {try_bot_id} to {rec['user_id']}: {e}")
+                        # Other errors, just break and try the next bot.
+                        break
+
+                if success:
+                    break # Если отправили успешно - не пробуем другие child bots в bots_to_try
+
+            if success:
+                sent += 1
+                await db.execute("UPDATE mailings SET sent_count=$1 WHERE id=$2", sent, mailing_id)
+            else:
+                errors += 1
+                if campaign_id:
+                    try:
+                        await db.execute("DELETE FROM mailing_campaign_sent WHERE campaign_id=$1 AND tg_user_id=$2", campaign_id, rec["user_id"])
+                    except Exception:
+                        pass
+
+            speed = _active_mailings.get(mailing_id, {}).get("speed", "low")
+            await asyncio.sleep(SPEEDS.get(speed, 0.08))
+
+            # Прогресс-колбэк каждые 5 секунд
+            now_ts = time.monotonic()
+            if progress_callback and (now_ts - last_notify_ts) >= 5:
+                last_notify_ts = now_ts
+                try:
+                    await progress_callback(mailing_id, sent, total, errors, "running")
+                except Exception as cb_err:
+                    logger.debug(f"Progress callback error: {cb_err}")
+
+        cancelled = _active_mailings.get(mailing_id, {}).get("cancelled", False)
+        final_status = "cancelled" if cancelled else "done"
+
+    except Exception as e:
+        # Рассылка упала на полпути — фиксируем как failed, не оставляем 'running'.
+        logger.exception(f"[MAILING {mailing_id}] crashed mid-run: {e}")
+        final_status = "failed"
+
+    finally:
+        try:
+            await db.execute(
+                "UPDATE mailings SET status=$1, finished_at=now(), sent_count=$2, error_count=$3 WHERE id=$4",
+                final_status, sent, errors, mailing_id,
+            )
+        except Exception as _upd_err:
+            logger.warning(f"[MAILING {mailing_id}] final status update failed: {_upd_err}")
+
+        _active_mailings.pop(mailing_id, None)
+        logger.info(f"Mailing {mailing_id} {final_status}: {sent}/{total}, errors={errors}")
+
+        # Закрываем сессии дочерних ботов (всегда — даже при падении)
+        if child_bot_instance:
             try:
-                await progress_callback(mailing_id, sent, total, errors, "running")
+                await child_bot_instance.session.close()
+            except Exception:
+                pass
+        for b in _bots.values():
+            try:
+                await b.session.close()
+            except Exception:
+                pass
+
+        # Финальный колбэк
+        if progress_callback:
+            try:
+                await progress_callback(mailing_id, sent, total, errors, final_status)
             except Exception as cb_err:
-                logger.debug(f"Progress callback error: {cb_err}")
-
-    cancelled = _active_mailings.get(mailing_id, {}).get("cancelled", False)
-    final_status = "cancelled" if cancelled else "done"
-    await db.execute(
-        "UPDATE mailings SET status=$1, finished_at=now(), sent_count=$2, error_count=$3 WHERE id=$4",
-        final_status, sent, errors, mailing_id,
-    )
-    _active_mailings.pop(mailing_id, None)
-    logger.info(f"Mailing {mailing_id} done: {sent}/{total}, errors={errors}")
-
-    # Закрываем сессии дочерних ботов
-    if child_bot_instance:
-        try:
-            await child_bot_instance.session.close()
-        except Exception:
-            pass
-    for b in _bots.values():
-        try:
-            await b.session.close()
-        except Exception:
-            pass
-
-    # Финальный колбэк
-    if progress_callback:
-        try:
-            await progress_callback(mailing_id, sent, total, errors, final_status)
-        except Exception as cb_err:
-            logger.debug(f"Final progress callback error: {cb_err}")
+                logger.debug(f"Final progress callback error: {cb_err}")
 
 
 

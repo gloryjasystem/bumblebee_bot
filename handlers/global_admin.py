@@ -426,7 +426,9 @@ async def _show_platform_user_card(message_or_cb, admin_owner_id: int, row):
 
 
 @router.callback_query(F.data.startswith("ga_pu_card:"))
-async def on_ga_pu_card(callback: CallbackQuery):
+async def on_ga_pu_card(callback: CallbackQuery, state: FSMContext):
+    # Сброс режима «жду ввод» (бан/PM/заметка), если сюда пришли по кнопке «Отмена».
+    await state.clear()
     parts = callback.data.split(":")
     target_uid, admin_owner_id = int(parts[1]), int(parts[2])
     async with get_pool().acquire() as conn:
@@ -441,7 +443,12 @@ async def on_ga_pu_card(callback: CallbackQuery):
 async def on_ga_pu_block(callback: CallbackQuery, state: FSMContext):
     parts = callback.data.split(":")
     target_uid, admin_owner_id = int(parts[1]), int(parts[2])
-    
+
+    # Владельца и совладельца заблокировать нельзя (иначе их же и залочит).
+    from config import settings as _cfg
+    if target_uid in (_cfg.owner_telegram_id, _cfg.co_owner_telegram_id):
+        return await callback.answer("❌ Нельзя заблокировать владельца или совладельца.", show_alert=True)
+
     await state.set_state(StaffFSM.waiting_ban_reason)
     prompt_msg = await navigate(
         callback,
@@ -686,9 +693,11 @@ async def on_ga_pu_pm_input(message: Message, state: FSMContext):
 
 @router.callback_query(F.data.startswith("ga_pu_note:"))
 async def on_ga_pu_note(callback: CallbackQuery, state: FSMContext):
+    # Сброс режима «жду заметку», если пришли сюда по «Отмена» из редактирования.
+    await state.clear()
     parts = callback.data.split(":")
     target_uid, admin_owner_id = int(parts[1]), int(parts[2])
-    
+
     async with get_pool().acquire() as conn:
         existing_note = await conn.fetchval(
             "SELECT note FROM platform_user_notes WHERE owner_id=$1 AND target_user_id=$2",
@@ -3739,11 +3748,6 @@ async def on_ga_platform_search_start(callback: CallbackQuery, state: FSMContext
     mode = parts[2] if len(parts) > 2 else "name"  # name | owner
 
     await state.set_state(BotNetworkFSM.waiting_platform_search)
-    await state.update_data(
-        platform_admin_id=admin_id,
-        platform_search_mode=mode,
-        platform_prompt_msg_id=callback.message.message_id,
-    )
 
     if mode == "owner":
         prompt = (
@@ -3758,14 +3762,20 @@ async def on_ga_platform_search_start(callback: CallbackQuery, state: FSMContext
             "Пример: <code>shop</code>, <code>bot</code>, <code>rec</code>"
         )
 
-    await callback.message.edit_text(
+    # navigate (удалить+отправить) вместо edit_text — устойчиво к нетекстовым сообщениям
+    # (например, если предыдущее сообщение было документом после выгрузки CSV).
+    prompt_msg = await navigate(
+        callback,
         prompt,
-        parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="❌ Отмена", callback_data=f"ga_platform_cancel:{admin_id}")]
         ]),
     )
-    await callback.answer()
+    await state.update_data(
+        platform_admin_id=admin_id,
+        platform_search_mode=mode,
+        platform_prompt_msg_id=(prompt_msg.message_id if prompt_msg else callback.message.message_id),
+    )
 
 
 @router.callback_query(F.data.startswith("ga_platform_cancel:"))

@@ -2413,14 +2413,15 @@ async def on_ga_bl(callback: CallbackQuery, state: FSMContext = None):
             "SELECT COUNT(*) FROM blacklist WHERE owner_id=$1 AND child_bot_id IS NULL", owner_id
         ) or 0
 
-        # Локальные ЧС — уникальные записи по владельцам ботов из выборки.
-        if selected_owner_ids:
-            from config import settings as _cfg
+        # Локальные ЧС — уникальные записи именно по ботам из выборки (скоуп по child_bot_id,
+        # а не по владельцам: иначе считались бы личные ЧС владельца целиком, в т.ч. по ботам
+        # вне выборки → завышение). Глобальные записи (child_bot_id IS NULL) сюда не попадают.
+        if selected_bot_ids:
             local_record_count = await conn.fetchval("""
                 SELECT COUNT(DISTINCT COALESCE(user_id::text, lower(username)))
                 FROM blacklist
-                WHERE owner_id = ANY($1::bigint[]) AND NOT (owner_id = $2 AND child_bot_id IS NULL)
-            """, selected_owner_ids, _cfg.owner_telegram_id) or 0
+                WHERE child_bot_id = ANY($1::int[])
+            """, selected_bot_ids) or 0
         else:
             local_record_count = 0
 

@@ -63,8 +63,11 @@ async def on_ga_rapidapi_add(call: CallbackQuery, state: FSMContext, platform_us
     Вход с уровня Глобального Администратора.
     Запрашивает @username / ID / файл для глобального ЧС (child_bot_id=None).
     """
-    if not platform_user:
-        return
+    # Admin-guard: глобальный ЧС — только владелец / совладелец / менеджер.
+    from handlers.global_admin import get_admin_context
+    role, _ = await get_admin_context(call.from_user.id, call.from_user.username)
+    if not role:
+        return await call.answer("❌ Доступно только администраторам", show_alert=True)
 
     owner_id = int(call.data.split(":")[1])
     back_cb  = f"ga_bl:{owner_id}"

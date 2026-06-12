@@ -62,6 +62,16 @@ def build_dispatcher() -> Dispatcher:
                 return True
         logger.error(f"Unhandled exception: {event.exception}", exc_info=event.exception)
 
+    # ── Admin-guard ───────────────────────────────────────────────
+    # Пускаем к админ-роутерам ТОЛЬКО владельца / совладельца / менеджера.
+    # Не-админ → root-фильтр не проходит → роутер отдаёт UNHANDLED → апдейт
+    # идёт дальше к обычным пользовательским роутерам (обычные юзеры не блокируются).
+    from utils.admin_guard import IsAdmin
+    _is_admin = IsAdmin()
+    for _admin_router in (admin_audience_analyzer_router, global_admin_router, admin_api_settings_router):
+        _admin_router.message.filter(_is_admin)
+        _admin_router.callback_query.filter(_is_admin)
+
     # !! global_admin_router ПЕРВЫМ — Command()-фильтры должны срабатывать
     # до catch-all хендлеров в messages_router
     dp.include_router(admin_audience_analyzer_router)

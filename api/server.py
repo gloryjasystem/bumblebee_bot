@@ -214,6 +214,14 @@ def create_app(bot: Bot, dp: Dispatcher) -> FastAPI:
         await start_all_child_bots()
         logger.info("Child bot runner started")
 
+        # Команды в кнопке «Меню» слева — только для главного бота
+        from aiogram.types import BotCommand
+        await bot.set_my_commands([
+            BotCommand(command="start", description="Главное меню"),
+            BotCommand(command="help",  description="Как пользоваться ботом"),
+        ])
+        logger.info("Bot commands set")
+
         # Устанавливаем webhook (SERVER_URL уже известен)
         from config import settings
         if settings.server_url:

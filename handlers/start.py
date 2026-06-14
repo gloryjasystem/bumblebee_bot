@@ -334,6 +334,7 @@ async def on_settings_menu(callback: CallbackQuery, platform_user: dict | None):
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="💳 Тарифы и оплата", callback_data="menu:tariffs")],
             [InlineKeyboardButton(text="📜 История покупок",  callback_data="settings:history")],
+            [InlineKeyboardButton(text="ℹ️ Как пользоваться", callback_data="menu:help")],
             [InlineKeyboardButton(text="💬 Служба поддержки", url=support_url)],
             [InlineKeyboardButton(text="◀️ Назад к меню",           callback_data="menu:main")],
         ]),

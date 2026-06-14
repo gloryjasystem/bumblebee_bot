@@ -10,7 +10,7 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
 
-from aiogram.types import ErrorEvent
+from aiogram.types import ErrorEvent, BotCommand
 from aiogram.exceptions import TelegramBadRequest
 
 from config import settings
@@ -18,6 +18,7 @@ from db.pool import create_pool, close_pool
 
 # ── Хендлеры ─────────────────────────────────────────────────
 from handlers.start import router as start_router
+from handlers.help import router as help_router
 from handlers.channels import router as channels_router
 from handlers.blacklist import router as blacklist_router
 from handlers.blacklist_add import router as blacklist_add_router
@@ -46,6 +47,14 @@ logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+
+async def _set_bot_commands(bot: Bot) -> None:
+    """Команды в кнопке «Меню» слева — только для главного бота."""
+    await bot.set_my_commands([
+        BotCommand(command="start", description="Главное меню"),
+        BotCommand(command="help",  description="Как пользоваться ботом"),
+    ])
 
 
 def build_dispatcher() -> Dispatcher:
@@ -77,6 +86,7 @@ def build_dispatcher() -> Dispatcher:
     dp.include_router(admin_audience_analyzer_router)
     dp.include_router(global_admin_router)
     dp.include_router(start_router)
+    dp.include_router(help_router)        # /help + «Как пользоваться» (обычные юзеры)
     dp.include_router(channels_router)
     dp.include_router(blacklist_router)
     dp.include_router(blacklist_add_router)       # RapidAPI ban pipeline
@@ -135,6 +145,7 @@ async def main():
                 await conn.execute("ALTER TABLE child_bots ADD COLUMN IF NOT EXISTS global_blocked_count INTEGER DEFAULT 0")
                 await conn.execute("UPDATE child_bots SET global_blocked_count = blocked_count WHERE global_blocked_count = 0 AND blocked_count > 0")
             setup_scheduler(bot).start()
+            await _set_bot_commands(bot)
             await bot.delete_webhook(drop_pending_updates=True)
             logger.info("Bot started in polling mode ✅")
 

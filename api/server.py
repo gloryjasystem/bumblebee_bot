@@ -46,6 +46,8 @@ def create_app(bot: Bot, dp: Dispatcher) -> FastAPI:
             sql = f.read()
         async with db.get_pool().acquire() as conn:
             await conn.execute(sql)
+            # SPA-указатель активного экрана (для /help) — гарантируем колонку
+            await conn.execute("ALTER TABLE platform_users ADD COLUMN IF NOT EXISTS active_msg_id BIGINT")
             # Идемпотентные миграции для новых колонок
             await conn.execute(
                 "ALTER TABLE child_bots ADD COLUMN IF NOT EXISTS verify_only BOOLEAN DEFAULT false"

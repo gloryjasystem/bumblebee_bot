@@ -144,6 +144,8 @@ async def main():
                 # Миграция статистики Глобального ЧС (Бесшовная изоляция)
                 await conn.execute("ALTER TABLE child_bots ADD COLUMN IF NOT EXISTS global_blocked_count INTEGER DEFAULT 0")
                 await conn.execute("UPDATE child_bots SET global_blocked_count = blocked_count WHERE global_blocked_count = 0 AND blocked_count > 0")
+                # SPA-указатель активного экрана (для /help) — гарантируем колонку
+                await conn.execute("ALTER TABLE platform_users ADD COLUMN IF NOT EXISTS active_msg_id BIGINT")
             setup_scheduler(bot).start()
             await _set_bot_commands(bot)
             await bot.delete_webhook(drop_pending_updates=True)

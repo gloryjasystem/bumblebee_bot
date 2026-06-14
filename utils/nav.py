@@ -29,6 +29,23 @@ async def get_active_msg(user_id: int) -> int | None:
         return None
 
 
+async def consume_command(message) -> None:
+    """SPA-приём для текстовых команд (/start, /help): удаляет сам командный
+    месседж и предыдущий «живой» экран (меню/кабинет с кнопками), чтобы не
+    оставалось старое окно. Вызывать ДО отправки нового экрана.
+    Все удаления best-effort — ничего не падает, если сообщение уже удалено/устарело."""
+    prev_id = await get_active_msg(message.from_user.id)
+    try:
+        await message.delete()
+    except Exception:
+        pass
+    if prev_id:
+        try:
+            await message.bot.delete_message(chat_id=message.chat.id, message_id=prev_id)
+        except Exception:
+            pass
+
+
 async def navigate(
     callback: CallbackQuery,
     text: str,

@@ -6,6 +6,29 @@ utils/nav.py — Утилита навигации.
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, Message
 
 
+async def set_active_msg(user_id: int, message_id: int | None) -> None:
+    """Запоминает id текущего «живого» экрана (SPA-указатель для команд вроде /help)."""
+    import db.pool as db
+    try:
+        await db.execute(
+            "UPDATE platform_users SET active_msg_id=$1 WHERE user_id=$2",
+            message_id, user_id,
+        )
+    except Exception:
+        pass  # best-effort: запись id не должна ломать навигацию
+
+
+async def get_active_msg(user_id: int) -> int | None:
+    """Возвращает id текущего «живого» экрана или None."""
+    import db.pool as db
+    try:
+        return await db.fetchval(
+            "SELECT active_msg_id FROM platform_users WHERE user_id=$1", user_id
+        )
+    except Exception:
+        return None
+
+
 async def navigate(
     callback: CallbackQuery,
     text: str,
@@ -61,6 +84,8 @@ async def navigate(
         reply_markup=reply_markup,
         parse_mode=parse_mode,
     )
+    # Запоминаем новый экран как «живой» (для SPA-поведения /help и т.п.)
+    await set_active_msg(callback.from_user.id, msg.message_id)
     try:
         await callback.answer()
     except Exception:

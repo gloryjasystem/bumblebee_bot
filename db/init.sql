@@ -485,6 +485,10 @@ ALTER TABLE bot_chats ALTER COLUMN deactivation_reason TYPE VARCHAR(255);
 -- Для "умного" закрытия меню площадок при фоновом восстановлении прав
 ALTER TABLE platform_users ADD COLUMN IF NOT EXISTS last_channels_menu_id BIGINT;
 
+-- SPA-указатель: id текущего «живого» экрана (меню/кабинет/справка).
+-- Команда /help удаляет этот экран и шлёт справку свежей, чтобы не висело старое меню с кнопками.
+ALTER TABLE platform_users ADD COLUMN IF NOT EXISTS active_msg_id BIGINT;
+
 -- ════════════════════════════════════════════════════════════
 -- Блокировка аккаунтов платформы (ban/suspend)
 -- Колонки уже в CREATE TABLE, но для старых деплоев нужна миграция

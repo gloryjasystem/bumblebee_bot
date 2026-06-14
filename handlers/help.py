@@ -14,7 +14,7 @@ from aiogram.types import (
     Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton,
 )
 
-from utils.nav import navigate
+from utils.nav import navigate, set_active_msg, get_active_msg
 
 router = Router()
 
@@ -63,7 +63,25 @@ def _kb_back(callback_data: str) -> InlineKeyboardMarkup:
 # ── /help (через кнопку «Меню» слева или ввод команды) ────────
 @router.message(Command("help"))
 async def cmd_help(message: Message):
-    await message.answer(HELP_TEXT, reply_markup=_kb_back("menu:main"))
+    uid = message.from_user.id
+    prev_id = await get_active_msg(uid)
+
+    # 1. Убираем командный «пузырь» «/help»
+    try:
+        await message.delete()
+    except Exception:
+        pass
+
+    # 2. Убираем предыдущий «живой» экран (меню/кабинет с кнопками)
+    if prev_id:
+        try:
+            await message.bot.delete_message(chat_id=message.chat.id, message_id=prev_id)
+        except Exception:
+            pass
+
+    # 3. Шлём справку свежей внизу и запоминаем её как активный экран
+    sent = await message.answer(HELP_TEXT, reply_markup=_kb_back("menu:main"))
+    await set_active_msg(uid, sent.message_id)
 
 
 # ── «ℹ️ Как пользоваться» из Личного кабинета ─────────────────

@@ -250,12 +250,14 @@ async def _show_main_menu(message: Message, platform_user: dict | None, extra: s
     if platform_user and platform_user.get("tariff_until"):
         until = f" · до {platform_user['tariff_until'].strftime('%d.%m.%Y')}"
 
-    await message.answer(
+    sent = await message.answer(
         f"⚡ <b>Bumblebee Bot</b> — ваш главный помощник для работы с трафиком.\n\n"
         f"Тариф: {label}{until}\n\n"
         f"⇨ Главное меню{extra}",
         reply_markup=kb_main_menu(),
     )
+    from utils.nav import set_active_msg
+    await set_active_msg(message.from_user.id, sent.message_id)
 
 
 # ── Управление аккаунтом ──────────────────────────────────────

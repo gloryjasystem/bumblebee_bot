@@ -135,6 +135,9 @@ async def cmd_admin(message: Message, state: FSMContext):
         return await message.answer("❌ Эта панель доступна только администраторам сети ботов.")
         
     await state.clear()
+    # SPA: убираем командный «пузырь» /admin и предыдущий экран с кнопками
+    from utils.nav import consume_command
+    await consume_command(message)
     await _show_admin_panel(message, role, owner_id, admin_id=message.from_user.id)
 
 async def _show_admin_panel(message_or_cb, role: str, owner_id: int, admin_id: int = None):
@@ -246,7 +249,9 @@ async def _show_admin_panel(message_or_cb, role: str, owner_id: int, admin_id: i
 
     markup = InlineKeyboardMarkup(inline_keyboard=kb)
     if isinstance(message_or_cb, Message):
-        await message_or_cb.answer(header, reply_markup=markup, parse_mode="HTML")
+        sent = await message_or_cb.answer(header, reply_markup=markup, parse_mode="HTML")
+        from utils.nav import set_active_msg
+        await set_active_msg(message_or_cb.from_user.id, sent.message_id)
     else:
         await navigate(message_or_cb, header, reply_markup=markup, parse_mode="HTML")
 

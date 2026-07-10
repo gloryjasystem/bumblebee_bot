@@ -1854,10 +1854,11 @@ async def _check_join_limit(
     return False
 
 
-async def _delayed_approve_join_request(bot: Bot, owner_id: int, chat_id: int, user, delay_min: int, invite_link_url: str | None, welcome: str | None):
-    """Фоновая задача для отложенного (или мгновенного) принятия заявки, чтобы не блокировать webhook."""
-    if delay_min > 0:
-        await asyncio.sleep(delay_min * 60)
+async def _delayed_approve_join_request(bot: Bot, owner_id: int, chat_id: int, user, delay_sec: int, invite_link_url: str | None, welcome: str | None):
+    """Фоновая задача для отложенного (или мгновенного) принятия заявки, чтобы не блокировать webhook.
+    delay_sec — задержка в СЕКУНДАХ (поддерживает значения < 60)."""
+    if delay_sec > 0:
+        await asyncio.sleep(delay_sec)
     try:
         await bot.approve_chat_join_request(chat_id, user.id)
         # Регистрируем в bot_users после одобрения
@@ -1885,14 +1886,21 @@ async def _delayed_approve_join_request(bot: Bot, owner_id: int, chat_id: int, u
         # Трекинг ссылки-приглашения
         if invite_link_url:
             await _track_invite_link(invite_link_url, user)
-        # Приветственное сообщение
+        # Приветственное сообщение — единый источник через _send_welcome:
+        # оно отправляет ПОЛНОЕ приветствие (с медиа/кнопками), само чистит капчу
+        # и защищено от дублей (см. _welcome_already_sent). Раньше здесь слался
+        # welcome_text ПРОСТЫМ текстом, а событие вступления затем присылало полное
+        # приветствие с медиа — отсюда «2 сообщения: одно с картинкой, другое без».
         try:
-            from handlers.captcha import cleanup_captcha_and_send_welcome
-            await cleanup_captcha_and_send_welcome(bot, chat_id, user.id)
-        except Exception:
-            pass
-        if welcome:
-            await _try_send_dm(bot, user.id, welcome)
+            settings_row = await db.fetchrow(
+                "SELECT * FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint AND is_active=true",
+                owner_id, chat_id,
+            )
+            if settings_row:
+                from handlers.join_requests import _send_welcome
+                await _send_welcome(bot, chat_id, user, dict(settings_row))
+        except Exception as _we:
+            logger.warning(f"delayed approve welcome error: {_we}")
     except Exception as e:
         logger.warning(f"delayed approve join request error: {e}")
 
@@ -1916,7 +1924,7 @@ async def _handle_join_request(bot: Bot, child_bot_id: int, event: ChatJoinReque
     # Получаем настройки площадки
     chat_settings = await db.fetchrow(
         """
-        SELECT autoaccept, autoaccept_delay, welcome_text,
+        SELECT autoaccept, autoaccept_delay, autoaccept_delay_sec, welcome_text,
                captcha_type, captcha_text, captcha_timer_min, captcha_emoji_set,
                captcha_buttons_raw, captcha_button_style,
                captcha_greet, captcha_accept_now, captcha_accept_all,
@@ -2069,9 +2077,10 @@ async def _handle_join_request(bot: Bot, child_bot_id: int, event: ChatJoinReque
 
     # ── АВТО-ПРИНЯТИЕ (только если капча выключена) ────────────
     autoaccept = chat_settings["autoaccept"]
-    delay      = chat_settings["autoaccept_delay"] or 0
+    from utils.timing import effective_delay_sec
+    delay_sec  = effective_delay_sec(chat_settings)
 
-    if autoaccept or delay > 0:
+    if autoaccept or delay_sec > 0:
         # Авто-принятие или отложенное принятие запускаем в фоне
         asyncio.create_task(
             _delayed_approve_join_request(
@@ -2079,7 +2088,7 @@ async def _handle_join_request(bot: Bot, child_bot_id: int, event: ChatJoinReque
                 owner_id=owner_id,
                 chat_id=chat_id,
                 user=user,
-                delay_min=delay if delay > 0 else 0,
+                delay_sec=delay_sec,
                 invite_link_url=invite_link_url,
                 welcome=chat_settings.get("welcome_text"),
             )

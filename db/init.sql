@@ -280,6 +280,34 @@ ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS farewell_buttons     JSONB;
 ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS farewell_preview     BOOLEAN DEFAULT FALSE;
 ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS farewell_timer       INTEGER DEFAULT 0;
 
+-- Задержка автопринятия в СЕКУНДАХ (даёт возможность указывать значения < 1 мин).
+-- Приоритетнее устаревшего autoaccept_delay (минуты). NULL = использовать старое поле × 60.
+ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS autoaccept_delay_sec INTEGER;
+UPDATE bot_chats SET autoaccept_delay_sec = COALESCE(autoaccept_delay, 0) * 60
+    WHERE autoaccept_delay_sec IS NULL;
+-- Указатель эхо-сообщения в редакторе шага цепочки приветствий
+ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS edit_wstep_mid INTEGER;
+
+-- Цепочка приветствий: дополнительные сообщения после базового приветствия,
+-- каждое со своей задержкой; шаг action='delete' удаляет ранее отправленные сообщения.
+CREATE TABLE IF NOT EXISTS welcome_steps (
+    id              BIGSERIAL   PRIMARY KEY,
+    owner_id        BIGINT      NOT NULL,
+    chat_id         BIGINT      NOT NULL,
+    step_order      INTEGER     NOT NULL DEFAULT 1,        -- порядок показа
+    delay_sec       INTEGER     NOT NULL DEFAULT 0,        -- задержка от вступления (сек)
+    action          VARCHAR(16) NOT NULL DEFAULT 'message', -- 'message' | 'delete'
+    text            TEXT,
+    media           TEXT,
+    media_type      VARCHAR(16),                            -- photo | video | animation | document
+    media_below     BOOLEAN     DEFAULT false,
+    buttons         JSONB,
+    preview         BOOLEAN     DEFAULT false,
+    self_delete_sec INTEGER     DEFAULT 0,                  -- авто-удаление этого сообщения (сек)
+    created_at      TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_welcome_steps_chat ON welcome_steps (owner_id, chat_id, step_order);
+
 ALTER TABLE invite_links ADD COLUMN IF NOT EXISTS males             INTEGER DEFAULT 0;
 ALTER TABLE invite_links ADD COLUMN IF NOT EXISTS females           INTEGER DEFAULT 0;
 ALTER TABLE invite_links ADD COLUMN IF NOT EXISTS rtl_count         INTEGER DEFAULT 0;   -- RTL-символы в имени

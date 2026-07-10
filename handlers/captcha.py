@@ -303,7 +303,12 @@ async def send_captcha(bot: Bot, event: ChatJoinRequest, settings_row: dict):
             await event.approve()
             from handlers.join_requests import _register_user, _send_welcome
             await _register_user(settings_row["owner_id"], event.chat.id, user)
-            await _send_welcome(bot, event.chat.id, user, settings_row)
+            # Берём ПОЛНЫЕ настройки из БД (settings_row здесь урезанный settings_for_captcha —
+            # без chat_title/welcome_media/кнопок), чтобы приветствие и цепочка отработали корректно.
+            full_row = await db.fetchrow(
+                "SELECT * FROM bot_chats WHERE chat_id=$1::bigint AND is_active=true", event.chat.id
+            )
+            await _send_welcome(bot, event.chat.id, user, dict(full_row) if full_row else settings_row)
         else:
             logger.info(f"[CAPTCHA] Both bots failed DM for user={user.id} — leaving pending for manual review")
 
@@ -656,7 +661,8 @@ async def _approve_user(
             await callback.answer("✅ Отлично!")
 
         else:
-            delay = settings_row.get("autoaccept_delay") or 0 if settings_row else 0
+            from utils.timing import effective_delay_sec
+            delay = effective_delay_sec(settings_row) if settings_row else 0
             # Автопринятие выключено — капча пройдена, но заявка ждёт ручного одобрения (или отложенного)
             try:
                 await db.execute(
@@ -694,12 +700,12 @@ async def _approve_user(
                         owner_id=settings_row["owner_id"],
                         chat_id=chat_id,
                         user=callback.from_user,
-                        delay_min=delay,
+                        delay_sec=delay,
                         invite_link_url=inv_url,
                         welcome=settings_row.get("welcome_text"),
                     )
                 )
-                logger.info(f"[CAPTCHA] Passed (delay={delay}) user={callback.from_user.id} chat={chat_id} — queued delayed approval")
+                logger.info(f"[CAPTCHA] Passed (delay={delay}s) user={callback.from_user.id} chat={chat_id} — queued delayed approval")
             else:
                 logger.info(f"[CAPTCHA] Passed (autoaccept=off) user={callback.from_user.id} chat={chat_id} — waiting for admin")
 
@@ -839,7 +845,8 @@ async def _approve_user_from_message(
         logger.info(f"[CAPTCHA REPLY] Passed join_request (autoaccept=on): user={user_id} chat={chat_id}")
 
     else:
-        delay = settings_row.get("autoaccept_delay") or 0 if settings_row else 0
+        from utils.timing import effective_delay_sec
+        delay = effective_delay_sec(settings_row) if settings_row else 0
         # Автопринятие выключено — капча пройдена, ждём ручного одобрения (или отложенного)
         if settings_row:
             try:
@@ -885,12 +892,12 @@ async def _approve_user_from_message(
                     owner_id=settings_row["owner_id"],
                     chat_id=chat_id,
                     user=message.from_user,
-                    delay_min=delay,
+                    delay_sec=delay,
                     invite_link_url=inv_url,
                     welcome=settings_row.get("welcome_text"),
                 )
             )
-            logger.info(f"[CAPTCHA REPLY] Passed (delay={delay}): user={user_id} chat={chat_id} — queued delayed approval")
+            logger.info(f"[CAPTCHA REPLY] Passed (delay={delay}s): user={user_id} chat={chat_id} — queued delayed approval")
         else:
             logger.info(f"[CAPTCHA REPLY] Passed join_request (autoaccept=off): user={user_id} chat={chat_id} — waiting for admin")
 
@@ -966,25 +973,18 @@ def _split_emojis(s: str) -> list[str]:
 async def cleanup_captcha_and_send_welcome(bot: Bot, chat_id: int, user_id: int):
     """
     Called when a user actually enters the chat.
-    Deletes the original long captcha message and sends a short self-deleting welcome.
+    Удаляет исходное длинное сообщение капчи. НЕ отправляет своё «Добро пожаловать»:
+    настроенное приветствие (_send_welcome) идёт следом и должно быть ЕДИНСТВЕННЫМ
+    сообщением — иначе получалось два («одно с картинкой, другое без»).
     """
     key = (chat_id, user_id)
     msg_id = _captcha_msg_ids.pop(key, None)
-    
+
     if msg_id:
         try:
             await bot.delete_message(user_id, msg_id)
         except Exception as e:
             logger.debug(f"[CAPTCHA CLEANUP] Could not delete msg {msg_id}: {e}")
-            
-        try:
-            welcome_msg = await bot.send_message(
-                user_id, 
-                "✅ Капча пройдена! Добро пожаловать."
-            )
-            asyncio.create_task(_delete_temp_welcome(bot, user_id, welcome_msg.message_id, 60))
-        except Exception as e:
-            logger.debug(f"[CAPTCHA CLEANUP] Could not send welcome: {e}")
 
 
 async def _delete_temp_welcome(bot: Bot, chat_id: int, msg_id: int, delay: int):

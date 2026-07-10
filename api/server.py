@@ -95,6 +95,11 @@ def create_app(bot: Bot, dp: Dispatcher) -> FastAPI:
                 "ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS feedback_lang        TEXT    DEFAULT 'ru'",
                 "ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS edit_welcome_mid     INTEGER",
                 "ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS edit_farewell_mid    INTEGER",
+                # Задержка автопринятия в секундах (значения < 1 мин + своё число)
+                "ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS autoaccept_delay_sec INTEGER",
+                "UPDATE bot_chats SET autoaccept_delay_sec = COALESCE(autoaccept_delay,0)*60 WHERE autoaccept_delay_sec IS NULL",
+                # Указатель шага-редактора цепочки приветствий (эхо-сообщение)
+                "ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS edit_wstep_mid       INTEGER",
                 # Миграция captcha_lang: если колонка была BOOLEAN — конвертируем в TEXT
                 "ALTER TABLE bot_chats ALTER COLUMN captcha_lang TYPE TEXT USING CASE WHEN captcha_lang::text = 'true' THEN 'ru' ELSE 'off' END",
                 # Миграция captcha_button_style: старые значения 1x1/1x2/2x2 → inline
@@ -155,6 +160,29 @@ def create_app(bot: Bot, dp: Dispatcher) -> FastAPI:
                     UNIQUE (owner_id, target_user_id)
                 )
             """)
+            # Цепочка приветствий (доп. сообщения с задержками + шаг-удаление)
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS welcome_steps (
+                    id              BIGSERIAL   PRIMARY KEY,
+                    owner_id        BIGINT      NOT NULL,
+                    chat_id         BIGINT      NOT NULL,
+                    step_order      INTEGER     NOT NULL DEFAULT 1,
+                    delay_sec       INTEGER     NOT NULL DEFAULT 0,
+                    action          VARCHAR(16) NOT NULL DEFAULT 'message',
+                    text            TEXT,
+                    media           TEXT,
+                    media_type      VARCHAR(16),
+                    media_below     BOOLEAN     DEFAULT false,
+                    buttons         JSONB,
+                    preview         BOOLEAN     DEFAULT false,
+                    self_delete_sec INTEGER     DEFAULT 0,
+                    created_at      TIMESTAMPTZ DEFAULT now()
+                )
+            """)
+            await conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_welcome_steps_chat "
+                "ON welcome_steps (owner_id, chat_id, step_order)"
+            )
             # ── Миграция ga_selected_bots: admin_id → owner_id (общая выборка) ──
             try:
                 col_exists = await conn.fetchval(

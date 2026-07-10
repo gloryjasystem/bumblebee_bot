@@ -120,6 +120,7 @@ async def _show_ch_messages(callback: CallbackQuery, chat_id: int, owner_id: int
         "</blockquote>\n\n"
         "Выберите действие ⬇️",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="⛓ Цепочка сообщений", callback_data=f"wseq:{chat_id}")],
             [InlineKeyboardButton(text=captcha_label,  callback_data=f"ch_captcha:{chat_id}")],
             [
                 InlineKeyboardButton(text="👋 Приветствие", callback_data=f"welcome_set:{chat_id}"),

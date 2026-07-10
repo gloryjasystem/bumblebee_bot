@@ -4,6 +4,7 @@ handlers/join_requests.py — Обработка ChatJoinRequest и ChatMemberUp
 """
 import asyncio
 import logging
+import time
 from aiogram import Router, Bot
 from aiogram.types import ChatJoinRequest, ChatMemberUpdated
 
@@ -13,6 +14,32 @@ from services.security import detect_rtl, detect_hieroglyph
 
 logger = logging.getLogger(__name__)
 router = Router()
+
+# ── Дедупликация приветствия ───────────────────────────────────
+# Приветствие может быть вызвано из нескольких путей почти одновременно:
+#   1) в момент одобрения заявки (_delayed_approve_join_request / on_req_confirm)
+#   2) когда пользователь реально вступил (chat_member → _handle_chat_member)
+# Оба пути ведут к _send_welcome. Чтобы пользователь получил РОВНО ОДНО
+# приветствие, запоминаем (chat_id, user_id) на короткое окно и глушим повтор.
+_recent_welcome: dict[tuple[int, int], float] = {}
+_WELCOME_DEDUP_SEC = 180  # окно подавления дублей (сек); дольше задержки approve→join
+
+
+def _welcome_already_sent(chat_id: int, user_id: int) -> bool:
+    """True, если приветствие этому пользователю уже отправлялось в пределах окна.
+    Побочный эффект: помечает пару как «отправлено сейчас» и чистит устаревшие записи."""
+    now = time.monotonic()
+    # Чистим старые записи, чтобы словарь не рос бесконечно
+    if len(_recent_welcome) > 512:
+        for k, ts in list(_recent_welcome.items()):
+            if now - ts > _WELCOME_DEDUP_SEC:
+                _recent_welcome.pop(k, None)
+    key = (chat_id, user_id)
+    last = _recent_welcome.get(key)
+    if last is not None and now - last < _WELCOME_DEDUP_SEC:
+        return True
+    _recent_welcome[key] = now
+    return False
 
 
 async def _get_owner(chat_id: int) -> dict | None:
@@ -183,8 +210,11 @@ async def on_join_request(event: ChatJoinRequest, bot: Bot):
 
     # link_auto_accept == "base" или ссылка неизвестна → стандартная логика бота
     # 7. Автопринятие / капча / отложенное / ручное
-    if settings_row["autoaccept"]:
-        delay = settings_row["autoaccept_delay"] or 0
+    # ВАЖНО: UI отложенного принятия пишет autoaccept=false + delay>0, поэтому
+    # гейтить только по autoaccept нельзя — иначе задержка игнорируется.
+    from utils.timing import effective_delay_sec
+    delay = effective_delay_sec(settings_row)
+    if settings_row["autoaccept"] or delay > 0:
         if delay > 0:
             # Сохраняем заявку и обрабатываем в фоне через asyncio.sleep
             await _save_pending(owner_id, event.chat.id, user)
@@ -342,9 +372,9 @@ async def _save_pending(owner_id: int, chat_id: int, user):
     )
 
 
-async def _delayed_approve(event: ChatJoinRequest, owner_id: int, delay_minutes: int):
-    """Принимает заявку через delay_minutes минут (в фоне)."""
-    await asyncio.sleep(delay_minutes * 60)
+async def _delayed_approve(event: ChatJoinRequest, owner_id: int, delay_sec: int):
+    """Принимает заявку через delay_sec секунд (в фоне)."""
+    await asyncio.sleep(delay_sec)
     try:
         await event.approve()
         await db.execute(
@@ -492,7 +522,13 @@ async def _register_user(owner_id: int, chat_id: int, user,
 
 
 async def _send_welcome(bot: Bot, chat_id: int, user, settings_row: dict):
-    """Отправляет приветствие новому пользователю в личку."""
+    """Отправляет приветствие новому пользователю в личку.
+    Идемпотентна: повторный вызов для той же пары (chat_id, user_id) в пределах
+    короткого окна игнорируется — так гарантируется РОВНО ОДНО приветствие,
+    даже если сработали оба пути (одобрение заявки и событие вступления)."""
+    if _welcome_already_sent(chat_id, user.id):
+        logger.info(f"[WELCOME] Пропуск дубля приветствия user={user.id} chat={chat_id}")
+        return
     try:
         from handlers.captcha import cleanup_captcha_and_send_welcome
         await cleanup_captcha_and_send_welcome(bot, chat_id, user.id)
@@ -576,8 +612,127 @@ async def _send_welcome(bot: Bot, chat_id: int, user, settings_row: dict):
             for sent in sent_msgs:
                 asyncio.create_task(_delete_later(bot, user.id, sent.message_id, timer_val))
 
+        # Запускаем цепочку доп. приветствий (если настроена)
+        try:
+            base_ids = [m.message_id for m in sent_msgs if m]
+            await _schedule_welcome_sequence(
+                bot, chat_id, user,
+                settings_row.get("owner_id"),
+                settings_row.get("chat_title", ""),
+                base_ids,
+            )
+        except Exception as _se:
+            logger.debug(f"[WSEQ] schedule failed for user {user.id}: {_se}")
+
     except Exception as e:
         logger.debug(f"[WELCOME] Failed to send to user {user.id}: {e}")
+
+
+# ── Цепочка приветствий (доп. сообщения с задержками + шаг-удаление) ──
+# Сообщения, отправленные в рамках цепочки для (chat_id, user_id) — чтобы
+# шаг action='delete' мог их удалить («Удаляю ссылку»). Ключ авто-очищается.
+_welcome_seq_msgs: dict[tuple[int, int], list[int]] = {}
+
+
+def _fill_msg_vars(text: str, user, chat_title: str) -> str:
+    """Подставляет переменные {name}/{allname}/{username}/{chat}/{day}."""
+    if not text:
+        return ""
+    return (text
+        .replace("{name}", user.first_name or "Пользователь")
+        .replace("{allname}", f"{user.first_name or ''} {getattr(user, 'last_name', '') or ''}".strip())
+        .replace("{username}", f"@{user.username}" if getattr(user, "username", None) else "")
+        .replace("{chat}", chat_title or "")
+        .replace("{day}", __import__("datetime").date.today().strftime("%d.%m.%Y"))
+    )
+
+
+async def _schedule_welcome_sequence(bot: Bot, chat_id: int, user, owner_id, chat_title: str, base_msg_ids: list[int]):
+    """Планирует отправку дополнительных шагов цепочки приветствий."""
+    if not owner_id:
+        return
+    steps = await db.fetch(
+        "SELECT * FROM welcome_steps WHERE owner_id=$1 AND chat_id=$2::bigint "
+        "ORDER BY step_order ASC, delay_sec ASC, id ASC",
+        owner_id, chat_id,
+    )
+    if not steps:
+        return
+    key = (chat_id, user.id)
+    # База (№1) — первые сообщения цепочки, чтобы шаг-удаление мог их снять
+    _welcome_seq_msgs[key] = list(base_msg_ids)
+    max_delay = 0
+    for step in steps:
+        max_delay = max(max_delay, int(step["delay_sec"] or 0) + int(step["self_delete_sec"] or 0))
+        asyncio.create_task(_welcome_step_task(bot, chat_id, user, chat_title, dict(step)))
+    # Гарантированная очистка ключа из памяти после завершения цепочки
+    asyncio.create_task(_prune_seq_key(key, max_delay + 300))
+
+
+async def _prune_seq_key(key: tuple[int, int], after_sec: int):
+    await asyncio.sleep(max(1, after_sec))
+    _welcome_seq_msgs.pop(key, None)
+
+
+async def _welcome_step_task(bot: Bot, chat_id: int, user, chat_title: str, step: dict):
+    """Выполняет один шаг цепочки: сообщение или удаление ранее отправленных."""
+    delay = int(step.get("delay_sec") or 0)
+    if delay > 0:
+        await asyncio.sleep(delay)
+    key = (chat_id, user.id)
+
+    # ── Шаг «удалить» — снимаем все ранее отправленные сообщения цепочки ──
+    if (step.get("action") or "message") == "delete":
+        for mid in list(_welcome_seq_msgs.get(key, [])):
+            try:
+                await bot.delete_message(user.id, mid)
+            except Exception:
+                pass
+        _welcome_seq_msgs[key] = []
+        return
+
+    # ── Шаг «сообщение» ──
+    text = _fill_msg_vars(step.get("text") or "", user, chat_title)
+    media_fid = step.get("media")
+    media_type = step.get("media_type")
+    media_below = bool(step.get("media_below", False))
+    self_del = int(step.get("self_delete_sec") or 0)
+
+    if not text and not media_fid:
+        return
+
+    from utils.keyboard import build_inline_keyboard
+    kb = build_inline_keyboard(step.get("buttons"))
+
+    try:
+        if media_fid:
+            kwargs = {
+                "caption": text or None,
+                "parse_mode": "HTML",
+                "reply_markup": kb,
+            }
+            try:
+                if media_type == "photo":
+                    m = await bot.send_photo(user.id, media_fid, show_caption_above_media=media_below, **kwargs)
+                elif media_type == "video":
+                    m = await bot.send_video(user.id, media_fid, show_caption_above_media=media_below, **kwargs)
+                elif media_type == "animation":
+                    m = await bot.send_animation(user.id, media_fid, show_caption_above_media=media_below, **kwargs)
+                else:
+                    m = await bot.send_document(user.id, media_fid, **kwargs)
+            except Exception:
+                # Фоллбэк на текст, если медиа не отправилось
+                m = await bot.send_message(user.id, text or "—", parse_mode="HTML", reply_markup=kb)
+        else:
+            m = await bot.send_message(user.id, text, parse_mode="HTML", reply_markup=kb)
+
+        # Трекинг для будущего шага-удаления
+        _welcome_seq_msgs.setdefault(key, []).append(m.message_id)
+        # Авто-удаление самого шага
+        if self_del > 0:
+            asyncio.create_task(_delete_later(bot, user.id, m.message_id, self_del))
+    except Exception as e:
+        logger.debug(f"[WSEQ] step send failed for user {user.id}: {e}")
 
 
 async def _delete_later(bot: Bot, chat_id: int, message_id: int, delay_sec: int):

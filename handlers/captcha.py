@@ -303,6 +303,8 @@ async def send_captcha(bot: Bot, event: ChatJoinRequest, settings_row: dict):
             await event.approve()
             from handlers.join_requests import _register_user, _send_welcome
             await _register_user(settings_row["owner_id"], event.chat.id, user)
+            # Заявка принята автопринятием — снимаем её из очереди.
+            await _mark_request_approved(settings_row["owner_id"], event.chat.id, user.id)
             # Берём ПОЛНЫЕ настройки из БД (settings_row здесь урезанный settings_for_captcha —
             # без chat_title/welcome_media/кнопок), чтобы приветствие и цепочка отработали корректно.
             full_row = await db.fetchrow(
@@ -539,6 +541,19 @@ async def _edit_captcha_message(message: Message, text: str):
         import logging
         logging.getLogger(__name__).debug(f"Failed to edit captcha message: {e}")
 
+async def _mark_request_approved(owner_id: int, chat_id: int, user_id: int):
+    """Снимает заявку из очереди после автопринятия капчи (статус 'approved').
+    Без этого счётчик «Заявок в очереди» остаётся ненулевым, хотя заявка уже принята."""
+    try:
+        await db.execute(
+            "UPDATE join_requests SET status='approved', resolved_at=now() "
+            "WHERE owner_id=$1 AND chat_id=$2 AND user_id=$3",
+            owner_id, chat_id, user_id,
+        )
+    except Exception as ex:
+        logger.debug(f"join_requests approved update failed: {ex}")
+
+
 async def _approve_user(
     callback: CallbackQuery, bot: Bot,
     chat_id: int, user_id: int, success: bool,
@@ -621,8 +636,10 @@ async def _approve_user(
                 return
 
             if settings_row:
-                from handlers.join_requests import _register_user, _send_welcome
+                from handlers.join_requests import _register_user
                 await _register_user(settings_row["owner_id"], chat_id, callback.from_user)
+                # Заявка принята автопринятием — снимаем её из очереди.
+                await _mark_request_approved(settings_row["owner_id"], chat_id, callback.from_user.id)
 
                 try:
                     await db.execute(
@@ -655,8 +672,7 @@ async def _approve_user(
             await _edit_captcha_message(
                 callback.message,
                 "✅ Капча пройдена!\n\n"
-                "⏳ Ваша заявка на вступление отправлена администратору.\n"
-                "Ожидайте подтверждения."
+                "🎉 Вы приняты в канал!"
             )
             await callback.answer("✅ Отлично!")
 
@@ -821,8 +837,10 @@ async def _approve_user_from_message(
             return
 
         if settings_row:
-            from handlers.join_requests import _register_user, _send_welcome
+            from handlers.join_requests import _register_user
             await _register_user(settings_row["owner_id"], chat_id, message.from_user)
+            # Заявка принята автопринятием — снимаем её из очереди.
+            await _mark_request_approved(settings_row["owner_id"], chat_id, message.from_user.id)
 
             try:
                 await db.execute(

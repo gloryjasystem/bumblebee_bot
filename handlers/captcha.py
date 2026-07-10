@@ -81,6 +81,12 @@ def _parse_captcha_buttons(raw: str) -> list[tuple[str, str | None]]:
 # Хранилище pending-заявок: {(chat_id, user_id): ChatJoinRequest}
 _pending: dict[tuple[int, int], ChatJoinRequest] = {}
 
+# Владелец площадки, которому принадлежит pending-капча: {(chat_id, user_id): owner_id}.
+# КРИТИЧНО: один и тот же канал может быть подключён к ботам РАЗНЫХ владельцев, и тогда
+# запрос настроек «WHERE chat_id=...» без owner_id вернёт ЧУЖУЮ строку (с чужим autoaccept).
+# Поэтому при прохождении капчи настройки перечитываем строго по этому owner_id.
+_pending_owner: dict[tuple[int, int], int] = {}
+
 # Хранилище правильных ответов для рандомной капчи: {(chat_id, user_id): correct_emoji}
 _expected: dict[tuple[int, int], str] = {}
 
@@ -115,6 +121,10 @@ async def send_captcha(bot: Bot, event: ChatJoinRequest, settings_row: dict):
     user = event.from_user
     key  = (event.chat.id, user.id)
     _pending[key] = event
+    # Запоминаем владельца этой площадки — чтобы при прохождении капчи перечитать
+    # настройки строго по нему (канал может быть подключён к ботам разных владельцев).
+    if settings_row.get("owner_id") is not None:
+        _pending_owner[key] = settings_row["owner_id"]
     # Сохраняем invite_link_url из settings (fallback если Telegram не шлёт в событии)
     inv_url = settings_row.get("invite_link_url")
     if inv_url:
@@ -199,6 +209,7 @@ async def send_captcha(bot: Bot, event: ChatJoinRequest, settings_row: dict):
         # Неизвестный тип капчи — безопасный fallback: не отправляем, заявка в очередь
         logger.warning(f"[CAPTCHA] Unknown captcha_type={settings_row.get('captcha_type')!r} for chat {event.chat.id} — skipping")
         _pending.pop(key, None)
+        _pending_owner.pop(key, None)
         return
 
     captcha_media = settings_row.get("captcha_media")
@@ -298,6 +309,7 @@ async def send_captcha(bot: Bot, event: ChatJoinRequest, settings_row: dict):
             logger.error(f"[CAPTCHA] Main bot fallback also failed for user={user.id}: {fb_e}")
         # Оба бота не смогли — очищаем pending и применяем autoaccept-логику
         _pending.pop(key, None)
+        _pending_owner.pop(key, None)
         _expected.pop(key, None)
         if settings_row.get("autoaccept"):
             await event.approve()
@@ -307,9 +319,7 @@ async def send_captcha(bot: Bot, event: ChatJoinRequest, settings_row: dict):
             await _mark_request_approved(settings_row["owner_id"], event.chat.id, user.id)
             # Берём ПОЛНЫЕ настройки из БД (settings_row здесь урезанный settings_for_captcha —
             # без chat_title/welcome_media/кнопок), чтобы приветствие и цепочка отработали корректно.
-            full_row = await db.fetchrow(
-                "SELECT * FROM bot_chats WHERE chat_id=$1::bigint AND is_active=true", event.chat.id
-            )
+            full_row = await _fetch_chat_settings(event.chat.id, settings_row.get("owner_id"))
             await _send_welcome(bot, event.chat.id, user, dict(full_row) if full_row else settings_row)
         else:
             logger.info(f"[CAPTCHA] Both bots failed DM for user={user.id} — leaving pending for manual review")
@@ -541,6 +551,22 @@ async def _edit_captcha_message(message: Message, text: str):
         import logging
         logging.getLogger(__name__).debug(f"Failed to edit captcha message: {e}")
 
+async def _fetch_chat_settings(chat_id: int, owner_id: int | None):
+    """Настройки площадки. Если известен owner_id — фильтруем строго по нему: один и тот же
+    канал бывает подключён к ботам РАЗНЫХ владельцев, и без owner_id выбралась бы чужая строка
+    (с чужим autoaccept/captcha). Fallback без owner — только если по owner ничего не нашли."""
+    if owner_id is not None:
+        row = await db.fetchrow(
+            "SELECT * FROM bot_chats WHERE chat_id=$1::bigint AND owner_id=$2 AND is_active=true",
+            chat_id, owner_id,
+        )
+        if row:
+            return row
+    return await db.fetchrow(
+        "SELECT * FROM bot_chats WHERE chat_id=$1::bigint AND is_active=true", chat_id,
+    )
+
+
 async def _mark_request_approved(owner_id: int, chat_id: int, user_id: int):
     """Снимает заявку из очереди после автопринятия капчи (статус 'approved').
     Без этого счётчик «Заявок в очереди» остаётся ненулевым, хотя заявка уже принята."""
@@ -561,6 +587,7 @@ async def _approve_user(
     """Обработка результата капчи при нажатии inline-кнопки (CallbackQuery)."""
     key   = (chat_id, user_id)
     event = _pending.pop(key, None)
+    owner_hint = _pending_owner.pop(key, None)
 
     if not event:
         # ── Групповой режим (пользователь вступил через обычную ссылку) ──
@@ -619,9 +646,7 @@ async def _approve_user(
         return
 
     if success:
-        settings_row = await db.fetchrow(
-            "SELECT * FROM bot_chats WHERE chat_id=$1::bigint AND is_active=true", chat_id
-        )
+        settings_row = await _fetch_chat_settings(chat_id, owner_hint)
         autoaccept = settings_row.get("autoaccept") if settings_row else True
 
         if autoaccept:
@@ -746,9 +771,7 @@ async def _approve_user(
             await event.decline()
         except Exception:
             pass
-        settings_row = await db.fetchrow(
-            "SELECT owner_id FROM bot_chats WHERE chat_id=$1::bigint AND is_active=true", chat_id
-        )
+        settings_row = await _fetch_chat_settings(chat_id, owner_hint)
         if settings_row:
             try:
                 await db.execute(
@@ -772,6 +795,7 @@ async def _approve_user_from_message(
     """Обработка результата капчи при нажатии Reply-кнопки (Message)."""
     key   = (chat_id, user_id)
     event = _pending.pop(key, None)
+    owner_hint = _pending_owner.pop(key, None)
 
     # Клавиатура убирается при финальной отправке ответа
 
@@ -813,9 +837,7 @@ async def _approve_user_from_message(
         return
 
     # ── Join-request режим ──
-    settings_row = await db.fetchrow(
-        "SELECT * FROM bot_chats WHERE chat_id=$1::bigint AND is_active=true", chat_id
-    )
+    settings_row = await _fetch_chat_settings(chat_id, owner_hint)
     autoaccept = settings_row.get("autoaccept") if settings_row else True
 
     if autoaccept:
@@ -931,6 +953,7 @@ async def _captcha_timeout(
     key = (event.chat.id, event.from_user.id)
     if key in _pending:
         _pending.pop(key)
+        _pending_owner.pop(key, None)
         _expected.pop(key, None)
         try:
             await event.decline()

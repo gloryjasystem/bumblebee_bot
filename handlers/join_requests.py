@@ -48,7 +48,10 @@ async def _get_owner(chat_id: int) -> dict | None:
     row = await db.fetchrow(
         """
         WITH TargetBot AS (
-            SELECT child_bot_id FROM bot_chats WHERE chat_id=$1 LIMIT 1
+            -- Только chat_id (главный бот как админ канала). Канал может быть у нескольких
+            -- владельцев → берём ДЕТЕРМИНИРОВАННО старейшую строку, а не произвольную.
+            SELECT child_bot_id FROM bot_chats WHERE chat_id=$1
+            ORDER BY added_at ASC, id ASC LIMIT 1
         ),
         RankedChats AS (
             SELECT bc.*,
@@ -577,7 +580,9 @@ async def _send_welcome(bot: Bot, chat_id: int, user, settings_row: dict):
                 elif media_type == "animation":
                     return await bot.send_animation(user.id, fid, **kwargs)
                 else:
-                    return await bot.send_document(user.id, fid, **kwargs)
+                    # send_document не принимает show_caption_above_media — убираем только для него
+                    doc_kwargs = {k: v for k, v in kwargs.items() if k != "show_caption_above_media"}
+                    return await bot.send_document(user.id, fid, **doc_kwargs)
             
             try:
                 m = await send_wl(media_fid)
@@ -786,7 +791,9 @@ async def _send_farewell(bot: Bot, chat_id: int, user, settings_row: dict):
                 elif farewell_media_type == "animation":
                     return await bot.send_animation(user.id, fid, **kwargs)
                 else:
-                    return await bot.send_document(user.id, fid, **kwargs)
+                    # send_document не принимает show_caption_above_media — убираем только для него
+                    doc_kwargs = {k: v for k, v in kwargs.items() if k != "show_caption_above_media"}
+                    return await bot.send_document(user.id, fid, **doc_kwargs)
                     
             try:
                 m = await send_fw(farewell_media_fid)

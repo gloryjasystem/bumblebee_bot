@@ -552,19 +552,10 @@ async def _edit_captcha_message(message: Message, text: str):
         logging.getLogger(__name__).debug(f"Failed to edit captcha message: {e}")
 
 async def _fetch_chat_settings(chat_id: int, owner_id: int | None):
-    """Настройки площадки. Если известен owner_id — фильтруем строго по нему: один и тот же
-    канал бывает подключён к ботам РАЗНЫХ владельцев, и без owner_id выбралась бы чужая строка
-    (с чужим autoaccept/captcha). Fallback без owner — только если по owner ничего не нашли."""
-    if owner_id is not None:
-        row = await db.fetchrow(
-            "SELECT * FROM bot_chats WHERE chat_id=$1::bigint AND owner_id=$2 AND is_active=true",
-            chat_id, owner_id,
-        )
-        if row:
-            return row
-    return await db.fetchrow(
-        "SELECT * FROM bot_chats WHERE chat_id=$1::bigint AND is_active=true", chat_id,
-    )
+    """Настройки площадки строго по владельцу (иначе для канала у нескольких владельцев
+    выбралась бы чужая строка). Делегирует единой точке резолва db.channels.get_channel."""
+    from db.channels import get_channel
+    return await get_channel(chat_id, owner_id=owner_id)
 
 
 async def _mark_request_approved(owner_id: int, chat_id: int, user_id: int):

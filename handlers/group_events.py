@@ -29,11 +29,11 @@ async def on_group_message(message: Message, bot: Bot):
     chat_id = message.chat.id
     user_id = message.from_user.id
 
-    # Получаем настройки площадки
-    settings = await db.fetchrow(
-        "SELECT * FROM bot_chats WHERE chat_id=$1::bigint AND is_active=true",
-        chat_id,
-    )
+    # Получаем настройки площадки через единую точку резолва.
+    # Здесь известен только chat_id (главный бот в группе) — get_channel выберет строку
+    # детерминированно и залогирует, если группа заведена у нескольких владельцев.
+    from db.channels import get_channel
+    settings = await get_channel(chat_id)
     if not settings:
         return
 

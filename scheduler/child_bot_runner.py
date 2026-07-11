@@ -1602,6 +1602,83 @@ async def _handle_my_chat_member(
 
     # ── Дальше new_status in ("administrator", "creator") ────────────────────
 
+    # ── Страж «один канал — один бот» ────────────────────────────────────────
+    # Если этот канал/группа уже закреплён за ДРУГИМ дочерним ботом (активен ИЛИ
+    # бот всё ещё в админах, но без части прав — reason='perm:…'), второй бот
+    # подключать НЕЛЬЗЯ: два поллера на одном канале → двойная капча/приветствие
+    # и гонки при одобрении заявок. Освобождение происходит автоматически, когда
+    # старого бота УБИРАЮТ из канала (reason='kicked'/'left', is_active=false).
+    # Свой же бот себя не блокирует (child_bot_id <> $2).
+    occupied = await db.fetchrow(
+        """
+        SELECT cb.bot_username, cb.id AS holder_bot_id
+        FROM bot_chats bc
+        JOIN child_bots cb ON cb.id = bc.child_bot_id
+        WHERE bc.chat_id = $1
+          AND bc.child_bot_id <> $2
+          AND (bc.is_active = true OR bc.deactivation_reason LIKE 'perm:%')
+        LIMIT 1
+        """,
+        chat.id, child_bot_id,
+    )
+    if occupied:
+        holder_username = occupied["bot_username"]
+        logger.warning(
+            f"[MCM] COLLISION: chat={chat.id} уже закреплён за @{holder_username} "
+            f"(id={occupied['holder_bot_id']}); отклоняю привязку @{bot_username} "
+            f"(id={child_bot_id}) — бот покидает канал."
+        )
+        # Добавляемый бот сам выходит — двух-ботового состояния не возникает.
+        try:
+            await bot.leave_chat(chat.id)
+        except Exception as _e:
+            logger.debug(f"[MCM] collision leave_chat failed: {_e}")
+        # Уведомляем владельца (стиль как у уведомления о нехватке прав).
+        if _main_bot:
+            try:
+                from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+                chat_username = getattr(chat, "username", None)
+                if chat_username:
+                    chat_link = f'<a href="https://t.me/{chat_username}">{chat_title}</a>'
+                else:
+                    chat_link = f"<b>{chat_title}</b>"
+                kb = InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="🔙 К списку площадок", callback_data=f"bot_chats_list:{child_bot_id}")],
+                ])
+                msg_text = (
+                    f"❌ Канал/группа {chat_link} уже подключён к боту "
+                    f"<b>@{holder_username}</b>.\n\n"
+                    f"<b>Один канал — один бот.</b> Чтобы подключить сюда "
+                    f"@{bot_username}, сначала удалите @{holder_username} из "
+                    f"администраторов этого канала, затем добавьте @{bot_username} заново."
+                )
+                last_menu_id = await db.fetchval(
+                    "SELECT last_channels_menu_id FROM platform_users WHERE user_id=$1", owner_id
+                )
+                edited = False
+                if last_menu_id:
+                    try:
+                        await _main_bot.edit_message_text(
+                            chat_id=owner_id, message_id=last_menu_id,
+                            text=msg_text, parse_mode="HTML",
+                            disable_web_page_preview=True, reply_markup=kb,
+                        )
+                        edited = True
+                    except Exception:
+                        pass
+                if not edited:
+                    sent = await _main_bot.send_message(
+                        owner_id, msg_text, parse_mode="HTML",
+                        disable_web_page_preview=True, reply_markup=kb,
+                    )
+                    await db.execute(
+                        "UPDATE platform_users SET last_channels_menu_id=$1 WHERE user_id=$2",
+                        sent.message_id, owner_id,
+                    )
+            except Exception as _e:
+                logger.debug(f"[MCM] collision notify owner failed: {_e}")
+        return
+
     # Шаг 1 (Anti-Spam): from_user добавил бота — проверяем, наш ли он клиент.
     # Исключение: если is_active уже false в БД (бот возвращается в знакомый чат),
     # то владелец уже прошёл проверку — пропускаем anti-spam.

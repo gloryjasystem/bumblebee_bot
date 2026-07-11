@@ -1006,6 +1006,36 @@ async def on_chat_verify_input(message: Message, state: FSMContext, platform_use
         await state.clear()
         return
 
+    # ── Страж «один канал — один бот» ──────────────────────────────────────
+    # Тот же инвариант, что и в _handle_my_chat_member: не даём привязать канал,
+    # уже закреплённый за ДРУГИМ дочерним ботом (активен ИЛИ всё ещё в админах
+    # с частью прав — reason='perm:…'). Освобождение — после удаления старого бота
+    # (reason='kicked'/'left'). Свой же бот себя не блокирует (child_bot_id <> $2).
+    occupied = await db.fetchrow(
+        """
+        SELECT cb.bot_username
+        FROM bot_chats bc
+        JOIN child_bots cb ON cb.id = bc.child_bot_id
+        WHERE bc.chat_id = $1
+          AND bc.child_bot_id <> $2
+          AND (bc.is_active = true OR bc.deactivation_reason LIKE 'perm:%')
+        LIMIT 1
+        """,
+        chat_info["chat_id"], child_bot_id,
+    )
+    if occupied:
+        await msg.edit_text(
+            f"❌ Этот канал/группа уже подключён к боту "
+            f"<b>@{occupied['bot_username']}</b>.\n\n"
+            f"<b>Один канал — один бот.</b> Сначала удалите @{occupied['bot_username']} "
+            f"из администраторов канала, затем подключите его сюда заново.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="◀️ Назад", callback_data=f"bot_chats_list:{child_bot_id}")],
+            ]),
+        )
+        await state.clear()
+        return
+
     # Сохраняем площадку в БД
     await db.execute(
         """

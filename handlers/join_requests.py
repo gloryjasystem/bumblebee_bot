@@ -42,6 +42,49 @@ def _welcome_already_sent(chat_id: int, user_id: int) -> bool:
     return False
 
 
+def _welcome_release(chat_id: int, user_id: int) -> None:
+    """Снимает пометку об отправке приветствия. Вызывается при НЕУДАЧНОЙ доставке,
+    чтобы другой путь/бот мог повторить попытку (иначе упавшая попытка навсегда
+    блокировала бы правильную в пределах окна дедупа)."""
+    _recent_welcome.pop((chat_id, user_id), None)
+
+
+# ── Дедуп прощания: помечаем ТОЛЬКО по факту успешной доставки ──
+# На общем канале событие 'left' приходит нескольким ботам-админам сразу; каждый
+# пробует отправить прощание, но доходит лишь тот, у кого открыта личка с юзером.
+# Пометка ставится ПОСЛЕ успешной отправки → повторная доставка подавляется, а
+# упавшая попытка не мешает другому боту доставить.
+_recent_farewell: dict[tuple[int, int], float] = {}
+_FAREWELL_DEDUP_SEC = 180
+
+
+def _farewell_delivered(chat_id: int, user_id: int) -> bool:
+    """True, если прощание этому пользователю уже успешно доставлено в окне."""
+    now = time.monotonic()
+    if len(_recent_farewell) > 512:
+        for k, ts in list(_recent_farewell.items()):
+            if now - ts > _FAREWELL_DEDUP_SEC:
+                _recent_farewell.pop(k, None)
+    last = _recent_farewell.get((chat_id, user_id))
+    return last is not None and now - last < _FAREWELL_DEDUP_SEC
+
+
+def _mark_farewell_delivered(chat_id: int, user_id: int) -> None:
+    _recent_farewell[(chat_id, user_id)] = time.monotonic()
+
+
+def _dm_blocked_reason(err: Exception) -> str | None:
+    """Если ошибка означает «бот не может писать этому юзеру» — вернуть краткую
+    причину; иначе None. Нужно, чтобы не путать «юзер не запускал бота» с реальным сбоем."""
+    low = str(err).lower()
+    if any(s in low for s in (
+        "bot can't initiate", "bot was blocked", "user is deactivated",
+        "chat not found", "forbidden", "blocked by the user", "have no rights",
+    )):
+        return "юзер не запускал этого бота / заблокировал его"
+    return None
+
+
 async def _get_owner(chat_id: int) -> dict | None:
     """Returns platform settings, owner_id, blacklist state, and whether this bot is in the global BL scope."""
     from config import settings as _cfg
@@ -524,14 +567,17 @@ async def _register_user(owner_id: int, chat_id: int, user,
     )
 
 
-async def _send_welcome(bot: Bot, chat_id: int, user, settings_row: dict):
+async def _send_welcome(bot: Bot, chat_id: int, user, settings_row: dict) -> bool:
     """Отправляет приветствие новому пользователю в личку.
+    Возвращает True при успешной доставке (или если приветствие уже отправлено
+    другим путём), False — если доставка не удалась.
     Идемпотентна: повторный вызов для той же пары (chat_id, user_id) в пределах
     короткого окна игнорируется — так гарантируется РОВНО ОДНО приветствие,
-    даже если сработали оба пути (одобрение заявки и событие вступления)."""
+    даже если сработали оба пути (одобрение заявки и событие вступления).
+    При неудаче пометка снимается — чтобы другой бот канала мог доставить."""
     if _welcome_already_sent(chat_id, user.id):
         logger.info(f"[WELCOME] Пропуск дубля приветствия user={user.id} chat={chat_id}")
-        return
+        return True
     try:
         from handlers.captcha import cleanup_captcha_and_send_welcome
         await cleanup_captcha_and_send_welcome(bot, chat_id, user.id)
@@ -547,7 +593,8 @@ async def _send_welcome(bot: Bot, chat_id: int, user, settings_row: dict):
     timer_val = int(settings_row.get("welcome_timer") or 0)
 
     if not text_tpl and not media_fid:
-        return
+        _welcome_release(chat_id, user.id)
+        return False
 
     # Подставляем переменные
     text = (text_tpl
@@ -630,7 +677,18 @@ async def _send_welcome(bot: Bot, chat_id: int, user, settings_row: dict):
             logger.debug(f"[WSEQ] schedule failed for user {user.id}: {_se}")
 
     except Exception as e:
-        logger.debug(f"[WELCOME] Failed to send to user {user.id}: {e}")
+        # Доставка не удалась — снимаем пометку, чтобы другой бот канала мог доставить,
+        # и логируем ЯВНО (раньше глоталось на DEBUG и было не видно).
+        _welcome_release(chat_id, user.id)
+        reason = _dm_blocked_reason(e)
+        bot_id = getattr(bot, "id", "?")
+        if reason:
+            logger.warning(f"[WELCOME] Не доставлено ({reason}) user={user.id} bot={bot_id} chat={chat_id}: {e}")
+        else:
+            logger.warning(f"[WELCOME] Ошибка отправки user={user.id} bot={bot_id} chat={chat_id}: {e}")
+        return False
+
+    return True
 
 
 # ── Цепочка приветствий (доп. сообщения с задержками + шаг-удаление) ──
@@ -749,8 +807,14 @@ async def _delete_later(bot: Bot, chat_id: int, message_id: int, delay_sec: int)
         pass
 
 
-async def _send_farewell(bot: Bot, chat_id: int, user, settings_row: dict):
-    """Отправляет прощальное сообщение."""
+async def _send_farewell(bot: Bot, chat_id: int, user, settings_row: dict) -> bool:
+    """Отправляет прощальное сообщение уходящему пользователю в личку.
+    Возвращает True при успешной доставке, False — если не удалось.
+    Дедуп по факту доставки: на общем канале событие 'left' приходит нескольким
+    ботам, каждый пробует отправить; доставит тот, у кого открыта личка, ровно раз."""
+    if _farewell_delivered(chat_id, user.id):
+        logger.info(f"[FAREWELL] Пропуск — уже доставлено user={user.id} chat={chat_id}")
+        return True
     farewell_text_tpl = settings_row.get("farewell_text") or ""
     farewell_media_fid = settings_row.get("farewell_media")
     farewell_media_type = settings_row.get("farewell_media_type")
@@ -759,7 +823,7 @@ async def _send_farewell(bot: Bot, chat_id: int, user, settings_row: dict):
     farewell_timer = int(settings_row.get("farewell_timer") or 0)
 
     if not farewell_text_tpl and not farewell_media_fid:
-        return
+        return False
 
     import json as _json
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -826,5 +890,15 @@ async def _send_farewell(bot: Bot, chat_id: int, user, settings_row: dict):
             for sent in fw_sent:
                 asyncio.create_task(_delete_later(bot, user.id, sent.message_id, farewell_timer))
     except Exception as e:
-        logger.debug(f"[FAREWELL] Failed to send to user {user.id}: {e}")
+        # Не помечаем доставленным — пусть другой бот канала попробует. Логируем ЯВНО.
+        reason = _dm_blocked_reason(e)
+        bot_id = getattr(bot, "id", "?")
+        if reason:
+            logger.warning(f"[FAREWELL] Не доставлено ({reason}) user={user.id} bot={bot_id} chat={chat_id}: {e}")
+        else:
+            logger.warning(f"[FAREWELL] Ошибка отправки user={user.id} bot={bot_id} chat={chat_id}: {e}")
+        return False
+
+    _mark_farewell_delivered(chat_id, user.id)
+    return True
 

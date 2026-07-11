@@ -2468,11 +2468,17 @@ async def _handle_chat_member(bot: Bot, child_bot_id: int, event: ChatMemberUpda
         )
         logger.info(f"[MEMBER] User {user.id} left chat {chat_id} (owner={owner_id})")
 
-        # Прощальное сообщение
-        farewell_text = chat_settings.get("farewell_text")
-        farewell_media = chat_settings.get("farewell_media")
-        
+        # Прощальное сообщение — КАНОНИЧЕСКИЕ настройки канала (как и приветствие).
+        # На общем канале это даёт всем ботам-админам одинаковый текст прощания, и
+        # доставит его тот бот, у кого открыта личка (дедуп в _send_farewell — по факту
+        # доставки, ровно один раз). Для канала с одним ботом — та же строка, без изменений.
+        from db.channels import get_channel
+        _canon_fw = await get_channel(chat_id)
+        _fw_row = dict(_canon_fw) if _canon_fw else dict(chat_settings)
+        farewell_text = _fw_row.get("farewell_text")
+        farewell_media = _fw_row.get("farewell_media")
+
         logger.info(f"[FAREWELL] user={user.id} has_text={bool(farewell_text)} has_media={bool(farewell_media)}")
         if farewell_text or farewell_media:
             from handlers.join_requests import _send_farewell
-            await _send_farewell(bot, chat_id, user, dict(chat_settings))
+            await _send_farewell(bot, chat_id, user, _fw_row)

@@ -677,6 +677,17 @@ async def _approve_user(
                     except Exception as e:
                         logger.warning(f"[LINK TRACK] failed: {e}")
 
+            # Приветствие шлём ЭТИМ ботом — у него гарантированно открыта личка с юзером
+            # (он только что показывал капчу). Не полагаемся на событие вступления, где
+            # приветствие могло уйти через «главную» строку канала = другого бота (и молча упасть).
+            if settings_row:
+                try:
+                    from handlers.join_requests import _send_welcome
+                    if await _send_welcome(bot, chat_id, callback.from_user, dict(settings_row)):
+                        _passed_captcha_group.discard(key)  # событие вступления не должно слать повторно
+                except Exception as _we:
+                    logger.warning(f"[CAPTCHA WELCOME] send failed user={callback.from_user.id}: {_we}")
+
             if settings_row.get("captcha_delete"):
                 try:
                     await callback.message.delete()
@@ -872,6 +883,14 @@ async def _approve_user_from_message(
                     await _track_invite_link(inv_url, message.from_user)
                 except Exception as e:
                     logger.warning(f"[LINK TRACK REPLY] failed: {e}")
+
+            # Приветствие — ЭТИМ ботом (личка открыта: только что показывал капчу).
+            try:
+                from handlers.join_requests import _send_welcome
+                if await _send_welcome(bot, chat_id, message.from_user, dict(settings_row)):
+                    _passed_captcha_group.discard(key)
+            except Exception as _we:
+                logger.warning(f"[CAPTCHA WELCOME REPLY] send failed user={message.from_user.id}: {_we}")
 
         logger.info(f"[CAPTCHA REPLY] Passed join_request (autoaccept=on): user={user_id} chat={chat_id}")
 

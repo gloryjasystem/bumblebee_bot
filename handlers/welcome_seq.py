@@ -117,6 +117,30 @@ async def _auto_clear_preview(bot, tg_chat_id: int, key: tuple[int, int], delay:
             pass
 
 
+async def _preview_one(bot, tg_chat_id: int, label: str, txt: str, media_fid, media_type, kb):
+    """Одно сообщение предпросмотра с меткой сверху.
+
+    Устойчиво: сначала пробуем HTML, при сбое разметки — без неё (сообщение
+    ВСЕГДА видно, а не молча пропадает). Ошибки логируем на warning.
+    """
+    txt = txt or ""
+    for pm, content in (("HTML", f"<i>{label}</i>\n{txt}".strip()), (None, f"{label}\n{txt}".strip())):
+        try:
+            if media_fid:
+                cap = content or None
+                if media_type == "photo":
+                    return await bot.send_photo(tg_chat_id, media_fid, caption=cap, parse_mode=pm, reply_markup=kb)
+                if media_type == "video":
+                    return await bot.send_video(tg_chat_id, media_fid, caption=cap, parse_mode=pm, reply_markup=kb)
+                if media_type == "animation":
+                    return await bot.send_animation(tg_chat_id, media_fid, caption=cap, parse_mode=pm, reply_markup=kb)
+                return await bot.send_document(tg_chat_id, media_fid, caption=cap, parse_mode=pm, reply_markup=kb)
+            return await bot.send_message(tg_chat_id, content or "—", parse_mode=pm, reply_markup=kb)
+        except Exception as e:
+            logger.warning(f"[WSEQ TEST] preview send failed (pm={pm}, label={label}): {e}")
+    return None
+
+
 def _apply_vars(text: str, user, chat_title: str) -> str:
     """Подстановка переменных для предпросмотра (как в реальной отправке)."""
     if not text:
@@ -1092,12 +1116,16 @@ async def on_wseq_test(callback: CallbackQuery, platform_user: dict | None):
         await callback.answer("Сначала задайте приветствие №1 — иначе цепочка не отправится.", show_alert=True)
         return
 
-    await callback.answer("👁 Прислал предпросмотр ниже")
+    await callback.answer("👁 Предпросмотр ниже")
     bot = callback.bot
     tg = callback.message.chat.id
     user = callback.from_user
     chat_title = (row["chat_title"] if row else "") or ""
     from utils.keyboard import build_inline_keyboard
+
+    msg_steps = [s for s in steps if (s["action"] or "message") != "delete"]
+    del_steps = [s for s in steps if (s["action"] or "message") == "delete"]
+    autoclear_sec = min((int(s["delay_sec"] or 0) for s in del_steps), default=0)
 
     key = (chat_id, user.id)
     # снести прошлый предпросмотр, если он ещё висит
@@ -1114,65 +1142,35 @@ async def on_wseq_test(callback: CallbackQuery, platform_user: dict | None):
         if sent:
             mids.append(sent.message_id)
 
-    _track(await bot.send_message(tg, "👁 <b>Предпросмотр цепочки</b>\nТак она придёт пользователю (без задержек):", parse_mode="HTML"))
+    # №1 — приветствие
+    base_txt = _apply_vars(row["welcome_text"] or "", user, chat_title)
+    base_kb = build_inline_keyboard(row["welcome_buttons"])
+    _track(await _preview_one(bot, tg, "№1 · приветствие", base_txt, row["welcome_media"], row["welcome_media_type"], base_kb))
 
-    # №1 базовое приветствие
-    try:
-        base_txt = _apply_vars(row["welcome_text"] or "", user, chat_title)
-        base_kb = build_inline_keyboard(row["welcome_buttons"])
-        if row["welcome_media"]:
-            mt = row["welcome_media_type"]
-            fid = row["welcome_media"]
-            if mt == "photo":
-                _track(await bot.send_photo(tg, fid, caption=base_txt or None, reply_markup=base_kb, parse_mode="HTML"))
-            elif mt == "video":
-                _track(await bot.send_video(tg, fid, caption=base_txt or None, reply_markup=base_kb, parse_mode="HTML"))
-            elif mt == "animation":
-                _track(await bot.send_animation(tg, fid, caption=base_txt or None, reply_markup=base_kb, parse_mode="HTML"))
-            else:
-                _track(await bot.send_document(tg, fid, caption=base_txt or None, reply_markup=base_kb, parse_mode="HTML"))
-        else:
-            _track(await bot.send_message(tg, base_txt or "—", reply_markup=base_kb, parse_mode="HTML"))
-    except Exception as e:
-        logger.debug(f"[WSEQ TEST] base failed: {e}")
+    # №2…№N — сообщения
+    for i, st in enumerate(msg_steps, start=2):
+        txt = _apply_vars(st["text"] or "", user, chat_title)
+        kb = build_inline_keyboard(st["buttons"])
+        _track(await _preview_one(bot, tg, f"№{i} · {_delay_offset(st['delay_sec'])}", txt, st["media"], st["media_type"], kb))
 
-    # доп. шаги
-    for i, st in enumerate(steps, start=2):
-        offset = _delay_offset(st["delay_sec"])
-        if (st["action"] or "message") == "delete":
-            _track(await bot.send_message(tg, f"🧹 <i>№{i} ({offset}): здесь бот очистил бы всю переписку цепочки.</i>", parse_mode="HTML"))
-            continue
+    # очистка переписки (свойство цепочки)
+    if autoclear_sec > 0:
         try:
-            txt = _apply_vars(st["text"] or "", user, chat_title)
-            kb = build_inline_keyboard(st["buttons"])
-            head = f"<i>№{i} · {offset}</i>\n"
-            if st["media"]:
-                mt = st["media_type"]; fid = st["media"]
-                cap = (head + (txt or "")).strip()
-                if mt == "photo":
-                    _track(await bot.send_photo(tg, fid, caption=cap or None, reply_markup=kb, parse_mode="HTML"))
-                elif mt == "video":
-                    _track(await bot.send_video(tg, fid, caption=cap or None, reply_markup=kb, parse_mode="HTML"))
-                elif mt == "animation":
-                    _track(await bot.send_animation(tg, fid, caption=cap or None, reply_markup=kb, parse_mode="HTML"))
-                else:
-                    _track(await bot.send_document(tg, fid, caption=cap or None, reply_markup=kb, parse_mode="HTML"))
-            else:
-                _track(await bot.send_message(tg, head + (txt or "—"), reply_markup=kb, parse_mode="HTML"))
-        except Exception as e:
-            logger.debug(f"[WSEQ TEST] step {i} failed: {e}")
+            _track(await bot.send_message(tg, f"🧹 <i>через +{format_delay_short(autoclear_sec)} — вся переписка очистится</i>", parse_mode="HTML"))
+        except Exception:
+            pass
 
-    # контрол предпросмотра: убрать вручную + авто-уборка через 90с
+    # один сдержанный контрол внизу; авто-уборка через 60с
     _track(await bot.send_message(
         tg,
-        "👁 <i>Это предпросмотр — исчезнет через 90 сек или по кнопке.</i>",
+        "👁 <i>Предпросмотр цепочки</i>",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🧹 Убрать предпросмотр", callback_data=f"wseq_testclear:{chat_id}")],
+            [InlineKeyboardButton(text="✕ Убрать предпросмотр", callback_data=f"wseq_testclear:{chat_id}")],
         ]),
         parse_mode="HTML",
     ))
     _preview_msgs[key] = mids
-    asyncio.create_task(_auto_clear_preview(bot, tg, key, 90))
+    asyncio.create_task(_auto_clear_preview(bot, tg, key, 60))
 
 
 @router.callback_query(F.data.startswith("wseq_testclear:"))

@@ -35,10 +35,11 @@ from utils.timing import format_delay_short, parse_delay_input
 logger = logging.getLogger(__name__)
 router = Router()
 
-_SELF_DELETE_CYCLE = [0, 5, 15, 30, 60, 120, 300]  # секунды авто-удаления шага
 _MAX_STEPS = 10  # максимум доп. шагов в цепочке
 # Быстрые пресеты задержки шага (сек, подпись)
 _DELAY_CHIPS = [(0, "сразу"), (15, "15с"), (30, "30с"), (60, "1 мин"), (300, "5 мин"), (900, "15 мин")]
+# Быстрые пресеты авто-удаления шага (сек, подпись); своё значение — без потолка
+_SELFDEL_CHIPS = [(0, "нет"), (15, "15с"), (60, "1 мин"), (300, "5 мин"), (900, "15 мин"), (1800, "30 мин")]
 
 
 class WSeqFSM(StatesGroup):
@@ -47,14 +48,14 @@ class WSeqFSM(StatesGroup):
     step_media     = State()   # ждём медиа шага
     step_buttons   = State()   # ждём кнопки шага
     step_delay     = State()   # ждём свою задержку шага
+    step_selfdel   = State()   # ждём своё время авто-удаления шага
 
 
 # ── Вспомогательные ──────────────────────────────────────────────
 
-def _self_del_label(sec: int) -> str:
-    if not sec:
-        return "нет"
-    return f"{sec} сек" if sec < 60 else f"{sec // 60} мин"
+def _self_del_label(sec) -> str:
+    sec = int(sec or 0)
+    return "нет" if sec <= 0 else format_delay_short(sec)
 
 
 def _delay_offset(sec) -> str:
@@ -750,18 +751,91 @@ async def on_wstep_selfdel(callback: CallbackQuery, state: FSMContext, platform_
     if not st:
         await callback.answer("Шаг не найден", show_alert=True)
         return
+    await _drop_echo(callback.bot, state, callback.message.chat.id)
+    await state.set_state(None)
+
     cur = int(st["self_delete_sec"] or 0)
-    try:
-        idx = _SELF_DELETE_CYCLE.index(cur)
-    except ValueError:
-        idx = 0
-    new_val = _SELF_DELETE_CYCLE[(idx + 1) % len(_SELF_DELETE_CYCLE)]
+    chip_rows, row = [], []
+    for sec, label in _SELFDEL_CHIPS:
+        mark = " ✅" if sec == cur else ""
+        row.append(InlineKeyboardButton(text=f"{label}{mark}", callback_data=f"wstep_selfdelset:{step_id}:{sec}"))
+        if len(row) == 3:
+            chip_rows.append(row); row = []
+    if row:
+        chip_rows.append(row)
+    chip_rows.append([InlineKeyboardButton(text="✏️ Своё значение", callback_data=f"wstep_selfdelcustom:{step_id}")])
+    chip_rows.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"wstep:{step_id}")])
+
+    await navigate(
+        callback,
+        "⏳ <b>Авто-удаление сообщения</b>\n\n"
+        "Через сколько удалить это сообщение после отправки.\n"
+        f"Сейчас: <b>{_self_del_label(cur)}</b>",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=chip_rows),
+    )
+
+
+@router.callback_query(F.data.startswith("wstep_selfdelset:"))
+async def on_wstep_selfdelset(callback: CallbackQuery, state: FSMContext, platform_user: dict | None):
+    if not platform_user:
+        return
+    _, step_id_s, sec_s = callback.data.split(":")
+    step_id = int(step_id_s)
+    owner_id = await _step_owner(platform_user["user_id"], step_id)
+    sec = max(0, int(sec_s))
     await db.execute(
         "UPDATE welcome_steps SET self_delete_sec=$1 WHERE id=$2 AND owner_id=$3",
-        new_val, step_id, owner_id,
+        sec, step_id, owner_id,
     )
-    await callback.answer(f"⏳ Авто-удаление: {_self_del_label(new_val)}")
+    await callback.answer(f"⏳ Авто-удаление: {_self_del_label(sec)}")
     await _show_step_editor(callback, step_id, owner_id, state)
+
+
+@router.callback_query(F.data.startswith("wstep_selfdelcustom:"))
+async def on_wstep_selfdelcustom(callback: CallbackQuery, state: FSMContext, platform_user: dict | None):
+    if not platform_user:
+        return
+    step_id = int(callback.data.split(":")[1])
+    owner_id = await _step_owner(platform_user["user_id"], step_id)
+    st = await _get_step(owner_id, step_id)
+    if not st:
+        await callback.answer("Шаг не найден", show_alert=True)
+        return
+    await state.set_state(WSeqFSM.step_selfdel)
+    await state.update_data(wstep_id=step_id)
+    prompt = await navigate(
+        callback,
+        "✏️ <b>Своё время авто-удаления</b>\n\n"
+        "Пришлите число. По умолчанию — <b>секунды</b>.\n"
+        "Примеры: <code>45</code>, <code>10м</code>, <code>1ч</code>. "
+        "<code>0</code> или <code>нет</code> — выключить.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="◀️ Отмена", callback_data=f"wstep_selfdel:{step_id}")],
+        ]),
+    )
+    if prompt:
+        await state.update_data(wstep_prompt_mid=prompt.message_id)
+
+
+@router.message(WSeqFSM.step_selfdel)
+async def on_wstep_selfdel_input(message: Message, state: FSMContext, platform_user: dict | None):
+    if not platform_user:
+        return
+    data = await state.get_data()
+    step_id = data.get("wstep_id")
+    if not step_id:
+        await state.clear()
+        return
+    owner_id = await _step_owner(platform_user["user_id"], step_id)
+    sec = parse_delay_input(message.text or "")
+    if sec is None:
+        await message.answer("Не понял значение. Пришлите число, напр. <code>45</code>, <code>10м</code>, <code>1ч</code>, или <code>0</code>.", parse_mode="HTML")
+        return
+    await db.execute(
+        "UPDATE welcome_steps SET self_delete_sec=$1 WHERE id=$2 AND owner_id=$3",
+        sec, step_id, owner_id,
+    )
+    await _show_step_editor(message, step_id, owner_id, state)
 
 
 # ── Удаление шага / очистка / предпросмотр ───────────────────────

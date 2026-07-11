@@ -1921,24 +1921,32 @@ async def _handle_join_request(bot: Bot, child_bot_id: int, event: ChatJoinReque
     except Exception as _e:
         logger.info(f"[JOIN REQ RAW err] {_e}")
 
-    # Получаем настройки площадки
-    chat_settings = await db.fetchrow(
-        """
-        SELECT autoaccept, autoaccept_delay, autoaccept_delay_sec, welcome_text,
-               captcha_type, captcha_text, captcha_timer_min, captcha_emoji_set,
-               captcha_buttons_raw, captcha_button_style,
-               captcha_greet, captcha_accept_now, captcha_accept_all,
-               captcha_animation, captcha_anim_file_id, captcha_anim_type,
-               captcha_media, captcha_delete,
-               filter_rtl, filter_hieroglyph, filter_no_photo,
-               join_limit_enabled, join_limit_punishment,
-               join_limit_period_min, join_limit_count,
-               owner_id
-        FROM bot_chats
-        WHERE child_bot_id=$1 AND chat_id=$2 AND is_active=true
-        """,
+    # Настройки приёма — КАНОНИЧЕСКИЕ для канала (единая настройка на канал).
+    # Один канал может быть подключён к нескольким ботам-админам, а Telegram отдаёт
+    # заявку ЛИШЬ ОДНОМУ из них — какому, мы не выбираем. Чтобы приём вёл себя одинаково
+    # (не зависел от того, чью ссылку использовали), читаем не «свою» строку бота, а
+    # каноническую строку КАНАЛА через единую точку резолва.
+    #   • канал с ОДНИМ ботом (обычный случай) → get_channel вернёт ровно его строку →
+    #     поведение идентично прежнему (нулевая регрессия);
+    #   • канал с НЕСКОЛЬКИМИ ботами → берётся старейшая (основная) строка, и все её
+    #     настройки (автопринятие/таймер/капча/приветствие) применяются одинаково,
+    #     кто бы из ботов заявку ни получил. owner_id ниже — тоже канонический, поэтому
+    #     очередь/регистрация/капча/отложенный приём атрибутируются одному владельцу.
+    #   Приём и DM выполняет тот бот, кому Telegram отдал заявку (его токен, `bot`).
+    #
+    # ЗАЩИТА: этот бот обрабатывает канал ТОЛЬКО если он сам легитимно подключён к нему
+    # (есть активная строка). Иначе (бот — админ канала в Telegram, но у нас канал к нему
+    # не подключён) выходим — не хватало, чтобы «посторонний» бот-админ начал обрабатывать
+    # чужой канал по канонической строке.
+    own_row = await db.fetchrow(
+        "SELECT 1 FROM bot_chats WHERE child_bot_id=$1 AND chat_id=$2::bigint AND is_active=true",
         child_bot_id, chat_id,
     )
+    if not own_row:
+        return
+
+    from db.channels import get_channel
+    chat_settings = await get_channel(chat_id)
     if not chat_settings:
         return
 
@@ -2361,9 +2369,16 @@ async def _handle_chat_member(bot: Bot, child_bot_id: int, event: ChatMemberUpda
         # 1. Капча выключена → отправляем всем вступившим.
         # 2. Капча пройдена (через ChatJoinRequest или групповой one_time_link)
         #    флаг _passed_captcha_group снимается, и отправляем полный welcome
-        welcome_text = chat_settings.get("welcome_text")
-        welcome_media = chat_settings.get("welcome_media")
-        
+        # Настройки приветствия берём КАНОНИЧЕСКИЕ для канала (единая настройка на канал):
+        # если канал подключён к нескольким ботам, приветствие берётся из основной строки,
+        # а не из строки бота, получившего событие. Для канала с одним ботом — та же строка
+        # (нулевая регрессия).
+        from db.channels import get_channel
+        _canon = await get_channel(chat_id)
+        welcome_row = dict(_canon) if _canon else dict(chat_settings)
+        welcome_text = welcome_row.get("welcome_text")
+        welcome_media = welcome_row.get("welcome_media")
+
         try:
             from handlers.captcha import cleanup_captcha_and_send_welcome
             await cleanup_captcha_and_send_welcome(bot, chat_id, user.id)
@@ -2380,9 +2395,9 @@ async def _handle_chat_member(bot: Bot, child_bot_id: int, event: ChatMemberUpda
                 # Потребляем флаг сразу, чтобы не отправить приветствие дважды
                 _passed_captcha_group.discard(captcha_key)
                 logger.info(f"[WELCOME] captcha passed — sending welcome to user={user.id}")
-                await _send_welcome(bot, chat_id, user, dict(chat_settings))
+                await _send_welcome(bot, chat_id, user, welcome_row)
             elif captcha_type == "off":
-                await _send_welcome(bot, chat_id, user, dict(chat_settings))
+                await _send_welcome(bot, chat_id, user, welcome_row)
     # ── Пользователь вышел/забанен ────────────────────────────
     elif new_status in ("left", "kicked") and old_status == "member":
         key = (chat_id, user.id)

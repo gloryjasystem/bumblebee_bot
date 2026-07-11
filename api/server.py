@@ -119,15 +119,20 @@ def create_app(bot: Bot, dp: Dispatcher) -> FastAPI:
                     "SELECT column_default FROM information_schema.columns "
                     "WHERE table_name='bot_chats' AND column_name='captcha_button_style'"
                 )
-                if _cbs_default and "inline" in _cbs_default:
+                if not _cbs_default or "reply" not in _cbs_default:
+                    # Маркер = DEFAULT колонки. Пока он не 'reply' — миграция ещё не шла.
+                    # Переключаем ВСЕ не-reply значения (inline / легаси '1x1' / NULL) → reply.
+                    n = await conn.fetchval(
+                        "SELECT count(*) FROM bot_chats WHERE captcha_button_style IS DISTINCT FROM 'reply'"
+                    )
                     await conn.execute(
                         "UPDATE bot_chats SET captcha_button_style='reply' "
-                        "WHERE captcha_button_style='inline' OR captcha_button_style IS NULL"
+                        "WHERE captcha_button_style IS DISTINCT FROM 'reply'"
                     )
                     await conn.execute(
                         "ALTER TABLE bot_chats ALTER COLUMN captcha_button_style SET DEFAULT 'reply'"
                     )
-                    logger.info("Migration captcha_button_style: inline → reply (one-time, default switched) ✅")
+                    logger.info(f"Migration captcha_button_style: → reply (one-time, {n} rows switched, default set) ✅")
                 else:
                     logger.info("Migration captcha_button_style: already reply-default, skipping")
             except Exception as _e:

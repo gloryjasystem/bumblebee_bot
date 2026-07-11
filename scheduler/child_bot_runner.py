@@ -24,6 +24,11 @@ logger = logging.getLogger(__name__)
 _running_bots: Dict[int, asyncio.Task] = {}  # child_bot_id → Task
 _main_bot: Bot = None   # Bumblebee management bot для уведомлений
 
+# (child_bot_id, chat_id), для которых бот вышел из канала САМ по стражу
+# «один канал — один бот». Последующее событие new_status='left' по этому ключу
+# НЕ должно слать «бот удалён / площадка деактивирована» — площадки здесь не было.
+_collision_self_left: set = set()
+
 # Состояния ожидания ответа администратора: (child_bot_id, admin_id) → dict
 # Храним в памяти: при редеплое теряется, но это допустимо — admin просто нажмёт повторно.
 _reply_states: Dict[tuple, dict] = {}
@@ -1517,6 +1522,15 @@ async def _handle_my_chat_member(
 
     # ── Сценарий 3: бот удалён (kicked / left) ────────────────────────────────
     if new_status in ("kicked", "left"):
+        # Если это НАШ выход по стражу коллизии — площадки здесь не было,
+        # ничего не деактивируем и не уведомляем (верхнее сообщение уже всё сказало).
+        if (child_bot_id, chat.id) in _collision_self_left:
+            _collision_self_left.discard((child_bot_id, chat.id))
+            logger.info(
+                f"[MCM] self-left chat={chat.id} по стражу коллизии — "
+                f"уведомление об удалении подавлено."
+            )
+            return
         # Мягкая деактивация — НЕ удаляем запись и настройки из БД.
         # При повторном добавлении бота все конфиги сохранятся (Seamless Flow).
         await db.execute(
@@ -1629,9 +1643,14 @@ async def _handle_my_chat_member(
             f"(id={child_bot_id}) — бот покидает канал."
         )
         # Добавляемый бот сам выходит — двух-ботового состояния не возникает.
+        # Помечаем выход как «свой», чтобы событие left не слало ложное
+        # «бот удалён / площадка деактивирована» (её тут никогда не было).
+        _collision_self_left.add((child_bot_id, chat.id))
         try:
             await bot.leave_chat(chat.id)
         except Exception as _e:
+            # Выход не удался → события left не будет → снимаем метку, чтобы не залипла.
+            _collision_self_left.discard((child_bot_id, chat.id))
             logger.debug(f"[MCM] collision leave_chat failed: {_e}")
         # Уведомляем владельца (стиль как у уведомления о нехватке прав).
         if _main_bot:

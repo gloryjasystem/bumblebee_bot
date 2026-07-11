@@ -147,7 +147,7 @@ async def send_captcha(bot: Bot, event: ChatJoinRequest, settings_row: dict):
         caption = _fill_captcha_text(raw_caption, user, event.chat.title)
         # Применяем пользовательские кнопки если заданы, иначе — кнопка по умолчанию
         custom_btns = _parse_captcha_buttons(settings_row.get("captcha_buttons_raw") or "")
-        btn_style_placement = settings_row.get("captcha_button_style") or "inline"
+        btn_style_placement = settings_row.get("captcha_button_style") or "reply"
 
         if btn_style_placement == "reply":
             # Reply-клавиатура: кнопки в панели ввода
@@ -363,7 +363,7 @@ async def send_captcha_group(
         text = _fill_captcha_text(raw_text, user, chat_title)
 
         custom_btns = _parse_captcha_buttons(settings_row.get("captcha_buttons_raw") or "")
-        btn_style_placement = settings_row.get("captcha_button_style") or "inline"
+        btn_style_placement = settings_row.get("captcha_button_style") or "reply"
 
         if btn_style_placement == "reply":
             if custom_btns:

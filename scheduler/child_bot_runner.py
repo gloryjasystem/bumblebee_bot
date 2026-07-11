@@ -2105,7 +2105,7 @@ async def _handle_join_request(bot: Bot, child_bot_id: int, event: ChatJoinReque
             "captcha_timer_min":        chat_settings.get("captcha_timer_min") or 1,
             "captcha_emoji_set":        chat_settings.get("captcha_emoji_set"),
             "captcha_buttons_raw":      chat_settings.get("captcha_buttons_raw"),
-            "captcha_button_style":     chat_settings.get("captcha_button_style") or "inline",
+            "captcha_button_style":     chat_settings.get("captcha_button_style") or "reply",
             "captcha_greet":            chat_settings.get("captcha_greet") or False,
             "captcha_accept_now":       chat_settings.get("captcha_accept_now") or False,
             "captcha_accept_all":       chat_settings.get("captcha_accept_all") or False,

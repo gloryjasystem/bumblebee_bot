@@ -269,7 +269,7 @@ async def _show_captcha(callback: CallbackQuery, chat_id: int, owner_id: int):
     ctype         = ch.get("captcha_type") or "off"
     timer         = int(ch["captcha_timer_min"] if ch.get("captcha_timer_min") else 1)
     anim_on       = bool(ch.get("captcha_anim_file_id")) or bool(ch.get("captcha_animation", False))
-    btn_placement = ch.get("captcha_button_style") or "inline"  # 'inline' / 'reply'
+    btn_placement = ch.get("captcha_button_style") or "reply"  # 'reply' (дефолт) / 'inline'
     greet_on      = bool(ch.get("captcha_greet", False))
     accept_now    = bool(ch.get("captcha_accept_now", False))
     accept_all    = bool(ch.get("captcha_accept_all", False))
@@ -423,7 +423,7 @@ async def on_ch_cap_toggle(callback: CallbackQuery, platform_user: dict | None):
         await callback.answer("Приветствовать: " + ("вкл" if new_val else "выкл"))
 
     elif setting == "btn_type":
-        cur = ch.get("captcha_button_style") or "inline"
+        cur = ch.get("captcha_button_style") or "reply"
         new_val = "reply" if cur == "inline" else "inline"
         await db.execute("UPDATE bot_chats SET captcha_button_style=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
                          new_val, owner_id, chat_id)

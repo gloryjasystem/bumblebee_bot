@@ -81,7 +81,7 @@ def create_app(bot: Bot, dp: Dispatcher) -> FastAPI:
                 "ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS captcha_buttons_raw  TEXT",
                 "ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS captcha_lang         TEXT    DEFAULT 'off'",
                 "ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS captcha_animation    BOOLEAN DEFAULT false",
-                "ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS captcha_button_style TEXT    DEFAULT 'inline'",
+                "ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS captcha_button_style TEXT    DEFAULT 'reply'",
                 "ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS captcha_timer_min    INT     DEFAULT 1",
                 "ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS captcha_emoji_set    TEXT    DEFAULT '🍕🍔🌭🌮'",
                 "ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS captcha_greet        BOOLEAN DEFAULT false",
@@ -106,6 +106,32 @@ def create_app(bot: Bot, dp: Dispatcher) -> FastAPI:
                 "UPDATE bot_chats SET captcha_button_style = 'inline' WHERE captcha_button_style IN ('1x1', '1x2', '2x2')",
             ]:
                 await conn.execute(migration)
+
+            # ── ОДНОРАЗОВО: reply-капча как дефолт платформы ──────────────
+            # Reply-кнопка ОТПРАВЛЯЕТ сообщение боту → бот получает право писать юзеру
+            # (приветствие после заявки + прощание после выхода). Inline-кнопка (callback)
+            # сообщения не шлёт → контакта нет, и приветствие/прощание не доходят «холодному».
+            # Маркер «уже мигрировано» — DEFAULT самой колонки: переключаем существующие
+            # 'inline'→'reply' ОДИН РАЗ и ставим DEFAULT 'reply', чтобы миграция больше не
+            # срабатывала, а будущий явный выбор inline сохранялся.
+            try:
+                _cbs_default = await conn.fetchval(
+                    "SELECT column_default FROM information_schema.columns "
+                    "WHERE table_name='bot_chats' AND column_name='captcha_button_style'"
+                )
+                if _cbs_default and "inline" in _cbs_default:
+                    await conn.execute(
+                        "UPDATE bot_chats SET captcha_button_style='reply' "
+                        "WHERE captcha_button_style='inline' OR captcha_button_style IS NULL"
+                    )
+                    await conn.execute(
+                        "ALTER TABLE bot_chats ALTER COLUMN captcha_button_style SET DEFAULT 'reply'"
+                    )
+                    logger.info("Migration captcha_button_style: inline → reply (one-time, default switched) ✅")
+                else:
+                    logger.info("Migration captcha_button_style: already reply-default, skipping")
+            except Exception as _e:
+                logger.warning(f"Migration captcha reply-default failed: {_e}")
             # Таблица автоответчика
             await conn.execute("""
                 CREATE TABLE IF NOT EXISTS autoreplies (

@@ -31,7 +31,7 @@ from aiogram.fsm.state import State, StatesGroup
 import db.pool as db
 from db.channels import resolve_chat_owner
 from services.security import sanitize
-from utils.nav import navigate, set_active_msg
+from utils.nav import navigate, set_active_msg, get_active_msg
 from utils.timing import format_delay_short, parse_delay_input
 
 logger = logging.getLogger(__name__)
@@ -42,6 +42,8 @@ _MAX_STEPS = 10  # максимум доп. шагов в цепочке
 _DELAY_CHIPS = [(0, "сразу"), (15, "15с"), (30, "30с"), (60, "1 мин"), (300, "5 мин"), (900, "15 мин")]
 # Быстрые пресеты авто-удаления шага (сек, подпись); своё значение — без потолка
 _SELFDEL_CHIPS = [(0, "нет"), (15, "15с"), (60, "1 мин"), (300, "5 мин"), (900, "15 мин"), (1800, "30 мин")]
+# Пресеты авто-очистки переписки (свойство цепочки; 0 = выкл)
+_AUTOCLEAR_CHIPS = [(0, "выкл"), (60, "1 мин"), (300, "5 мин"), (900, "15 мин"), (1800, "30 мин")]
 
 
 class WSeqFSM(StatesGroup):
@@ -51,6 +53,7 @@ class WSeqFSM(StatesGroup):
     step_buttons   = State()   # ждём кнопки шага
     step_delay     = State()   # ждём свою задержку шага
     step_selfdel   = State()   # ждём своё время авто-удаления шага
+    autoclear_delay = State()  # ждём своё время авто-очистки переписки
 
 
 # ── Вспомогательные ──────────────────────────────────────────────
@@ -232,6 +235,11 @@ async def _show_manager(event, chat_id: int, owner_id: int):
     )
     has_base = bool(base and (base["welcome_text"] or base["welcome_media"]))
 
+    # Шаги-сообщения нумеруются; авто-очистка (action='delete') — свойство цепочки
+    msg_steps = [s for s in steps if (s["action"] or "message") != "delete"]
+    del_steps = [s for s in steps if (s["action"] or "message") == "delete"]
+    autoclear_sec = min((int(s["delay_sec"] or 0) for s in del_steps), default=0)
+
     # ── Тело: компактный таймлайн (одна строка на шаг) ──
     lines = ["⛓ <b>Цепочка сообщений</b>", ""]
     if has_base:
@@ -240,18 +248,24 @@ async def _show_manager(event, chat_id: int, owner_id: int):
         lines.append("<b>№1</b> · <i>сразу</i> · ⚠️ не задано")
 
     max_delay = 0
-    for i, st in enumerate(steps, start=2):
+    for i, st in enumerate(msg_steps, start=2):
         delay = int(st["delay_sec"] or 0)
         max_delay = max(max_delay, delay)
         icon, prev = _step_preview(st, 30)
         lines.append(f"<b>№{i}</b> · <i>{_delay_offset(delay)}</i> · {icon} {prev}")
 
-    if not steps:
-        lines += ["", "Пока только приветствие (№1). Добавьте шаги ниже — до 10."]
+    if autoclear_sec > 0:
+        lines += ["", f"🧹 <b>через +{format_delay_short(autoclear_sec)}</b> — вся переписка очистится"]
+
+    if not msg_steps and autoclear_sec == 0:
+        lines += ["", "Пока только приветствие (№1). Добавьте сообщения ниже — до 10."]
     else:
-        total = (1 if has_base else 0) + len(steps)
+        total = (1 if has_base else 0) + len(msg_steps)
         fin = "сразу" if max_delay == 0 else f"+{format_delay_short(max_delay)}"
-        lines += ["", f"<i>Итог: {total} сообщ. · финал {fin}.</i>"]
+        summary = f"Итог: {total} сообщ. · финал {fin}"
+        if autoclear_sec > 0:
+            summary += f" · очистка +{format_delay_short(autoclear_sec)}"
+        lines += ["", f"<i>{summary}.</i>"]
     if not has_base:
         lines += ["", "⚠️ <b>Приветствие (№1) не задано — цепочка не отправится.</b> Задайте его кнопкой ниже."]
 
@@ -260,7 +274,7 @@ async def _show_manager(event, chat_id: int, owner_id: int):
         text=("✏️ №1 Приветствие" if has_base else "✏️ Задать приветствие №1"),
         callback_data=f"welcome_set:{chat_id}",
     )]]
-    for i, st in enumerate(steps, start=2):
+    for i, st in enumerate(msg_steps, start=2):
         delay = int(st["delay_sec"] or 0)
         icon, _prev = _step_preview(st, 18)
         kb_rows.append([InlineKeyboardButton(
@@ -268,14 +282,18 @@ async def _show_manager(event, chat_id: int, owner_id: int):
             callback_data=f"wstep:{st['id']}",
         )])
 
-    if len(steps) < _MAX_STEPS:
-        kb_rows.append([
-            InlineKeyboardButton(text="➕ Сообщение", callback_data=f"wseq_add:{chat_id}:msg"),
-            InlineKeyboardButton(text="🧹 Очистить переписку", callback_data=f"wseq_add:{chat_id}:del"),
-        ])
-    if steps:
+    # ряд: «Сообщение» слева + короткая «Очистка» справа
+    ac_label = f"🧹 Очистка: +{format_delay_short(autoclear_sec)}" if autoclear_sec > 0 else "🧹 Очистка: выкл"
+    add_row = []
+    if len(msg_steps) < _MAX_STEPS:
+        add_row.append(InlineKeyboardButton(text="➕ Сообщение", callback_data=f"wseq_add:{chat_id}:msg"))
+    add_row.append(InlineKeyboardButton(text=ac_label, callback_data=f"wseq_autoclear:{chat_id}"))
+    kb_rows.append(add_row)
+
+    if msg_steps or autoclear_sec > 0:
+        kb_rows.append([InlineKeyboardButton(text="🗑 Удалить всё", callback_data=f"wseq_clear:{chat_id}")])
+    if has_base or msg_steps:
         kb_rows.append([InlineKeyboardButton(text="👁 Проверить цепочку", callback_data=f"wseq_test:{chat_id}")])
-        kb_rows.append([InlineKeyboardButton(text="🗑 Удалить все шаги", callback_data=f"wseq_clear:{chat_id}")])
     kb_rows.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"ch_messages:{chat_id}")])
 
     kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
@@ -314,7 +332,8 @@ async def on_wseq_add(callback: CallbackQuery, state: FSMContext, platform_user:
         return
 
     count = await db.fetchval(
-        "SELECT COUNT(*) FROM welcome_steps WHERE owner_id=$1 AND chat_id=$2::bigint",
+        "SELECT COUNT(*) FROM welcome_steps WHERE owner_id=$1 AND chat_id=$2::bigint "
+        "AND COALESCE(action,'message') <> 'delete'",
         owner_id, chat_id,
     ) or 0
     if count >= _MAX_STEPS:
@@ -400,6 +419,7 @@ async def _show_step_editor(event, step_id: int, owner_id: int, state: FSMContex
     # Порядковый номер шага (№2, №3…) — для ориентира в заголовке
     order_rows = await db.fetch(
         "SELECT id FROM welcome_steps WHERE owner_id=$1 AND chat_id=$2::bigint "
+        "AND COALESCE(action,'message') <> 'delete' "
         "ORDER BY step_order ASC, delay_sec ASC, id ASC",
         owner_id, chat_id,
     )
@@ -913,9 +933,137 @@ async def on_wseq_clear(callback: CallbackQuery, state: FSMContext, platform_use
         "DELETE FROM welcome_steps WHERE owner_id=$1 AND chat_id=$2::bigint",
         owner_id, chat_id,
     )
-    await callback.answer("🗑 Все доп. шаги удалены")
+    await callback.answer("🗑 Всё удалено")
     await state.clear()
     await _show_manager(callback, chat_id, owner_id)
+
+
+# ── Авто-очистка переписки (свойство цепочки) ────────────────────
+
+def _autoclear_label(sec: int) -> str:
+    return "выкл" if sec <= 0 else f"+{format_delay_short(sec)}"
+
+
+async def _set_autoclear(owner_id: int, chat_id: int, sec: int):
+    """Схлопывает все шаги-очистки в один (или удаляет при sec<=0)."""
+    await db.execute(
+        "DELETE FROM welcome_steps WHERE owner_id=$1 AND chat_id=$2::bigint AND action='delete'",
+        owner_id, chat_id,
+    )
+    if sec > 0:
+        next_order = (await db.fetchval(
+            "SELECT COALESCE(MAX(step_order), 1) FROM welcome_steps WHERE owner_id=$1 AND chat_id=$2::bigint",
+            owner_id, chat_id,
+        ) or 1) + 1
+        await db.execute(
+            "INSERT INTO welcome_steps (owner_id, chat_id, step_order, delay_sec, action) "
+            "VALUES ($1, $2, $3, $4, 'delete')",
+            owner_id, chat_id, next_order, sec,
+        )
+
+
+@router.callback_query(F.data.startswith("wseq_autoclear:"))
+async def on_wseq_autoclear(callback: CallbackQuery, state: FSMContext, platform_user: dict | None):
+    if not platform_user:
+        return
+    chat_id = int(callback.data.split(":")[1])
+    owner_id = await resolve_chat_owner(platform_user["user_id"], chat_id)
+    if not await _own_chat(owner_id, chat_id):
+        await callback.answer("Площадка не найдена", show_alert=True)
+        return
+    cur = int(await db.fetchval(
+        "SELECT MIN(delay_sec) FROM welcome_steps WHERE owner_id=$1 AND chat_id=$2::bigint AND action='delete'",
+        owner_id, chat_id,
+    ) or 0)
+    await state.set_state(None)
+
+    chip_rows, row = [], []
+    for sec, label in _AUTOCLEAR_CHIPS:
+        mark = " ✅" if sec == cur else ""
+        row.append(InlineKeyboardButton(text=f"{label}{mark}", callback_data=f"wseq_autoclearset:{chat_id}:{sec}"))
+        if len(row) == 3:
+            chip_rows.append(row); row = []
+    if row:
+        chip_rows.append(row)
+    chip_rows.append([InlineKeyboardButton(text="✏️ Своё значение", callback_data=f"wseq_autoclearcustom:{chat_id}")])
+    chip_rows.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"wseq:{chat_id}")])
+
+    await navigate(
+        callback,
+        "🧹 <b>Авто-очистка переписки</b>\n\n"
+        "Через сколько после заявки удалить всю переписку цепочки (приветствие и все шаги).\n"
+        f"Сейчас: <b>{_autoclear_label(cur)}</b>",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=chip_rows),
+    )
+
+
+@router.callback_query(F.data.startswith("wseq_autoclearset:"))
+async def on_wseq_autoclearset(callback: CallbackQuery, state: FSMContext, platform_user: dict | None):
+    if not platform_user:
+        return
+    _, chat_id_s, sec_s = callback.data.split(":")
+    chat_id = int(chat_id_s)
+    owner_id = await resolve_chat_owner(platform_user["user_id"], chat_id)
+    if not await _own_chat(owner_id, chat_id):
+        await callback.answer("Площадка не найдена", show_alert=True)
+        return
+    sec = max(0, int(sec_s))
+    await _set_autoclear(owner_id, chat_id, sec)
+    await callback.answer(f"🧹 Очистка: {_autoclear_label(sec)}")
+    await state.clear()
+    await _show_manager(callback, chat_id, owner_id)
+
+
+@router.callback_query(F.data.startswith("wseq_autoclearcustom:"))
+async def on_wseq_autoclearcustom(callback: CallbackQuery, state: FSMContext, platform_user: dict | None):
+    if not platform_user:
+        return
+    chat_id = int(callback.data.split(":")[1])
+    owner_id = await resolve_chat_owner(platform_user["user_id"], chat_id)
+    if not await _own_chat(owner_id, chat_id):
+        await callback.answer("Площадка не найдена", show_alert=True)
+        return
+    await state.set_state(WSeqFSM.autoclear_delay)
+    await state.update_data(wseq_ac_chat_id=chat_id)
+    await navigate(
+        callback,
+        "✏️ <b>Своё время авто-очистки</b>\n\n"
+        "Пришлите число. По умолчанию — <b>секунды</b>.\n"
+        "Примеры: <code>90</code>, <code>5м</code>, <code>1ч</code>. <code>0</code> или <code>выкл</code> — выключить.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="◀️ Отмена", callback_data=f"wseq_autoclear:{chat_id}")],
+        ]),
+    )
+
+
+@router.message(WSeqFSM.autoclear_delay)
+async def on_wseq_autoclear_input(message: Message, state: FSMContext, platform_user: dict | None):
+    if not platform_user:
+        return
+    data = await state.get_data()
+    chat_id = data.get("wseq_ac_chat_id")
+    if chat_id is None:
+        await state.clear()
+        return
+    owner_id = await resolve_chat_owner(platform_user["user_id"], chat_id)
+    sec = parse_delay_input(message.text or "")
+    if sec is None:
+        await message.answer("Не понял значение. Пришлите число, напр. <code>90</code>, <code>5м</code>, или <code>0</code>.", parse_mode="HTML")
+        return
+    await _set_autoclear(owner_id, chat_id, sec)
+    await state.clear()
+    # чистим экран-пикер и ввод пользователя, затем показываем менеджер
+    prev = await get_active_msg(message.from_user.id)
+    try:
+        await message.delete()
+    except Exception:
+        pass
+    if prev:
+        try:
+            await message.bot.delete_message(message.chat.id, prev)
+        except Exception:
+            pass
+    await _show_manager(message, chat_id, owner_id)
 
 
 @router.callback_query(F.data.startswith("wseq_test:"))

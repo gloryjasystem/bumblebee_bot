@@ -51,6 +51,7 @@ async def navigate(
     text: str,
     reply_markup: InlineKeyboardMarkup | None = None,
     parse_mode: str = "HTML",
+    disable_web_page_preview: bool = False,
 ) -> Message | None:
     """
     Удаляет текущее сообщение и отправляет новое снизу.
@@ -100,6 +101,7 @@ async def navigate(
         text,
         reply_markup=reply_markup,
         parse_mode=parse_mode,
+        disable_web_page_preview=disable_web_page_preview,
     )
     # Запоминаем новый экран как «живой» (для SPA-поведения /help и т.п.)
     await set_active_msg(callback.from_user.id, msg.message_id)

@@ -1889,6 +1889,22 @@ async def _delayed_approve_join_request(bot: Bot, owner_id: int, chat_id: int, u
     if delay_sec > 0:
         await asyncio.sleep(delay_sec)
     try:
+        # Приветственное сообщение — отправляем ДО approve, пока открыто окно заявки
+        # на вступление. После approve Telegram закрывает окно, и боту НЕЛЬЗЯ писать
+        # юзеру, который не нажимал /start (Forbidden: bot can't initiate conversation).
+        # _send_welcome шлёт ПОЛНОЕ приветствие (с медиа/кнопками), само чистит капчу
+        # и защищено от дублей (см. _welcome_already_sent) — событие вступления не задвоит.
+        try:
+            settings_row = await db.fetchrow(
+                "SELECT * FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint AND is_active=true",
+                owner_id, chat_id,
+            )
+            if settings_row:
+                from handlers.join_requests import _send_welcome
+                await _send_welcome(bot, chat_id, user, dict(settings_row))
+        except Exception as _we:
+            logger.warning(f"delayed approve welcome error: {_we}")
+
         await bot.approve_chat_join_request(chat_id, user.id)
         # Регистрируем в bot_users после одобрения
         await db.execute(
@@ -1915,21 +1931,6 @@ async def _delayed_approve_join_request(bot: Bot, owner_id: int, chat_id: int, u
         # Трекинг ссылки-приглашения
         if invite_link_url:
             await _track_invite_link(invite_link_url, user)
-        # Приветственное сообщение — единый источник через _send_welcome:
-        # оно отправляет ПОЛНОЕ приветствие (с медиа/кнопками), само чистит капчу
-        # и защищено от дублей (см. _welcome_already_sent). Раньше здесь слался
-        # welcome_text ПРОСТЫМ текстом, а событие вступления затем присылало полное
-        # приветствие с медиа — отсюда «2 сообщения: одно с картинкой, другое без».
-        try:
-            settings_row = await db.fetchrow(
-                "SELECT * FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint AND is_active=true",
-                owner_id, chat_id,
-            )
-            if settings_row:
-                from handlers.join_requests import _send_welcome
-                await _send_welcome(bot, chat_id, user, dict(settings_row))
-        except Exception as _we:
-            logger.warning(f"delayed approve welcome error: {_we}")
     except Exception as e:
         logger.warning(f"delayed approve join request error: {e}")
 

@@ -643,6 +643,17 @@ async def _approve_user(
         if autoaccept:
             # Автопринятие включено — сразу принимаем
             _passed_captcha_group.add(key)
+            # Приветствие отправляем ДО approve — пока открыто окно заявки на вступление.
+            # После approve Telegram закрывает окно, и боту НЕЛЬЗЯ писать юзеру, который
+            # не нажимал /start (Forbidden: bot can't initiate conversation). Именно
+            # поэтому раньше капча доходила (окно было открыто), а приветствие — нет.
+            welcome_ok = False
+            if settings_row:
+                try:
+                    from handlers.join_requests import _send_welcome
+                    welcome_ok = await _send_welcome(bot, chat_id, callback.from_user, dict(settings_row))
+                except Exception as _we:
+                    logger.warning(f"[CAPTCHA WELCOME] send failed user={callback.from_user.id}: {_we}")
             try:
                 await event.approve()
             except Exception as e:
@@ -650,6 +661,8 @@ async def _approve_user(
                 logger.warning(f"Approve failed: {e}")
                 await callback.answer("❌ Не удалось одобрить заявку", show_alert=True)
                 return
+            if welcome_ok:
+                _passed_captcha_group.discard(key)  # приветствие уже ушло — событие вступления не дублирует
 
             if settings_row:
                 from handlers.join_requests import _register_user
@@ -676,17 +689,6 @@ async def _approve_user(
                         logger.info(f"[CAPTCHA TRACK] link_id={tracked}")
                     except Exception as e:
                         logger.warning(f"[LINK TRACK] failed: {e}")
-
-            # Приветствие шлём ЭТИМ ботом — у него гарантированно открыта личка с юзером
-            # (он только что показывал капчу). Не полагаемся на событие вступления, где
-            # приветствие могло уйти через «главную» строку канала = другого бота (и молча упасть).
-            if settings_row:
-                try:
-                    from handlers.join_requests import _send_welcome
-                    if await _send_welcome(bot, chat_id, callback.from_user, dict(settings_row)):
-                        _passed_captcha_group.discard(key)  # событие вступления не должно слать повторно
-                except Exception as _we:
-                    logger.warning(f"[CAPTCHA WELCOME] send failed user={callback.from_user.id}: {_we}")
 
             if settings_row.get("captcha_delete"):
                 try:
@@ -853,12 +855,23 @@ async def _approve_user_from_message(
             )
         except Exception:
             pass
+        # Приветствие — ДО approve (пока открыто окно заявки; после approve окно
+        # закрывается и боту нельзя писать юзеру, не нажимавшему /start).
+        welcome_ok = False
+        if settings_row:
+            try:
+                from handlers.join_requests import _send_welcome
+                welcome_ok = await _send_welcome(bot, chat_id, message.from_user, dict(settings_row))
+            except Exception as _we:
+                logger.warning(f"[CAPTCHA WELCOME REPLY] send failed user={message.from_user.id}: {_we}")
         try:
             await event.approve()
         except Exception as e:
             _passed_captcha_group.discard(key)
             logger.warning(f"[CAPTCHA REPLY] Approve failed: {e}")
             return
+        if welcome_ok:
+            _passed_captcha_group.discard(key)
 
         if settings_row:
             from handlers.join_requests import _register_user
@@ -883,14 +896,6 @@ async def _approve_user_from_message(
                     await _track_invite_link(inv_url, message.from_user)
                 except Exception as e:
                     logger.warning(f"[LINK TRACK REPLY] failed: {e}")
-
-            # Приветствие — ЭТИМ ботом (личка открыта: только что показывал капчу).
-            try:
-                from handlers.join_requests import _send_welcome
-                if await _send_welcome(bot, chat_id, message.from_user, dict(settings_row)):
-                    _passed_captcha_group.discard(key)
-            except Exception as _we:
-                logger.warning(f"[CAPTCHA WELCOME REPLY] send failed user={message.from_user.id}: {_we}")
 
         logger.info(f"[CAPTCHA REPLY] Passed join_request (autoaccept=on): user={user_id} chat={chat_id}")
 

@@ -1038,7 +1038,8 @@ async def _handle_message(bot: Bot, child_bot_id: int, owner_id: int, message):
         # ── 3. Обычное сообщение → обратная связь ───────────────
         # Если у пользователя активная reply-капча — обрабатываем её,
         # не пересылаем сообщение в обратную связь.
-        from handlers.captcha import _pending, _pending_group, _approve_user_from_message
+        from handlers.captcha import (_pending, _pending_group,
+                                       _approve_user_from_message, reply_captcha_answer_ok)
         _captcha_chat_id = None
         for (_cid, _uid) in list(_pending.keys()):
             if _uid == user.id:
@@ -1050,6 +1051,9 @@ async def _handle_message(bot: Bot, child_bot_id: int, owner_id: int, message):
                     _captcha_chat_id = _cid
                     break
         if _captcha_chat_id is not None:
+            # Рандомная reply-капча: сверяем нажатый эмодзи; неверный → просим ещё раз.
+            if not await reply_captcha_answer_ok(bot, (_captcha_chat_id, user.id), message):
+                return
             logger.debug(f"[CAPTCHA REPLY] Processing reply captcha for user {user.id} chat {_captcha_chat_id}")
             await _approve_user_from_message(message, bot, _captcha_chat_id, user.id, success=True)
             return

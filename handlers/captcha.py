@@ -183,12 +183,15 @@ async def send_captcha(bot: Bot, event: ChatJoinRequest, settings_row: dict):
                f"⏱ У тебя {timer_min} мин."
         )
         caption = _fill_captcha_text(raw_caption, user, event.chat.title)
-        kb = InlineKeyboardMarkup(inline_keyboard=[[
-            InlineKeyboardButton(
-                text=e,
-                callback_data=f"captcha_rnd:{event.chat.id}:{user.id}:{e}",
-            ) for e in options
-        ]])
+        # Всегда reply-клавиатура: нажатие шлёт эмодзи как сообщение → контакт с ботом.
+        # Раскладка 2×2, размер — resize_keyboard ('compact' → компактные, иначе крупные).
+        btn_style_placement = settings_row.get("captcha_button_style") or "big"
+        _rows = [options[i:i + 2] for i in range(0, len(options), 2)]
+        kb = ReplyKeyboardMarkup(
+            keyboard=[[KeyboardButton(text=e) for e in row] for row in _rows],
+            resize_keyboard=(btn_style_placement == "compact"),
+            one_time_keyboard=False,
+        )
 
     else:
         # Неизвестный тип капчи — безопасный fallback: не отправляем, заявка в очередь
@@ -379,13 +382,14 @@ async def send_captcha_group(
                f"⏱ У тебя {timer_min} мин."
         )
         text = _fill_captcha_text(raw_text, user, chat_title)
-        # Рандомная капча всегда inline (нужно знать какие эмодзи выбраны)
-        kb = InlineKeyboardMarkup(inline_keyboard=[[
-            InlineKeyboardButton(
-                text=e,
-                callback_data=f"captcha_rnd:{chat_id}:{user.id}:{e}",
-            ) for e in options
-        ]])
+        # Всегда reply-клавиатура (нажатие шлёт эмодзи как сообщение → контакт). Раскладка 2×2.
+        btn_style_placement = settings_row.get("captcha_button_style") or "big"
+        _rows = [options[i:i + 2] for i in range(0, len(options), 2)]
+        kb = ReplyKeyboardMarkup(
+            keyboard=[[KeyboardButton(text=e) for e in row] for row in _rows],
+            resize_keyboard=(btn_style_placement == "compact"),
+            one_time_keyboard=False,
+        )
     else:
         logger.warning(f"[GROUP CAPTCHA] Unknown captcha_type={captcha_type!r} — skipping")
         _pending_group.pop(key, None)
@@ -483,6 +487,23 @@ async def on_captcha_random_press(callback: CallbackQuery, bot: Bot):
     await _approve_user(callback, bot, chat_id, user_id, success=success)
 
 
+async def reply_captcha_answer_ok(bot: Bot, key, message: Message) -> bool:
+    """Проверка ответа reply-капчи. Для РАНДОМНОЙ капчи (в _expected лежит верный эмодзи)
+    сверяем нажатую кнопку; при неверной — просим нажать ещё раз и оставляем капчу активной.
+    Для ПРОСТОЙ капчи (_expected нет) — любой ответ верный. True = можно принимать."""
+    expected = _expected.get(key)
+    if expected is None:
+        return True
+    if (message.text or "").strip() == str(expected).strip():
+        _expected.pop(key, None)
+        return True
+    try:
+        await bot.send_message(message.from_user.id, "❌ Неверно! Нажмите правильную кнопку ниже.")
+    except Exception:
+        pass
+    return False
+
+
 @router.message(F.chat.type == "private", StateFilter(None))
 async def on_captcha_reply_message(message: Message, bot: Bot):
     """Reply-капча — пользователь нажал кнопку Reply-клавиатуры в личке.
@@ -495,6 +516,8 @@ async def on_captcha_reply_message(message: Message, bot: Bot):
     for key, event in list(_pending.items()):
         chat_id, uid = key
         if uid == user_id:
+            if not await reply_captcha_answer_ok(bot, key, message):
+                return
             await _approve_user_from_message(message, bot, chat_id, user_id, success=True)
             return
 
@@ -502,6 +525,8 @@ async def on_captcha_reply_message(message: Message, bot: Bot):
     for key in list(_pending_group.keys()):
         chat_id, uid = key
         if uid == user_id:
+            if not await reply_captcha_answer_ok(bot, key, message):
+                return
             await _approve_user_from_message(message, bot, chat_id, user_id, success=True)
             return
 

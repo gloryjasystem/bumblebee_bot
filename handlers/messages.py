@@ -284,7 +284,7 @@ async def _show_captcha(callback: CallbackQuery, chat_id: int, owner_id: int):
     greet_icon    = "📩" if greet_on else "✉️"
     accept_icon   = "🔋" if accept_now else "🪫"
     accept_a_icon = "✅" if accept_all else "❎"
-    btn_label     = "Компактная" if btn_size == "compact" else "Крупная"
+    btn_label     = "▫️" if btn_size == "compact" else "⬜"
 
     info = (
         "<blockquote>"
@@ -334,7 +334,7 @@ async def _show_captcha(callback: CallbackQuery, chat_id: int, owner_id: int):
             ],
             [
                 InlineKeyboardButton(
-                    text=f"🎛 Размер: {btn_label}",
+                    text=f"🎛 Кнопки: {btn_label}",
                     callback_data=f"ch_cap_toggle:{chat_id}:btn_type",
                 ),
                 InlineKeyboardButton(text=f"⏱ Таймер: {timer} мин", callback_data=f"ch_cap_toggle:{chat_id}:timer"),
@@ -429,8 +429,8 @@ async def on_ch_cap_toggle(callback: CallbackQuery, platform_user: dict | None):
         new_val = "big" if cur == "compact" else "compact"
         await db.execute("UPDATE bot_chats SET captcha_button_style=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
                          new_val, owner_id, chat_id)
-        labels = {"big": "Крупная", "compact": "Компактная"}
-        await callback.answer(f"Размер: {labels[new_val]}")
+        labels = {"big": "⬜ Крупные", "compact": "▫️ Компактные"}
+        await callback.answer(f"Размер кнопок: {labels[new_val]}")
 
     elif setting == "timer":
         cur = int(ch.get("captcha_timer_min") or 1)

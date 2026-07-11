@@ -73,6 +73,13 @@ def _mark_farewell_delivered(chat_id: int, user_id: int) -> None:
     _recent_farewell[(chat_id, user_id)] = time.monotonic()
 
 
+def _farewell_release(chat_id: int, user_id: int) -> None:
+    """Снимает пометку доставки прощания. Вызывается при ВСТУПЛЕНИИ юзера — чтобы его
+    следующий выход снова отправил прощание (дедуп не должен перекрывать разные циклы
+    вход→выход того же пользователя, иначе быстрый повторный тест «глотает» прощание)."""
+    _recent_farewell.pop((chat_id, user_id), None)
+
+
 def _dm_blocked_reason(err: Exception) -> str | None:
     """Если ошибка означает «бот не может писать этому юзеру» — вернуть краткую
     причину; иначе None. Нужно, чтобы не путать «юзер не запускал бота» с реальным сбоем."""

@@ -2396,6 +2396,10 @@ async def _handle_chat_member(bot: Bot, child_bot_id: int, event: ChatMemberUpda
             is_premium, has_rtl, has_hieroglyph, link_id,
         )
         logger.info(f"[MEMBER] User {user.id} joined chat {chat_id} (owner={owner_id})")
+        # Сброс дедупа прощания — чтобы следующий выход этого юзера снова отправил прощание
+        # (дедуп не должен перекрывать разные циклы вход→выход, иначе быстрый повтор глотает).
+        from handlers.join_requests import _farewell_release
+        _farewell_release(chat_id, user.id)
 
         # Проверка лимита вступлений
         await _check_join_limit(
@@ -2447,6 +2451,10 @@ async def _handle_chat_member(bot: Bot, child_bot_id: int, event: ChatMemberUpda
             _kicked_for_captcha.discard(key)
             logger.info(f"[CAPTCHA KICK] Skip left-event for captcha-kicked user={user.id} chat={chat_id}")
             return
+
+        # Сброс дедупа приветствия — чтобы повторное вступление этого юзера снова его отправило.
+        from handlers.join_requests import _welcome_release
+        _welcome_release(chat_id, user.id)
 
         # Обновляем счётчик отписок для ссылки (только если этот пользователь был учтён в joined)
         await db.execute(

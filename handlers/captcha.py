@@ -609,10 +609,14 @@ async def _approve_user(
     if success:
         settings_row = await _fetch_chat_settings(chat_id, owner_hint)
         autoaccept = settings_row.get("autoaccept") if settings_row else True
+        # Помечаем «капча пройдена» СРАЗУ — и для авто-, и для ручного принятия. Иначе при
+        # ручном одобрении заявки (в т.ч. родной кнопкой канала) событие вступления не знает,
+        # что капча пройдена, и НЕ отправляет приветствие. В авто-ветке флаг снимается после
+        # успешной отправки приветствия (до approve), чтобы не задвоить.
+        _passed_captcha_group.add(key)
 
         if autoaccept:
             # Автопринятие включено — сразу принимаем
-            _passed_captcha_group.add(key)
             # Приветствие отправляем ДО approve — пока открыто окно заявки на вступление.
             # После approve Telegram закрывает окно, и боту НЕЛЬЗЯ писать юзеру, который
             # не нажимал /start (Forbidden: bot can't initiate conversation). Именно
@@ -813,10 +817,11 @@ async def _approve_user_from_message(
     # ── Join-request режим ──
     settings_row = await _fetch_chat_settings(chat_id, owner_hint)
     autoaccept = settings_row.get("autoaccept") if settings_row else True
+    # Флаг «капча пройдена» — и для авто-, и для ручного принятия (см. _approve_user).
+    _passed_captcha_group.add(key)
 
     if autoaccept:
         # Автопринятие включено — сразу принимаем
-        _passed_captcha_group.add(key)
         try:
             await bot.send_message(
                 user_id,

@@ -581,9 +581,26 @@ async def on_req_confirm(callback: CallbackQuery, bot: Bot, state: FSMContext, p
         for row in pending_full:
             try:
                 if action == "accept":
+                    class _FakeUser2:
+                        id = row["user_id"]
+                        first_name = row["first_name"] or ""
+                        last_name = None
+                        language_code = row["language_code"] or None
+                        is_premium = row["is_premium"]
+                        username = None
+                    # Приветствие шлём ДО approve — пока открыто окно заявки (5 мин / до одобрения).
+                    # После approve окно закрывается и боту нельзя писать «холодному» юзеру.
+                    if settings_row:
+                        try:
+                            from handlers.join_requests import _send_welcome
+                            await _send_welcome(child_bot, c_id, _FakeUser2(), dict(settings_row))
+                        except Exception as _we:
+                            import logging
+                            logging.getLogger(__name__).warning(f"[MANUAL ACCEPT] welcome failed: {_we}")
+
                     await child_bot.approve_chat_join_request(c_id, row["user_id"])
                     await db.execute("UPDATE join_requests SET status='approved', resolved_at=now() WHERE owner_id=$1 AND chat_id=$2::bigint AND user_id=$3", owner_id, c_id, row["user_id"])
-                    
+
                     if invite_link_url:
                         from scheduler.child_bot_runner import _track_invite_link
                         class _FakeUser:
@@ -596,18 +613,10 @@ async def on_req_confirm(callback: CallbackQuery, bot: Bot, state: FSMContext, p
                         try:
                             await _track_invite_link(invite_link_url, _FakeUser())
                         except Exception: pass
-                    
+
                     if settings_row:
-                        from handlers.join_requests import _register_user, _send_welcome
-                        class _FakeUser2:
-                            id = row["user_id"]
-                            first_name = row["first_name"] or ""
-                            last_name = None
-                            language_code = row["language_code"] or None
-                            is_premium = row["is_premium"]
-                            username = None
+                        from handlers.join_requests import _register_user
                         await _register_user(owner_id, c_id, _FakeUser2())
-                        await _send_welcome(child_bot, c_id, _FakeUser2(), dict(settings_row))
                 else:
                     await child_bot.decline_chat_join_request(c_id, row["user_id"])
                     await db.execute("UPDATE join_requests SET status='declined', resolved_at=now() WHERE owner_id=$1 AND chat_id=$2::bigint AND user_id=$3", owner_id, c_id, row["user_id"])
@@ -2255,6 +2264,23 @@ async def on_bs_req_accept_all(callback: CallbackQuery, bot: Bot, platform_user:
             owner_id, chat_id)
         for row in pending:
             try:
+                class _FakeUser2:
+                    id = row["user_id"]
+                    first_name = row["first_name"] or ""
+                    last_name = None
+                    language_code = row["language_code"] or None
+                    is_premium = row["is_premium"]
+                    username = None
+                # Приветствие ДО approve — пока открыто окно заявки (5 мин / до одобрения).
+                # После approve окно закрывается и боту нельзя писать «холодному» юзеру.
+                if settings_row:
+                    try:
+                        from handlers.join_requests import _send_welcome
+                        await _send_welcome(child_bot_instance, chat_id, _FakeUser2(), dict(settings_row))
+                    except Exception as _e:
+                        import logging
+                        logging.getLogger(__name__).warning(f"[MANUAL ACCEPT] Failed to send welcome: {_e}")
+
                 await child_bot_instance.approve_chat_join_request(chat_id, row["user_id"])
                 approved += 1
                 await db.execute(
@@ -2276,22 +2302,10 @@ async def on_bs_req_accept_all(callback: CallbackQuery, bot: Bot, platform_user:
                         await _track_invite_link(invite_link_url, _FakeUser())
                     except Exception:
                         pass
-                
+
                 if settings_row:
-                    try:
-                        from handlers.join_requests import _register_user, _send_welcome
-                        class _FakeUser2:
-                            id = row["user_id"]
-                            first_name = row["first_name"] or ""
-                            last_name = None
-                            language_code = row["language_code"] or None
-                            is_premium = row["is_premium"]
-                            username = None
-                        await _register_user(owner_id, chat_id, _FakeUser2())
-                        await _send_welcome(child_bot_instance, chat_id, _FakeUser2(), dict(settings_row))
-                    except Exception as _e:
-                        import logging
-                        logging.getLogger(__name__).warning(f"[MANUAL ACCEPT] Failed to send welcome: {_e}")
+                    from handlers.join_requests import _register_user
+                    await _register_user(owner_id, chat_id, _FakeUser2())
             except Exception:
                 await db.execute(
                     "UPDATE join_requests SET status='expired', resolved_at=now() "

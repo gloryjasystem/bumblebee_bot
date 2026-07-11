@@ -147,35 +147,20 @@ async def send_captcha(bot: Bot, event: ChatJoinRequest, settings_row: dict):
         caption = _fill_captcha_text(raw_caption, user, event.chat.title)
         # Применяем пользовательские кнопки если заданы, иначе — кнопка по умолчанию
         custom_btns = _parse_captcha_buttons(settings_row.get("captcha_buttons_raw") or "")
-        btn_style_placement = settings_row.get("captcha_button_style") or "reply"
+        btn_style_placement = settings_row.get("captcha_button_style") or "big"
 
-        if btn_style_placement == "reply":
-            # Reply-клавиатура: кнопки в панели ввода
-            if custom_btns:
-                btn_texts = [label for label, _ in custom_btns]
-            else:
-                btn_texts = ["✅ Я не робот"]
-            kb = ReplyKeyboardMarkup(
-                keyboard=[[KeyboardButton(text=t)] for t in btn_texts],
-                resize_keyboard=True,
-                one_time_keyboard=True,
-            )
+        # Всегда reply-клавиатура: нажатие кнопки ОТПРАВЛЯЕТ сообщение боту → открывается
+        # контакт с ботом, и приветствие/прощание доходят даже тем, кто не жал /start.
+        # Размер кнопки: 'compact' → resize_keyboard=True (компактная), иначе крупная.
+        if custom_btns:
+            btn_texts = [label for label, _ in custom_btns]
         else:
-            if custom_btns:
-                kb = InlineKeyboardMarkup(inline_keyboard=[
-                    [InlineKeyboardButton(
-                        text=btn_label,
-                        callback_data=f"captcha_ok:{event.chat.id}:{user.id}",
-                        **({"style": btn_style} if btn_style else {}),
-                    )] for btn_label, btn_style in custom_btns
-                ])
-            else:
-                kb = InlineKeyboardMarkup(inline_keyboard=[[
-                    InlineKeyboardButton(
-                        text="✅ Я не робот",
-                        callback_data=f"captcha_ok:{event.chat.id}:{user.id}",
-                    )
-                ]])
+            btn_texts = ["✅ Я не робот"]
+        kb = ReplyKeyboardMarkup(
+            keyboard=[[KeyboardButton(text=t)] for t in btn_texts],
+            resize_keyboard=(btn_style_placement == "compact"),
+            one_time_keyboard=True,
+        )
 
     # ── Рандомная капча ────────────────────────────────────────
     elif captcha_type == "random":
@@ -363,33 +348,18 @@ async def send_captcha_group(
         text = _fill_captcha_text(raw_text, user, chat_title)
 
         custom_btns = _parse_captcha_buttons(settings_row.get("captcha_buttons_raw") or "")
-        btn_style_placement = settings_row.get("captcha_button_style") or "reply"
+        btn_style_placement = settings_row.get("captcha_button_style") or "big"
 
-        if btn_style_placement == "reply":
-            if custom_btns:
-                btn_texts = [label for label, _ in custom_btns]
-            else:
-                btn_texts = ["✅ Я не робот"]
-            kb = ReplyKeyboardMarkup(
-                keyboard=[[KeyboardButton(text=t)] for t in btn_texts],
-                resize_keyboard=True,
-                one_time_keyboard=True,
-            )
+        # Всегда reply-клавиатура (открывает контакт с ботом). Размер — resize_keyboard.
+        if custom_btns:
+            btn_texts = [label for label, _ in custom_btns]
         else:
-            if custom_btns:
-                kb = InlineKeyboardMarkup(inline_keyboard=[
-                    [InlineKeyboardButton(
-                        text=btn_label,
-                        callback_data=f"captcha_ok:{chat_id}:{user.id}",
-                    )] for btn_label, _ in custom_btns
-                ])
-            else:
-                kb = InlineKeyboardMarkup(inline_keyboard=[[
-                    InlineKeyboardButton(
-                        text="✅ Я не робот",
-                        callback_data=f"captcha_ok:{chat_id}:{user.id}",
-                    )
-                ]])
+            btn_texts = ["✅ Я не робот"]
+        kb = ReplyKeyboardMarkup(
+            keyboard=[[KeyboardButton(text=t)] for t in btn_texts],
+            resize_keyboard=(btn_style_placement == "compact"),
+            one_time_keyboard=True,
+        )
 
     # ── Рандомная капча ──────────────────────────────────────────
     elif captcha_type == "random":

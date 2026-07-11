@@ -269,7 +269,7 @@ async def _show_captcha(callback: CallbackQuery, chat_id: int, owner_id: int):
     ctype         = ch.get("captcha_type") or "off"
     timer         = int(ch["captcha_timer_min"] if ch.get("captcha_timer_min") else 1)
     anim_on       = bool(ch.get("captcha_anim_file_id")) or bool(ch.get("captcha_animation", False))
-    btn_placement = ch.get("captcha_button_style") or "reply"  # 'reply' (дефолт) / 'inline'
+    btn_size      = "compact" if ch.get("captcha_button_style") == "compact" else "big"  # размер reply-кнопки
     greet_on      = bool(ch.get("captcha_greet", False))
     accept_now    = bool(ch.get("captcha_accept_now", False))
     accept_all    = bool(ch.get("captcha_accept_all", False))
@@ -284,7 +284,7 @@ async def _show_captcha(callback: CallbackQuery, chat_id: int, owner_id: int):
     greet_icon    = "📩" if greet_on else "✉️"
     accept_icon   = "🔋" if accept_now else "🪫"
     accept_a_icon = "✅" if accept_all else "❎"
-    btn_label     = "⌨️ Reply" if btn_placement == "reply" else "📩 Inline"
+    btn_label     = "Компактная" if btn_size == "compact" else "Крупная"
 
     info = (
         "<blockquote>"
@@ -334,7 +334,7 @@ async def _show_captcha(callback: CallbackQuery, chat_id: int, owner_id: int):
             ],
             [
                 InlineKeyboardButton(
-                    text=f"🎛 Кнопки: {btn_label}",
+                    text=f"🎛 Размер: {btn_label}",
                     callback_data=f"ch_cap_toggle:{chat_id}:btn_type",
                 ),
                 InlineKeyboardButton(text=f"⏱ Таймер: {timer} мин", callback_data=f"ch_cap_toggle:{chat_id}:timer"),
@@ -423,12 +423,14 @@ async def on_ch_cap_toggle(callback: CallbackQuery, platform_user: dict | None):
         await callback.answer("Приветствовать: " + ("вкл" if new_val else "выкл"))
 
     elif setting == "btn_type":
-        cur = ch.get("captcha_button_style") or "reply"
-        new_val = "reply" if cur == "inline" else "inline"
+        # Размер reply-кнопки капчи: крупная (big) ↔ компактная (compact). Inline убран —
+        # капча всегда reply (нажатие шлёт сообщение → бот может писать приветствие/прощание).
+        cur = ch.get("captcha_button_style")
+        new_val = "big" if cur == "compact" else "compact"
         await db.execute("UPDATE bot_chats SET captcha_button_style=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
                          new_val, owner_id, chat_id)
-        labels = {"inline": "📩 Inline", "reply": "⌨️ Reply"}
-        await callback.answer(f"Кнопки: {labels[new_val]}")
+        labels = {"big": "Крупная", "compact": "Компактная"}
+        await callback.answer(f"Размер: {labels[new_val]}")
 
     elif setting == "timer":
         cur = int(ch.get("captcha_timer_min") or 1)

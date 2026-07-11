@@ -14,6 +14,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
 import db.pool as db
+from db.channels import resolve_chat_owner
 from services.security import sanitize
 from utils.nav import navigate
 
@@ -142,7 +143,7 @@ async def on_ch_messages(callback: CallbackQuery, platform_user: dict | None):
     if not platform_user:
         return
     chat_id = int(callback.data.split(":")[1])
-    await _show_ch_messages(callback, chat_id, platform_user["user_id"])
+    await _show_ch_messages(callback, chat_id, await resolve_chat_owner(platform_user["user_id"], chat_id))
 
 
 # ── Toggle: Печать ─────────────────────────────────────────────
@@ -152,7 +153,7 @@ async def on_ch_toggle_typing(callback: CallbackQuery, platform_user: dict | Non
     if not platform_user:
         return
     chat_id  = int(callback.data.split(":")[1])
-    owner_id = platform_user["user_id"]
+    owner_id = await resolve_chat_owner(platform_user["user_id"], chat_id)
     ch = await db.fetchrow(
         "SELECT typing_action FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint",
         owner_id, chat_id,
@@ -188,7 +189,7 @@ async def on_ch_reactions(callback: CallbackQuery, platform_user: dict | None):
     if not platform_user:
         return
     chat_id  = int(callback.data.split(":")[1])
-    owner_id = platform_user["user_id"]
+    owner_id = await resolve_chat_owner(platform_user["user_id"], chat_id)
     ch = await db.fetchrow(
         "SELECT reaction_emoji FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint",
         owner_id, chat_id,
@@ -208,7 +209,7 @@ async def on_ch_set_reaction(callback: CallbackQuery, platform_user: dict | None
     parts    = callback.data.split(":")
     chat_id  = int(parts[1])
     emoji    = parts[2]
-    owner_id = platform_user["user_id"]
+    owner_id = await resolve_chat_owner(platform_user["user_id"], chat_id)
     # « none» — отключить реакцию (сохраняем NULL)
     save_val = None if emoji == "none" else emoji
     await db.execute(
@@ -234,7 +235,7 @@ async def on_ch_delete_toggle(callback: CallbackQuery, platform_user: dict | Non
     if not platform_user:
         return
     chat_id  = int(callback.data.split(":")[1])
-    owner_id = platform_user["user_id"]
+    owner_id = await resolve_chat_owner(platform_user["user_id"], chat_id)
     ch = await db.fetchrow(
         "SELECT auto_delete_min FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint",
         owner_id, chat_id,
@@ -367,7 +368,7 @@ async def on_ch_captcha(callback: CallbackQuery, platform_user: dict | None):
     if not platform_user:
         return
     chat_id = int(callback.data.split(":")[1])
-    await _show_captcha(callback, chat_id, platform_user["user_id"])
+    await _show_captcha(callback, chat_id, await resolve_chat_owner(platform_user["user_id"], chat_id))
 
 
 # ── Toggle: Тип капчи (off → simple → random → off → ...) ──────
@@ -377,7 +378,7 @@ async def on_ch_captcha_type(callback: CallbackQuery, platform_user: dict | None
     if not platform_user:
         return
     chat_id  = int(callback.data.split(":")[1])
-    owner_id = platform_user["user_id"]
+    owner_id = await resolve_chat_owner(platform_user["user_id"], chat_id)
     ch = await db.fetchrow(
         "SELECT captcha_type FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint",
         owner_id, chat_id,
@@ -407,7 +408,7 @@ async def on_ch_cap_toggle(callback: CallbackQuery, platform_user: dict | None):
     parts    = callback.data.split(":")
     chat_id  = int(parts[1])
     setting  = parts[2]
-    owner_id = platform_user["user_id"]
+    owner_id = await resolve_chat_owner(platform_user["user_id"], chat_id)
 
     ch = await db.fetchrow(
         "SELECT * FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint",
@@ -484,7 +485,7 @@ async def on_ch_cap_reset_ok(callback: CallbackQuery, platform_user: dict | None
     if not platform_user:
         return
     chat_id  = int(callback.data.split(":")[1])
-    owner_id = platform_user["user_id"]
+    owner_id = await resolve_chat_owner(platform_user["user_id"], chat_id)
     await db.execute(
         """UPDATE bot_chats
            SET captcha_text=NULL, captcha_buttons_raw=NULL, captcha_media=NULL,
@@ -504,7 +505,7 @@ async def on_ch_captcha_emoji(callback: CallbackQuery, platform_user: dict | Non
     if not platform_user:
         return
     chat_id  = int(callback.data.split(":")[1])
-    owner_id = platform_user["user_id"]
+    owner_id = await resolve_chat_owner(platform_user["user_id"], chat_id)
     ch = await db.fetchrow(
         "SELECT captcha_emoji_set FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint",
         owner_id, chat_id,
@@ -531,7 +532,7 @@ async def on_ch_cap_set_emoji(callback: CallbackQuery, platform_user: dict | Non
     parts    = callback.data.split(":")
     chat_id  = int(parts[1])
     idx      = int(parts[2])
-    owner_id = platform_user["user_id"]
+    owner_id = await resolve_chat_owner(platform_user["user_id"], chat_id)
     es       = _EMOJI_SETS[idx % len(_EMOJI_SETS)]
     await db.execute(
         "UPDATE bot_chats SET captcha_emoji_set=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
@@ -549,7 +550,7 @@ async def on_ch_cap_anim_menu(call: CallbackQuery, state: FSMContext, platform_u
     if not platform_user:
         return
     chat_id = int(call.data.split(":")[1])
-    owner_id = platform_user["user_id"]
+    owner_id = await resolve_chat_owner(platform_user["user_id"], chat_id)
     
     # check permissions
     ch = await db.fetchrow(
@@ -657,7 +658,7 @@ async def on_ch_cap_anim_back(call: CallbackQuery, state: FSMContext, platform_u
             pass
             
     await state.clear()
-    await _show_captcha(call, chat_id, platform_user["user_id"])
+    await _show_captcha(call, chat_id, await resolve_chat_owner(platform_user["user_id"], chat_id))
     await call.answer()
 
 
@@ -687,7 +688,7 @@ async def on_ch_cap_anim_del(call: CallbackQuery, state: FSMContext, platform_us
     if not platform_user:
         return
     chat_id = int(call.data.split(":")[1])
-    owner_id = platform_user["user_id"]
+    owner_id = await resolve_chat_owner(platform_user["user_id"], chat_id)
     # check permissions
     ch = await db.fetchrow(
         "SELECT * FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint",
@@ -777,13 +778,13 @@ async def on_ch_captcha_text(callback: CallbackQuery, state: FSMContext, platfor
     chat_id  = int(callback.data.split(":")[1])
     ch = await db.fetchrow(
         "SELECT captcha_type FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint",
-        platform_user["user_id"], chat_id,
+        await resolve_chat_owner(platform_user["user_id"], chat_id), chat_id,
     )
     ctype_label = {"simple": "простой", "random": "рандомной"}.get(
         (ch.get("captcha_type") or "simple") if ch else "simple", "простой"
     )
     await state.set_state(MessagesFSM.waiting_for_captcha_text)
-    await state.update_data(chat_id=chat_id, owner_id=platform_user["user_id"],
+    await state.update_data(chat_id=chat_id, owner_id=await resolve_chat_owner(platform_user["user_id"], chat_id),
                             editor_prompt_mid=callback.message.message_id)
     await callback.message.edit_text(
         f"Пришлите сообщение для <u>{ctype_label} капчи</u>.\n\n"
@@ -842,12 +843,12 @@ async def on_ch_captcha_btns(callback: CallbackQuery, state: FSMContext, platfor
     chat_id  = int(callback.data.split(":")[1])
     ch = await db.fetchrow(
         "SELECT captcha_type FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint",
-        platform_user["user_id"], chat_id,
+        await resolve_chat_owner(platform_user["user_id"], chat_id), chat_id,
     )
     ctypes_map = {"simple": "Простая", "random": "Рандомная"}
     ctype_label = ctypes_map.get((ch.get("captcha_type") or "simple") if ch else "simple", "Простая")
     await state.set_state(MessagesFSM.waiting_for_captcha_buttons)
-    await state.update_data(chat_id=chat_id, owner_id=platform_user["user_id"],
+    await state.update_data(chat_id=chat_id, owner_id=await resolve_chat_owner(platform_user["user_id"], chat_id),
                             editor_prompt_mid=callback.message.message_id)
     await callback.message.edit_text(
         f"{ctype_label} капча:\n\n"
@@ -951,7 +952,7 @@ async def on_ch_autoreply(callback: CallbackQuery, platform_user: dict | None):
     if not platform_user:
         return
     chat_id = int(callback.data.split(":")[1])
-    await _show_autoreply(callback, chat_id, platform_user["user_id"])
+    await _show_autoreply(callback, chat_id, await resolve_chat_owner(platform_user["user_id"], chat_id))
 
 
 # ── Панель управления общим ответом ───────────────────────────
@@ -1081,7 +1082,7 @@ async def on_ch_ar_back_global(callback: CallbackQuery, platform_user: dict | No
     if not platform_user:
         return
     chat_id  = int(callback.data.split(":")[1])
-    owner_id = platform_user["user_id"]
+    owner_id = await resolve_chat_owner(platform_user["user_id"], chat_id)
 
     # Удалить эхо-сообщение, если оно зарегистрировано
     key = (owner_id, chat_id)
@@ -1106,7 +1107,7 @@ async def on_ch_ar_toggle_global(
     if not platform_user:
         return
     chat_id  = int(callback.data.split(":")[1])
-    owner_id = platform_user["user_id"]
+    owner_id = await resolve_chat_owner(platform_user["user_id"], chat_id)
 
     ch = await db.fetchrow(
         "SELECT general_reply_enabled, general_reply_text FROM bot_chats "
@@ -1202,7 +1203,7 @@ async def on_ch_ar_edit_global(
     if not platform_user:
         return
     chat_id  = int(callback.data.split(":")[1])
-    owner_id = platform_user["user_id"]
+    owner_id = await resolve_chat_owner(platform_user["user_id"], chat_id)
     # Удаляем эхо-сообщение перед открытием формы
     key = (owner_id, chat_id)
     echo_ids = _gr_echo_ids.pop(key, [])
@@ -1242,7 +1243,7 @@ async def on_ch_ar_media_global(
     if not platform_user:
         return
     chat_id  = int(callback.data.split(":")[1])
-    owner_id = platform_user["user_id"]
+    owner_id = await resolve_chat_owner(platform_user["user_id"], chat_id)
     ch = await db.fetchrow(
         "SELECT general_reply_media, general_reply_media_top, general_reply_preview FROM bot_chats "
         "WHERE owner_id=$1 AND chat_id=$2::bigint",
@@ -1275,7 +1276,7 @@ async def on_ch_ar_preview_global(callback: CallbackQuery, platform_user: dict |
     if not platform_user:
         return
     chat_id  = int(callback.data.split(":")[1])
-    owner_id = platform_user["user_id"]
+    owner_id = await resolve_chat_owner(platform_user["user_id"], chat_id)
     ch = await db.fetchrow(
         "SELECT general_reply_preview FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint",
         owner_id, chat_id,
@@ -1298,7 +1299,7 @@ async def on_ch_ar_btns_global(
     if not platform_user:
         return
     chat_id  = int(callback.data.split(":")[1])
-    owner_id = platform_user["user_id"]
+    owner_id = await resolve_chat_owner(platform_user["user_id"], chat_id)
     # Удаляем эхо-сообщение перед открытием формы
     key = (owner_id, chat_id)
     echo_ids = _gr_echo_ids.pop(key, [])
@@ -1404,7 +1405,7 @@ async def on_ch_ar_delete_global(callback: CallbackQuery, platform_user: dict | 
     if not platform_user:
         return
     chat_id  = int(callback.data.split(":")[1])
-    owner_id = platform_user["user_id"]
+    owner_id = await resolve_chat_owner(platform_user["user_id"], chat_id)
 
     # Удалить эхо-сообщение из чата
     key = (owner_id, chat_id)
@@ -1435,7 +1436,7 @@ async def on_ch_ar_add(callback: CallbackQuery, state: FSMContext, platform_user
         return
     chat_id = int(callback.data.split(":")[1])
     await state.set_state(MessagesFSM.waiting_for_autoreply_kw)
-    await state.update_data(chat_id=chat_id, owner_id=platform_user["user_id"], prompt_mid=callback.message.message_id)
+    await state.update_data(chat_id=chat_id, owner_id=await resolve_chat_owner(platform_user["user_id"], chat_id), prompt_mid=callback.message.message_id)
     await callback.message.edit_text(
         "Отправьте триггер.\n\n"
         "<blockquote>① Триггер — это сообщение для вызова автоматического ответа.</blockquote>\n\n"
@@ -1685,7 +1686,7 @@ async def on_ch_ar_view(callback: CallbackQuery, platform_user: dict | None):
     parts   = callback.data.split(":")
     chat_id = int(parts[1])
     ar_id   = int(parts[2])
-    owner_id = platform_user["user_id"]
+    owner_id = await resolve_chat_owner(platform_user["user_id"], chat_id)
     await callback.message.delete()
     await _show_keyword_mgmt(callback.message, chat_id, owner_id, ar_id)
     await callback.answer()
@@ -1699,7 +1700,7 @@ async def on_ch_ar_kw_back(callback: CallbackQuery, platform_user: dict | None):
     parts    = callback.data.split(":")
     chat_id  = int(parts[1])
     ar_id    = int(parts[2])
-    owner_id = platform_user["user_id"]
+    owner_id = await resolve_chat_owner(platform_user["user_id"], chat_id)
 
     key = (owner_id, chat_id, ar_id)
     echo_ids = _kw_echo_ids.pop(key, [])
@@ -1723,7 +1724,7 @@ async def on_ch_ar_kw_edit(
     parts    = callback.data.split(":")
     chat_id  = int(parts[1])
     ar_id    = int(parts[2])
-    owner_id = platform_user["user_id"]
+    owner_id = await resolve_chat_owner(platform_user["user_id"], chat_id)
 
     # Получаем текущий keyword для контекста
     row = await db.fetchrow(
@@ -1770,7 +1771,7 @@ async def on_ch_ar_kw_media(
     parts    = callback.data.split(":")
     chat_id  = int(parts[1])
     ar_id    = int(parts[2])
-    owner_id = platform_user["user_id"]
+    owner_id = await resolve_chat_owner(platform_user["user_id"], chat_id)
 
     row = await db.fetchrow(
         "SELECT reply_media, reply_media_top, reply_preview, reply_text, reply_buttons, reply_media_type FROM autoreplies WHERE id=$1 AND owner_id=$2",
@@ -1858,7 +1859,7 @@ async def on_ch_ar_kw_btns(
     parts    = callback.data.split(":")
     chat_id  = int(parts[1])
     ar_id    = int(parts[2])
-    owner_id = platform_user["user_id"]
+    owner_id = await resolve_chat_owner(platform_user["user_id"], chat_id)
 
     # Удаляем эхо-сообщение
     key = (owner_id, chat_id, ar_id)
@@ -1972,7 +1973,7 @@ async def on_ch_ar_kw_preview(callback: CallbackQuery, platform_user: dict | Non
     parts    = callback.data.split(":")
     chat_id  = int(parts[1])
     ar_id    = int(parts[2])
-    owner_id = platform_user["user_id"]
+    owner_id = await resolve_chat_owner(platform_user["user_id"], chat_id)
     row = await db.fetchrow(
         "SELECT reply_preview FROM autoreplies WHERE id=$1 AND owner_id=$2", ar_id, owner_id
     )
@@ -1995,7 +1996,7 @@ async def on_ch_ar_del(callback: CallbackQuery, platform_user: dict | None):
     parts    = callback.data.split(":")
     chat_id  = int(parts[1])
     ar_id    = int(parts[2])
-    owner_id = platform_user["user_id"]
+    owner_id = await resolve_chat_owner(platform_user["user_id"], chat_id)
 
     # Удаляем эхо-сообщение панели управления, если есть
     key = (owner_id, chat_id, ar_id)

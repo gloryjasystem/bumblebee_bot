@@ -72,3 +72,58 @@ async def get_channel(
             chat_id, len(rows), owners,
         )
     return rows[0] if rows else None
+
+
+async def resolve_chat_owner(user_id: int, chat_id: int) -> int:
+    """Возвращает owner_id, от имени которого user_id управляет площадкой chat_id.
+
+    Нужно для командного доступа: настройки площадки всегда живут под owner_id
+    владельца бота, а редактировать их может и приглашённый член команды.
+
+    Логика:
+      1. Прямой владелец (у user_id есть своя строка bot_chats на этот чат) → сам user_id.
+      2. Активный член команды бота, который держит этот чат (team_members.child_bot_id
+         = bot_chats.child_bot_id, is_active) → реальный owner_id этого бота.
+      3. Иначе → сам user_id.
+
+    ВАЖНО: п.3 (fallback на самого user_id) гарантирует, что для владельца поведение
+    НЕ меняется ни на йоту — в худшем случае это ровно старое `owner_id = user_id`.
+    Доступ никому не выдаётся: если user_id не владелец и не член команды, запросы
+    `WHERE owner_id=user_id` просто ничего не найдут, как и раньше.
+    """
+    row = await db.fetchrow(
+        "SELECT 1 FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint",
+        user_id, chat_id,
+    )
+    if row:
+        return user_id
+
+    row = await db.fetchrow(
+        """
+        SELECT bc.owner_id
+        FROM bot_chats bc
+        JOIN team_members tm ON tm.child_bot_id = bc.child_bot_id
+                            AND tm.user_id = $1
+                            AND tm.is_active = true
+        WHERE bc.chat_id = $2::bigint
+        ORDER BY bc.is_active DESC, bc.added_at ASC
+        LIMIT 1
+        """,
+        user_id, chat_id,
+    )
+    if row:
+        return row["owner_id"]
+
+    return user_id
+
+
+async def resolve_bot_chat_owner(user_id: int, bot_chat_id: int) -> int:
+    """Как resolve_chat_owner, но по первичному ключу bot_chats.id (ch_id).
+
+    Экраны деталей площадки грузят строку по bot_chats.id; чтобы командный доступ
+    работал и там, резолвим владельца через chat_id этой строки.
+    """
+    row = await db.fetchrow("SELECT chat_id FROM bot_chats WHERE id=$1", bot_chat_id)
+    if not row:
+        return user_id
+    return await resolve_chat_owner(user_id, row["chat_id"])

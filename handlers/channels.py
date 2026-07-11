@@ -13,6 +13,7 @@ from aiogram.fsm.state import State, StatesGroup
 
 import db.pool as db
 from db.pool import get_pool
+from db.channels import resolve_chat_owner, resolve_bot_chat_owner
 from services.child_bot_service import validate_and_save_child_bot, verify_bot_is_admin
 from config import settings
 from utils.nav import navigate
@@ -1067,6 +1068,7 @@ async def on_chat_verify_input(message: Message, state: FSMContext, platform_use
 # ══════════════════════════════════════════════════════════════
 async def _show_channel_detail(callback: CallbackQuery, platform_user: dict, ch_id: int):
     """Core logic: показывает детали площадки по DB id."""
+    owner_id = await resolve_bot_chat_owner(platform_user["user_id"], ch_id)
     ch = await db.fetchrow(
         """
         SELECT bc.*, cb.bot_username, cb.bot_name
@@ -1074,14 +1076,13 @@ async def _show_channel_detail(callback: CallbackQuery, platform_user: dict, ch_
         JOIN child_bots cb ON bc.child_bot_id = cb.id
         WHERE bc.id=$1 AND bc.owner_id=$2
         """,
-        ch_id, platform_user["user_id"],
+        ch_id, owner_id,
     )
     if not ch:
         await callback.answer("Площадка не найдена", show_alert=True)
         return
 
     chat_id  = ch["chat_id"]
-    owner_id = platform_user["user_id"]
 
     # ── Статистика пользователей ──────────────────────────────
     from datetime import date, timedelta
@@ -1224,10 +1225,12 @@ async def _show_channel_detail(callback: CallbackQuery, platform_user: dict, ch_
     )
     # Сохраняем ID этого сообщения, чтобы уведомления о правах могли редактировать его
     # на месте вместо отправки нового сообщения снизу.
+    # ВАЖНО: last_channels_menu_id — это состояние UI ВЫЗЫВАЮЩЕГО (какое его сообщение
+    # править), а не владельца данных. Для члена команды это его собственный user_id.
     if msg:
         await db.execute(
             "UPDATE platform_users SET last_channels_menu_id=$1 WHERE user_id=$2",
-            msg.message_id, owner_id,
+            msg.message_id, platform_user["user_id"],
         )
 
 
@@ -1250,7 +1253,7 @@ async def on_channel_in_bot(callback: CallbackQuery, platform_user: dict | None)
     parts = callback.data.split(":")
     ch_id = int(parts[1])
     child_bot_id = int(parts[2]) if len(parts) > 2 and parts[2] else None
-    owner_id = platform_user["user_id"]
+    owner_id = await resolve_bot_chat_owner(platform_user["user_id"], ch_id)
 
     ch = await db.fetchrow(
         "SELECT bc.chat_id, bc.is_active, bc.added_at, bc.chat_type, bc.chat_title, cb.token_encrypted "
@@ -1324,7 +1327,7 @@ async def on_ch_in_bot_toggle(callback: CallbackQuery, platform_user: dict | Non
     parts = callback.data.split(":")
     ch_id = int(parts[1])
     child_bot_id = int(parts[2]) if len(parts) > 2 and parts[2] else None
-    owner_id = platform_user["user_id"]
+    owner_id = await resolve_bot_chat_owner(platform_user["user_id"], ch_id)
 
     ch = await db.fetchrow(
         "SELECT is_active FROM bot_chats WHERE id=$1 AND owner_id=$2",
@@ -1358,9 +1361,10 @@ async def on_channel_by_chat(callback: CallbackQuery, platform_user: dict | None
     if not platform_user:
         return
     chat_id = int(callback.data.split(":")[1])
+    owner_id = await resolve_chat_owner(platform_user["user_id"], chat_id)
     ch = await db.fetchrow(
         "SELECT id FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint",
-        platform_user["user_id"], chat_id,
+        owner_id, chat_id,
     )
     if ch:
         await _show_channel_detail(callback, platform_user, ch["id"])
@@ -1373,16 +1377,17 @@ async def on_ch_toggle(callback: CallbackQuery, platform_user: dict | None):
     if not platform_user:
         return
     ch_id = int(callback.data.split(":")[1])
+    owner_id = await resolve_bot_chat_owner(platform_user["user_id"], ch_id)
     ch = await db.fetchrow(
         "SELECT is_active FROM bot_chats WHERE id=$1 AND owner_id=$2",
-        ch_id, platform_user["user_id"],
+        ch_id, owner_id,
     )
     if not ch:
         return
     new_val = not ch["is_active"]
     await db.execute(
         "UPDATE bot_chats SET is_active=$1 WHERE id=$2 AND owner_id=$3",
-        new_val, ch_id, platform_user["user_id"],
+        new_val, ch_id, owner_id,
     )
     await callback.answer("🟢 Включена" if new_val else "🔴 Выключена")
     

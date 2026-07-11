@@ -20,6 +20,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
 import db.pool as db
+from db.channels import resolve_chat_owner, resolve_bot_chat_owner
 from services.security import sanitize, decrypt_token
 from utils.nav import navigate
 
@@ -1006,12 +1007,12 @@ async def on_welcome_set(callback: CallbackQuery, state: FSMContext, platform_us
     if not platform_user:
         return
     chat_id_str = callback.data.split(":")[1]
-    ch = await _get_chat_by_id(platform_user["user_id"], int(chat_id_str))
+    ch = await _get_chat_by_id(await resolve_chat_owner(platform_user["user_id"], int(chat_id_str)), int(chat_id_str))
     if ch and (ch.get("welcome_text") or ch.get("welcome_media")):
         await _show_msg_editor(callback, chat_id_str, "welcome", dict(ch), scope="ch", state=state)
     else:
         await state.set_state(SettingsFSM.waiting_for_welcome_text)
-        await state.update_data(chat_id=int(chat_id_str), owner_id=platform_user["user_id"],
+        await state.update_data(chat_id=int(chat_id_str), owner_id=await resolve_chat_owner(platform_user["user_id"], int(chat_id_str)),
                                  msg_type="welcome", scope="ch")
         # Сообщения нет — «Отмена» возвращает на экран Сообщений (скрин 1), а не на редактор
         await _show_msg_prompt(callback, chat_id_str, "welcome", scope="ch",
@@ -1023,12 +1024,12 @@ async def on_farewell_set(callback: CallbackQuery, state: FSMContext, platform_u
     if not platform_user:
         return
     chat_id_str = callback.data.split(":")[1]
-    ch = await _get_chat_by_id(platform_user["user_id"], int(chat_id_str))
+    ch = await _get_chat_by_id(await resolve_chat_owner(platform_user["user_id"], int(chat_id_str)), int(chat_id_str))
     if ch and (ch.get("farewell_text") or ch.get("farewell_media")):
         await _show_msg_editor(callback, chat_id_str, "farewell", dict(ch), scope="ch", state=state)
     else:
         await state.set_state(SettingsFSM.waiting_for_farewell_text)
-        await state.update_data(chat_id=int(chat_id_str), owner_id=platform_user["user_id"],
+        await state.update_data(chat_id=int(chat_id_str), owner_id=await resolve_chat_owner(platform_user["user_id"], int(chat_id_str)),
                                  msg_type="farewell", scope="ch")
         # Сообщения нет — «Отмена» возвращает на экран Сообщений (скрин 1), а не на редактор
         await _show_msg_prompt(callback, chat_id_str, "farewell", scope="ch",
@@ -1125,7 +1126,7 @@ async def on_ch_msg_edit(callback: CallbackQuery, state: FSMContext, platform_us
     echo_mid = fsm_data.get("editor_echo_mid")
     echo_chat_id = fsm_data.get("editor_echo_chat_id") or callback.message.chat.id
     if not echo_mid:
-        echo_mid = await _get_echo_mid(platform_user["user_id"], int(chat_id_str), msg_type)
+        echo_mid = await _get_echo_mid(await resolve_chat_owner(platform_user["user_id"], int(chat_id_str)), int(chat_id_str), msg_type)
         echo_chat_id = callback.message.chat.id
     if echo_mid:
         try:
@@ -1137,7 +1138,7 @@ async def on_ch_msg_edit(callback: CallbackQuery, state: FSMContext, platform_us
         SettingsFSM.waiting_for_welcome_text if msg_type == "welcome"
         else SettingsFSM.waiting_for_farewell_text
     )
-    await state.update_data(chat_id=int(chat_id_str), owner_id=platform_user["user_id"],
+    await state.update_data(chat_id=int(chat_id_str), owner_id=await resolve_chat_owner(platform_user["user_id"], int(chat_id_str)),
                              msg_type=msg_type, scope="ch")
     # Редактируем существующее сообщение — «Отмена» возвращает на скрин 2 (редактор)
     back_to_editor = f"welcome_set:{chat_id_str}" if msg_type == "welcome" else f"farewell_set:{chat_id_str}"
@@ -1155,7 +1156,7 @@ async def on_ch_msg_btns(callback: CallbackQuery, state: FSMContext, platform_us
     echo_mid = fsm_data.get("editor_echo_mid")
     echo_chat_id = fsm_data.get("editor_echo_chat_id") or callback.message.chat.id
     if not echo_mid:
-        echo_mid = await _get_echo_mid(platform_user["user_id"], int(chat_id_str), msg_type)
+        echo_mid = await _get_echo_mid(await resolve_chat_owner(platform_user["user_id"], int(chat_id_str)), int(chat_id_str), msg_type)
         echo_chat_id = callback.message.chat.id
     if echo_mid:
         try:
@@ -1164,7 +1165,7 @@ async def on_ch_msg_btns(callback: CallbackQuery, state: FSMContext, platform_us
             pass
 
     await state.set_state(SettingsFSM.waiting_for_msg_buttons)
-    await state.update_data(chat_id=int(chat_id_str), owner_id=platform_user["user_id"],
+    await state.update_data(chat_id=int(chat_id_str), owner_id=await resolve_chat_owner(platform_user["user_id"], int(chat_id_str)),
                              msg_type=msg_type, scope="ch", editor_prompt_mid=callback.message.message_id)
     await callback.message.edit_text(
         "📎 Отправьте <b>кнопки</b>, которые будут добавлены к сообщению.\n\n"
@@ -1199,7 +1200,7 @@ async def on_ch_msg_media(callback: CallbackQuery, state: FSMContext, platform_u
         return
     _, chat_id_str, msg_type = callback.data.split(":")
     f = _MSG_FIELDS[msg_type]
-    ch = await _get_chat_by_id(platform_user["user_id"], int(chat_id_str))
+    ch = await _get_chat_by_id(await resolve_chat_owner(platform_user["user_id"], int(chat_id_str)), int(chat_id_str))
     has_media = ch and ch.get(f["media_col"])
 
     if has_media:
@@ -1208,9 +1209,9 @@ async def on_ch_msg_media(callback: CallbackQuery, state: FSMContext, platform_u
         new_below = not current_below
         await db.execute(
             f"UPDATE bot_chats SET {f['media_below_col']}=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
-            new_below, platform_user["user_id"], int(chat_id_str),
+            new_below, await resolve_chat_owner(platform_user["user_id"], int(chat_id_str)), int(chat_id_str),
         )
-        ch = await _get_chat_by_id(platform_user["user_id"], int(chat_id_str))
+        ch = await _get_chat_by_id(await resolve_chat_owner(platform_user["user_id"], int(chat_id_str)), int(chat_id_str))
         
         # In-place edit of the echo message
         try:
@@ -1221,7 +1222,7 @@ async def on_ch_msg_media(callback: CallbackQuery, state: FSMContext, platform_u
                 echo_msg_id = state_data.get("editor_echo_mid")
             
             if not echo_msg_id:
-                echo_msg_id = await _get_echo_mid(platform_user["user_id"], int(chat_id_str), msg_type)
+                echo_msg_id = await _get_echo_mid(await resolve_chat_owner(platform_user["user_id"], int(chat_id_str)), int(chat_id_str), msg_type)
             
             if echo_msg_id:
                 # Rebuild keyboard if necessary
@@ -1258,14 +1259,14 @@ async def on_ch_msg_preview(callback: CallbackQuery, platform_user: dict | None)
         return
     _, chat_id_str, msg_type = callback.data.split(":")
     f = _MSG_FIELDS[msg_type]
-    ch = await _get_chat_by_id(platform_user["user_id"], int(chat_id_str))
+    ch = await _get_chat_by_id(await resolve_chat_owner(platform_user["user_id"], int(chat_id_str)), int(chat_id_str))
     new_val = not bool(ch.get(f["preview_col"], False) if ch else False)
     await db.execute(
         f"UPDATE bot_chats SET {f['preview_col']}=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
-        new_val, platform_user["user_id"], int(chat_id_str),
+        new_val, await resolve_chat_owner(platform_user["user_id"], int(chat_id_str)), int(chat_id_str),
     )
     await callback.answer(f"👁 Превью: {'да' if new_val else 'нет'}")
-    ch = await _get_chat_by_id(platform_user["user_id"], int(chat_id_str))
+    ch = await _get_chat_by_id(await resolve_chat_owner(platform_user["user_id"], int(chat_id_str)), int(chat_id_str))
     # Только обновляем кнопки меню на месте—без новых сообщений
     await callback.message.edit_reply_markup(
         reply_markup=_build_editor_kb(chat_id_str, msg_type, dict(ch), scope="ch")
@@ -1278,7 +1279,7 @@ async def on_ch_msg_timer(callback: CallbackQuery, platform_user: dict | None):
         return
     _, chat_id_str, msg_type = callback.data.split(":")
     f = _MSG_FIELDS[msg_type]
-    ch = await _get_chat_by_id(platform_user["user_id"], int(chat_id_str))
+    ch = await _get_chat_by_id(await resolve_chat_owner(platform_user["user_id"], int(chat_id_str)), int(chat_id_str))
     cur = int(ch.get(f["timer_col"]) or 0 if ch else 0)
     try:
         idx = _MSG_TIMER_CYCLE.index(cur)
@@ -1287,10 +1288,10 @@ async def on_ch_msg_timer(callback: CallbackQuery, platform_user: dict | None):
     new_val = _MSG_TIMER_CYCLE[(idx + 1) % len(_MSG_TIMER_CYCLE)]
     await db.execute(
         f"UPDATE bot_chats SET {f['timer_col']}=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
-        new_val, platform_user["user_id"], int(chat_id_str),
+        new_val, await resolve_chat_owner(platform_user["user_id"], int(chat_id_str)), int(chat_id_str),
     )
     await callback.answer(f"⏱ Таймер: {_timer_label(new_val)}")
-    ch = await _get_chat_by_id(platform_user["user_id"], int(chat_id_str))
+    ch = await _get_chat_by_id(await resolve_chat_owner(platform_user["user_id"], int(chat_id_str)), int(chat_id_str))
     # Только обновляем кнопки меню на месте—без новых сообщений
     await callback.message.edit_reply_markup(
         reply_markup=_build_editor_kb(chat_id_str, msg_type, dict(ch), scope="ch")
@@ -1307,12 +1308,12 @@ async def on_ch_msg_del(callback: CallbackQuery, platform_user: dict | None):
         f"UPDATE bot_chats SET {f['text_col']}=NULL, {f['media_col']}=NULL, "
         f"{f['media_type_col']}=NULL, {f['buttons_col']}=NULL "
         "WHERE owner_id=$1 AND chat_id=$2::bigint",
-        platform_user["user_id"], int(chat_id_str),
+        await resolve_chat_owner(platform_user["user_id"], int(chat_id_str)), int(chat_id_str),
     )
     await callback.answer("🗑 Удалено")
     fake_cb = callback.model_copy(update={"data": f"ch_messages:{chat_id_str}"})
     from handlers.messages import _show_ch_messages
-    await _show_ch_messages(fake_cb, int(chat_id_str), platform_user["user_id"])
+    await _show_ch_messages(fake_cb, int(chat_id_str), await resolve_chat_owner(platform_user["user_id"], int(chat_id_str)))
 
 
 @router.callback_query(F.data.startswith("ch_msg_back:"))
@@ -1321,7 +1322,7 @@ async def on_ch_msg_back(callback: CallbackQuery, state: FSMContext, platform_us
         return
     _, chat_id_str, msg_type = callback.data.split(":")
     chat_id = int(chat_id_str)
-    owner_id = platform_user["user_id"]
+    owner_id = await resolve_chat_owner(platform_user["user_id"], chat_id)
 
     # Приоритет: FSM state (переживает рестарты)
     fsm_data = await state.get_data()
@@ -1990,12 +1991,13 @@ async def on_ch_settings(callback: CallbackQuery, platform_user: dict | None):
     if not platform_user:
         return
     ch_id = int(callback.data.split(":")[1])
+    owner_id = await resolve_bot_chat_owner(platform_user["user_id"], ch_id)
     ch = await db.fetchrow(
         """SELECT bc.*, cb.bot_username
            FROM bot_chats bc
            LEFT JOIN child_bots cb ON bc.child_bot_id = cb.id
            WHERE bc.id=$1 AND bc.owner_id=$2""",
-        ch_id, platform_user["user_id"],
+        ch_id, owner_id,
     )
     if not ch:
         await callback.answer("Площадка не найдена", show_alert=True)

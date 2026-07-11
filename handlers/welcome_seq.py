@@ -22,6 +22,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
 import db.pool as db
+from db.channels import resolve_chat_owner
 from services.security import sanitize
 from utils.nav import navigate
 from utils.timing import format_delay, parse_delay_input
@@ -101,6 +102,22 @@ async def _get_step(owner_id: int, step_id: int):
     )
 
 
+async def _step_owner(user_id: int, step_id: int) -> int:
+    """owner_id, от имени которого user_id может править шаг step_id.
+
+    Владелец шага → сам user_id; активный член команды бота, держащего чат шага →
+    реальный owner_id; иначе → user_id (fallback: запросы WHERE owner_id=user_id
+    ничего не найдут, как и раньше для постороннего). Нужно для командного доступа.
+    """
+    row = await db.fetchrow(
+        "SELECT owner_id, chat_id FROM welcome_steps WHERE id=$1", step_id
+    )
+    if not row:
+        return user_id
+    resolved = await resolve_chat_owner(user_id, row["chat_id"])
+    return resolved if resolved == row["owner_id"] else user_id
+
+
 # ── Экран: менеджер цепочки ──────────────────────────────────────
 
 async def _show_manager(event, chat_id: int, owner_id: int):
@@ -170,11 +187,12 @@ async def on_wseq(callback: CallbackQuery, state: FSMContext, platform_user: dic
     if not platform_user:
         return
     chat_id = int(callback.data.split(":")[1])
-    if not await _own_chat(platform_user["user_id"], chat_id):
+    owner_id = await resolve_chat_owner(platform_user["user_id"], chat_id)
+    if not await _own_chat(owner_id, chat_id):
         await callback.answer("Площадка не найдена", show_alert=True)
         return
     await state.clear()
-    await _show_manager(callback, chat_id, platform_user["user_id"])
+    await _show_manager(callback, chat_id, owner_id)
 
 
 # ── Добавление шага ──────────────────────────────────────────────
@@ -185,7 +203,7 @@ async def on_wseq_add(callback: CallbackQuery, state: FSMContext, platform_user:
         return
     _, chat_id_s, kind = callback.data.split(":")
     chat_id = int(chat_id_s)
-    owner_id = platform_user["user_id"]
+    owner_id = await resolve_chat_owner(platform_user["user_id"], chat_id)
     if not await _own_chat(owner_id, chat_id):
         await callback.answer("Площадка не найдена", show_alert=True)
         return
@@ -236,10 +254,10 @@ async def on_adding_content(message: Message, state: FSMContext, platform_user: 
     data = await state.get_data()
     chat_id = data.get("wseq_chat_id")
     order = data.get("wseq_order", 2)
-    owner_id = platform_user["user_id"]
     if chat_id is None:
         await state.clear()
         return
+    owner_id = await resolve_chat_owner(platform_user["user_id"], chat_id)
 
     text = sanitize(message.text or message.caption or "", max_len=1024)
     media_fid, media_type = _extract_media(message)
@@ -313,8 +331,9 @@ async def on_wstep(callback: CallbackQuery, state: FSMContext, platform_user: di
     if not platform_user:
         return
     step_id = int(callback.data.split(":")[1])
+    owner_id = await _step_owner(platform_user["user_id"], step_id)
     await state.clear()
-    await _show_step_editor(callback, step_id, platform_user["user_id"])
+    await _show_step_editor(callback, step_id, owner_id)
 
 
 @router.callback_query(F.data.startswith("wstep_delay:"))
@@ -322,7 +341,8 @@ async def on_wstep_delay(callback: CallbackQuery, state: FSMContext, platform_us
     if not platform_user:
         return
     step_id = int(callback.data.split(":")[1])
-    st = await _get_step(platform_user["user_id"], step_id)
+    owner_id = await _step_owner(platform_user["user_id"], step_id)
+    st = await _get_step(owner_id, step_id)
     if not st:
         await callback.answer("Шаг не найден", show_alert=True)
         return
@@ -348,17 +368,18 @@ async def on_wstep_delay_input(message: Message, state: FSMContext, platform_use
     if not step_id:
         await state.clear()
         return
+    owner_id = await _step_owner(platform_user["user_id"], step_id)
     sec = parse_delay_input(message.text or "")
     if sec is None:
         await message.answer("Не понял значение. Пришлите число, напр. <code>15</code>, <code>90с</code>, <code>5м</code>.", parse_mode="HTML")
         return
     await db.execute(
         "UPDATE welcome_steps SET delay_sec=$1 WHERE id=$2 AND owner_id=$3",
-        sec, step_id, platform_user["user_id"],
+        sec, step_id, owner_id,
     )
     await state.clear()
     await message.answer(f"✅ Задержка шага: <b>{format_delay(sec)}</b>", parse_mode="HTML")
-    await _show_step_editor(message, step_id, platform_user["user_id"])
+    await _show_step_editor(message, step_id, owner_id)
 
 
 @router.callback_query(F.data.startswith("wstep_edit:"))
@@ -366,7 +387,8 @@ async def on_wstep_edit(callback: CallbackQuery, state: FSMContext, platform_use
     if not platform_user:
         return
     step_id = int(callback.data.split(":")[1])
-    st = await _get_step(platform_user["user_id"], step_id)
+    owner_id = await _step_owner(platform_user["user_id"], step_id)
+    st = await _get_step(owner_id, step_id)
     if not st:
         await callback.answer("Шаг не найден", show_alert=True)
         return
@@ -392,6 +414,7 @@ async def on_wstep_content_input(message: Message, state: FSMContext, platform_u
     if not step_id:
         await state.clear()
         return
+    owner_id = await _step_owner(platform_user["user_id"], step_id)
     text = sanitize(message.text or message.caption or "", max_len=1024)
     media_fid, media_type = _extract_media(message)
     if not text and not media_fid:
@@ -400,17 +423,17 @@ async def on_wstep_content_input(message: Message, state: FSMContext, platform_u
     if media_fid:
         await db.execute(
             "UPDATE welcome_steps SET text=$1, media=$2, media_type=$3 WHERE id=$4 AND owner_id=$5",
-            text or None, media_fid, media_type, step_id, platform_user["user_id"],
+            text or None, media_fid, media_type, step_id, owner_id,
         )
     else:
         # Только текст — сохраняем текст, медиа не трогаем
         await db.execute(
             "UPDATE welcome_steps SET text=$1 WHERE id=$2 AND owner_id=$3",
-            text or None, step_id, platform_user["user_id"],
+            text or None, step_id, owner_id,
         )
     await state.clear()
     await message.answer("✅ Обновлено.")
-    await _show_step_editor(message, step_id, platform_user["user_id"])
+    await _show_step_editor(message, step_id, owner_id)
 
 
 @router.callback_query(F.data.startswith("wstep_btns:"))
@@ -418,7 +441,8 @@ async def on_wstep_btns(callback: CallbackQuery, state: FSMContext, platform_use
     if not platform_user:
         return
     step_id = int(callback.data.split(":")[1])
-    st = await _get_step(platform_user["user_id"], step_id)
+    owner_id = await _step_owner(platform_user["user_id"], step_id)
+    st = await _get_step(owner_id, step_id)
     if not st:
         await callback.answer("Шаг не найден", show_alert=True)
         return
@@ -445,6 +469,7 @@ async def on_wstep_btns_input(message: Message, state: FSMContext, platform_user
     if not step_id:
         await state.clear()
         return
+    owner_id = await _step_owner(platform_user["user_id"], step_id)
     raw = sanitize(message.text or "", max_len=2048)
     if raw == "-":
         buttons = []
@@ -459,11 +484,11 @@ async def on_wstep_btns_input(message: Message, state: FSMContext, platform_user
             return
     await db.execute(
         "UPDATE welcome_steps SET buttons=$1::jsonb WHERE id=$2 AND owner_id=$3",
-        _json.dumps(buttons, ensure_ascii=False), step_id, platform_user["user_id"],
+        _json.dumps(buttons, ensure_ascii=False), step_id, owner_id,
     )
     await state.clear()
     await message.answer("✅ Кнопки обновлены." if buttons else "✅ Кнопки убраны.")
-    await _show_step_editor(message, step_id, platform_user["user_id"])
+    await _show_step_editor(message, step_id, owner_id)
 
 
 @router.callback_query(F.data.startswith("wstep_selfdel:"))
@@ -471,7 +496,8 @@ async def on_wstep_selfdel(callback: CallbackQuery, platform_user: dict | None):
     if not platform_user:
         return
     step_id = int(callback.data.split(":")[1])
-    st = await _get_step(platform_user["user_id"], step_id)
+    owner_id = await _step_owner(platform_user["user_id"], step_id)
+    st = await _get_step(owner_id, step_id)
     if not st:
         await callback.answer("Шаг не найден", show_alert=True)
         return
@@ -483,10 +509,10 @@ async def on_wstep_selfdel(callback: CallbackQuery, platform_user: dict | None):
     new_val = _SELF_DELETE_CYCLE[(idx + 1) % len(_SELF_DELETE_CYCLE)]
     await db.execute(
         "UPDATE welcome_steps SET self_delete_sec=$1 WHERE id=$2 AND owner_id=$3",
-        new_val, step_id, platform_user["user_id"],
+        new_val, step_id, owner_id,
     )
     await callback.answer(f"⏳ Авто-удаление: {_self_del_label(new_val)}")
-    await _show_step_editor(callback, step_id, platform_user["user_id"])
+    await _show_step_editor(callback, step_id, owner_id)
 
 
 @router.callback_query(F.data.startswith("wstep_rm:"))
@@ -494,17 +520,18 @@ async def on_wstep_rm(callback: CallbackQuery, platform_user: dict | None):
     if not platform_user:
         return
     step_id = int(callback.data.split(":")[1])
-    st = await _get_step(platform_user["user_id"], step_id)
+    owner_id = await _step_owner(platform_user["user_id"], step_id)
+    st = await _get_step(owner_id, step_id)
     if not st:
         await callback.answer("Шаг не найден", show_alert=True)
         return
     chat_id = st["chat_id"]
     await db.execute(
         "DELETE FROM welcome_steps WHERE id=$1 AND owner_id=$2",
-        step_id, platform_user["user_id"],
+        step_id, owner_id,
     )
     await callback.answer("🗑 Шаг удалён")
-    await _show_manager(callback, chat_id, platform_user["user_id"])
+    await _show_manager(callback, chat_id, owner_id)
 
 
 @router.callback_query(F.data.startswith("wseq_clear:"))
@@ -512,9 +539,10 @@ async def on_wseq_clear(callback: CallbackQuery, platform_user: dict | None):
     if not platform_user:
         return
     chat_id = int(callback.data.split(":")[1])
+    owner_id = await resolve_chat_owner(platform_user["user_id"], chat_id)
     await db.execute(
         "DELETE FROM welcome_steps WHERE owner_id=$1 AND chat_id=$2::bigint",
-        platform_user["user_id"], chat_id,
+        owner_id, chat_id,
     )
     await callback.answer("🧹 Цепочка очищена")
-    await _show_manager(callback, chat_id, platform_user["user_id"])
+    await _show_manager(callback, chat_id, owner_id)

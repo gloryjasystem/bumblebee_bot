@@ -110,8 +110,8 @@ async def _show_ch_messages(callback: CallbackQuery, chat_id: int, owner_id: int
     typing_label  = f"🖨 Печать: {'вкл' if typing_on else 'выкл'}"
     reaction_label = f"❤️ Реакции: {reaction if reaction else 'выкл'}"
     delete_label  = f"🗑 Удаление сообщений: {_delete_label(delete_min)}"
-    welcome_on    = ch.get("welcome_enabled", True)
-    farewell_on   = ch.get("farewell_enabled", True)
+    welcome_on    = ch.get("welcome_enabled") is not False   # NULL/None → включено по умолчанию
+    farewell_on   = ch.get("farewell_enabled") is not False
     has_welcome   = bool(ch.get("welcome_text") or ch.get("welcome_media"))
     has_farewell  = bool(ch.get("farewell_text") or ch.get("farewell_media"))
     welcome_label  = f"👋 Приветствие: {'вкл' if (has_welcome and welcome_on) else 'выкл'}"

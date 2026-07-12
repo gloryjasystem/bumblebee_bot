@@ -871,7 +871,7 @@ def _build_editor_kb(chat_id_str: str, msg_type: str, ch: dict, scope: str = "ch
     rows = []
     # Тумблер Вкл/Выкл — первой строкой (для площадки)
     if scope == "ch":
-        enabled = bool(ch.get(f["enabled_col"], True))
+        enabled = ch.get(f["enabled_col"]) is not False   # NULL/None → включено по умолчанию
         rows.append([InlineKeyboardButton(
             text="🟢 Включено" if enabled else "⚪ Выключено",
             callback_data=f"{pfx}_toggle:{chat_id_str}:{msg_type}",
@@ -901,7 +901,7 @@ async def _show_msg_editor(event: Message | CallbackQuery, chat_id_str: str, msg
     buttons_raw = ch.get(f["buttons_col"])
 
     # Тумблер: если выключено — эхо помечаем, что пользователю не придёт
-    enabled = bool(ch.get(f["enabled_col"], True))
+    enabled = ch.get(f["enabled_col"]) is not False   # NULL/None → включено по умолчанию
     off_prefix = "" if enabled else "<blockquote>Выкл · <b>сообщение не отправляется</b></blockquote>\n\n"
     disp_text = (off_prefix + text) if off_prefix else text
 
@@ -1089,10 +1089,20 @@ async def _handle_msg_input(message: Message, state: FSMContext):
         media_fid = message.document.file_id
         media_type = "document"
 
+    # Было ли сообщение пустым ДО ввода → это первое создание. Тогда включаем по
+    # умолчанию: «задал сообщение → включено» (тумблер потом может выключить/включить).
+    # При редактировании существующего сообщения флаг НЕ трогаем.
+    prev = await (
+        _get_chat_by_id(owner_id, data["chat_id"]) if scope == "ch"
+        else _get_chat_by_bot(owner_id, data["child_bot_id"])
+    )
+    was_empty = not (prev and (prev.get(f["text_col"]) or prev.get(f["media_col"])))
+    enable_sql = f", {f['enabled_col']}=true" if was_empty else ""
+
     if scope == "ch":
         chat_id = data["chat_id"]
         await db.execute(
-            f"UPDATE bot_chats SET {f['text_col']}=$1, {f['media_col']}=$2, {f['media_type_col']}=$3 "
+            f"UPDATE bot_chats SET {f['text_col']}=$1, {f['media_col']}=$2, {f['media_type_col']}=$3{enable_sql} "
             "WHERE owner_id=$4 AND chat_id=$5::bigint",
             text or None, media_fid, media_type, owner_id, chat_id,
         )
@@ -1100,7 +1110,7 @@ async def _handle_msg_input(message: Message, state: FSMContext):
     else:
         child_bot_id = data["child_bot_id"]
         await db.execute(
-            f"UPDATE bot_chats SET {f['text_col']}=$1, {f['media_col']}=$2, {f['media_type_col']}=$3 "
+            f"UPDATE bot_chats SET {f['text_col']}=$1, {f['media_col']}=$2, {f['media_type_col']}=$3{enable_sql} "
             "WHERE child_bot_id=$4 AND owner_id=$5",
             text or None, media_fid, media_type, child_bot_id, owner_id,
         )
@@ -1321,7 +1331,7 @@ async def on_ch_msg_toggle(callback: CallbackQuery, state: FSMContext, platform_
     f = _MSG_FIELDS[msg_type]
     owner_id = await resolve_chat_owner(platform_user["user_id"], int(chat_id_str))
     ch = await _get_chat_by_id(owner_id, int(chat_id_str))
-    new_val = (not bool(ch.get(f["enabled_col"], True))) if ch else False
+    new_val = (ch.get(f["enabled_col"]) is False) if ch else False   # инвертируем, NULL→было включено
     await db.execute(
         f"UPDATE bot_chats SET {f['enabled_col']}=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
         new_val, owner_id, int(chat_id_str),
@@ -1339,7 +1349,7 @@ async def on_ch_msg_del(callback: CallbackQuery, platform_user: dict | None):
     f = _MSG_FIELDS[msg_type]
     await db.execute(
         f"UPDATE bot_chats SET {f['text_col']}=NULL, {f['media_col']}=NULL, "
-        f"{f['media_type_col']}=NULL, {f['buttons_col']}=NULL "
+        f"{f['media_type_col']}=NULL, {f['buttons_col']}=NULL, {f['enabled_col']}=true "
         "WHERE owner_id=$1 AND chat_id=$2::bigint",
         await resolve_chat_owner(platform_user["user_id"], int(chat_id_str)), int(chat_id_str),
     )

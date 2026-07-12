@@ -873,7 +873,7 @@ def _build_editor_kb(chat_id_str: str, msg_type: str, ch: dict, scope: str = "ch
     if scope == "ch":
         enabled = bool(ch.get(f["enabled_col"], True))
         rows.append([InlineKeyboardButton(
-            text="🟢 Включено" if enabled else "🔴 Выключено",
+            text="🟢 Включено" if enabled else "⚪ Выключено",
             callback_data=f"{pfx}_toggle:{chat_id_str}:{msg_type}",
         )])
     rows += [
@@ -1327,7 +1327,7 @@ async def on_ch_msg_toggle(callback: CallbackQuery, state: FSMContext, platform_
         f"UPDATE bot_chats SET {f['enabled_col']}=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
         new_val, owner_id, int(chat_id_str),
     )
-    await callback.answer("🟢 Включено" if new_val else "🔴 Выключено")
+    await callback.answer("🟢 Включено" if new_val else "⚪ Выключено")
     ch = await _get_chat_by_id(owner_id, int(chat_id_str))
     await _show_msg_editor(callback, chat_id_str, msg_type, dict(ch), scope="ch", state=state)
 

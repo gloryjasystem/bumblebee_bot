@@ -110,6 +110,10 @@ async def _show_ch_messages(callback: CallbackQuery, chat_id: int, owner_id: int
     typing_label  = f"🖨 Печать: {'вкл' if typing_on else 'выкл'}"
     reaction_label = f"❤️ Реакции: {reaction if reaction else 'выкл'}"
     delete_label  = f"🗑 Удаление сообщений: {_delete_label(delete_min)}"
+    welcome_on    = ch.get("welcome_enabled", True)
+    farewell_on   = ch.get("farewell_enabled", True)
+    welcome_label  = f"👋 Приветствие: {'вкл' if welcome_on else 'выкл'}"
+    farewell_label = f"🤚 Прощание: {'вкл' if farewell_on else 'выкл'}"
 
     await navigate(
         callback,
@@ -124,8 +128,8 @@ async def _show_ch_messages(callback: CallbackQuery, chat_id: int, owner_id: int
             [InlineKeyboardButton(text="⛓ Цепочка сообщений", callback_data=f"wseq:{chat_id}")],
             [InlineKeyboardButton(text=captcha_label,  callback_data=f"ch_captcha:{chat_id}")],
             [
-                InlineKeyboardButton(text="👋 Приветствие", callback_data=f"welcome_set:{chat_id}"),
-                InlineKeyboardButton(text="🤚 Прощание",    callback_data=f"farewell_set:{chat_id}"),
+                InlineKeyboardButton(text=welcome_label,  callback_data=f"welcome_set:{chat_id}"),
+                InlineKeyboardButton(text=farewell_label, callback_data=f"farewell_set:{chat_id}"),
             ],
             [InlineKeyboardButton(text="💬 Автоответчик",   callback_data=f"ch_autoreply:{chat_id}")],
             [

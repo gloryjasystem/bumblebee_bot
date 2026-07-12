@@ -1507,8 +1507,8 @@ async def on_ch_msg_delay(callback: CallbackQuery, state: FSMContext, platform_u
         "⏱ <b>Задержка отправки приветствия</b>\n\n"
         "Через сколько после заявки отправить приветствие №1.\n"
         f"Сейчас: <b>{_delay_label(cur)}</b>\n\n"
-        "ⓘ На каналах без капчи или с inline-капчей приветствие уйдёт сразу "
-        "(правило Telegram про первое сообщение) — задержка работает с reply-капчей и после /start.",
+        "ⓘ Задержка работает только для тех, кто уже написал боту "
+        "(прошёл капчу или отправил /start). Иначе приветствие уходит сразу.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=chip_rows),
     )
 

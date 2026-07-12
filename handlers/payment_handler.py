@@ -139,7 +139,7 @@ async def on_tariffs(callback: CallbackQuery, state: FSMContext, platform_user: 
     data = await state.get_data()
     return_bot = data.get("return_to_bot")
     back_cd = f"bot_settings:{return_bot}" if return_bot else "menu:main"
-    buttons.append([InlineKeyboardButton(text="◀ Назад", callback_data=back_cd)])
+    buttons.append([InlineKeyboardButton(text="◄ Назад", callback_data=back_cd)])
 
     await callback.message.edit_text(
         f"💎 <b>Тарифы Bumblebee Bot</b>\n\n"

@@ -123,11 +123,12 @@ async def on_tariffs(callback: CallbackQuery, state: FSMContext, platform_user: 
     if percent > 0 and until_date:
         discount_text = f"\n🔥 <b>Текущая акция!</b> Скидка {percent}% действует до {until_date.strftime('%d.%m.%Y')} ⏳\n"
 
-    # Кнопки тарифов
+    # Кнопки тарифов: английские названия, без иконок тарифа; серая ☑️ у текущего.
+    # Названия берём локально — TARIFF_INFO/тексты не трогаем (остаются русскими).
+    en_names = {"start": "Start", "pro": "Pro", "business": "Business"}
     for key in ("start", "pro", "business"):
-        info = TARIFF_INFO[key]
-        mark = " ✅" if tariff == key else ""
-        btn_text = f"{info['icon']} {info['name']}{mark}"
+        mark = " ☑️" if tariff == key else ""
+        btn_text = f"{en_names[key]}{mark}"
         if percent > 0 and tariff != key:
             btn_text += f" (-{percent}%)"
         buttons.append([InlineKeyboardButton(
@@ -138,7 +139,7 @@ async def on_tariffs(callback: CallbackQuery, state: FSMContext, platform_user: 
     data = await state.get_data()
     return_bot = data.get("return_to_bot")
     back_cd = f"bot_settings:{return_bot}" if return_bot else "menu:main"
-    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data=back_cd)])
+    buttons.append([InlineKeyboardButton(text="◀️ Back", callback_data=back_cd)])
 
     await callback.message.edit_text(
         f"💎 <b>Тарифы Bumblebee Bot</b>\n\n"

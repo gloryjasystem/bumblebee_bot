@@ -582,8 +582,6 @@ async def _send_welcome(bot: Bot, chat_id: int, user, settings_row: dict) -> boo
     короткого окна игнорируется — так гарантируется РОВНО ОДНО приветствие,
     даже если сработали оба пути (одобрение заявки и событие вступления).
     При неудаче пометка снимается — чтобы другой бот канала мог доставить."""
-    if settings_row.get("welcome_enabled") is False:
-        return False  # приветствие выключено тумблером — не шлём (NULL/None = включено)
     if _welcome_already_sent(chat_id, user.id):
         logger.info(f"[WELCOME] Пропуск дубля приветствия user={user.id} chat={chat_id}")
         return True
@@ -601,100 +599,106 @@ async def _send_welcome(bot: Bot, chat_id: int, user, settings_row: dict) -> boo
     buttons_raw = settings_row.get("welcome_buttons")
     timer_val = int(settings_row.get("welcome_timer") or 0)
 
-    if not text_tpl and not media_fid:
-        _welcome_release(chat_id, user.id)
-        return False
+    # Базовое приветствие (№1) шлём, только если оно ВКЛЮЧЕНО и ЗАДАНО. Если выключено
+    # тумблером или пусто — базу пропускаем, но цепочка (№2+) всё равно уходит по своим
+    # задержкам (расцепление: выключение №1 больше не гасит всю цепочку).
+    send_base = (settings_row.get("welcome_enabled") is not False) and bool(text_tpl or media_fid)
 
-    # Подставляем переменные
-    text = (text_tpl
-        .replace("{name}", user.first_name or "Пользователь")
-        .replace("{allname}", f"{user.first_name or ''} {getattr(user, 'last_name', '') or ''}".strip())
-        .replace("{username}", f"@{user.username}" if getattr(user, "username", None) else "")
-        .replace("{chat}", settings_row.get("chat_title", ""))
-        .replace("{day}", __import__("datetime").date.today().strftime("%d.%m.%Y"))
-    ) if text_tpl else ""
+    sent_msgs = []
+    if send_base:
+        # Подставляем переменные
+        text = (text_tpl
+            .replace("{name}", user.first_name or "Пользователь")
+            .replace("{allname}", f"{user.first_name or ''} {getattr(user, 'last_name', '') or ''}".strip())
+            .replace("{username}", f"@{user.username}" if getattr(user, "username", None) else "")
+            .replace("{chat}", settings_row.get("chat_title", ""))
+            .replace("{day}", __import__("datetime").date.today().strftime("%d.%m.%Y"))
+        ) if text_tpl else ""
 
-    # Inline-кнопки
-    from utils.keyboard import build_inline_keyboard
-    user_kb = build_inline_keyboard(buttons_raw)
+        # Inline-кнопки
+        from utils.keyboard import build_inline_keyboard
+        user_kb = build_inline_keyboard(buttons_raw)
 
-    try:
-        sent_msgs = []
-
-        if media_fid:
-            kwargs = {
-                "caption": text or None,
-                "parse_mode": "HTML",
-                "reply_markup": user_kb,
-                "show_caption_above_media": media_below,
-            }
-            async def send_wl(fid):
-                if media_type == "photo":
-                    return await bot.send_photo(user.id, fid, **kwargs)
-                elif media_type == "video":
-                    return await bot.send_video(user.id, fid, **kwargs)
-                elif media_type == "animation":
-                    return await bot.send_animation(user.id, fid, **kwargs)
-                else:
-                    # send_document не принимает show_caption_above_media — убираем только для него
-                    doc_kwargs = {k: v for k, v in kwargs.items() if k != "show_caption_above_media"}
-                    return await bot.send_document(user.id, fid, **doc_kwargs)
-            
-            try:
-                m = await send_wl(media_fid)
-            except Exception as e:
-                error_msg = str(e).lower()
-                if "wrong file identifier" in error_msg or "file reference" in error_msg or "invalid file" in error_msg:
-                    logger.info(f"Re-uploading welcome media {media_fid} for bot {bot.id}")
-                    try:
-                        from config import settings
-                        from aiogram import Bot as AioBot
-                        from aiogram.types import BufferedInputFile
-                        main_bot = AioBot(token=settings.bot_token)
-                        file_info = await main_bot.get_file(media_fid)
-                        file_bytes = await main_bot.download_file(file_info.file_path)
-                        await main_bot.session.close()
-                        input_file = BufferedInputFile(file_bytes.read(), filename=f"wl.{media_type}")
-                        m = await send_wl(input_file)
-                    except Exception as inner_e:
-                        logger.error(f"[WL REUPLOAD ERR] {inner_e}")
-                        m = await bot.send_message(user.id, text, parse_mode="HTML", reply_markup=user_kb)
-                else:
-                    m = await bot.send_message(user.id, text, parse_mode="HTML", reply_markup=user_kb)
-            sent_msgs.append(m)
-
-        else:
-            # Только текст (нет медиа)
-            m = await bot.send_message(user.id, text, parse_mode="HTML", reply_markup=user_kb)
-            sent_msgs.append(m)
-
-        # Авто-удаление
-        if timer_val > 0:
-            for sent in sent_msgs:
-                asyncio.create_task(_delete_later(bot, user.id, sent.message_id, timer_val))
-
-        # Запускаем цепочку доп. приветствий (если настроена)
         try:
-            base_ids = [m.message_id for m in sent_msgs if m]
-            await _schedule_welcome_sequence(
-                bot, chat_id, user,
-                settings_row.get("owner_id"),
-                settings_row.get("chat_title", ""),
-                base_ids,
-            )
-        except Exception as _se:
-            logger.debug(f"[WSEQ] schedule failed for user {user.id}: {_se}")
+            if media_fid:
+                kwargs = {
+                    "caption": text or None,
+                    "parse_mode": "HTML",
+                    "reply_markup": user_kb,
+                    "show_caption_above_media": media_below,
+                }
+                async def send_wl(fid):
+                    if media_type == "photo":
+                        return await bot.send_photo(user.id, fid, **kwargs)
+                    elif media_type == "video":
+                        return await bot.send_video(user.id, fid, **kwargs)
+                    elif media_type == "animation":
+                        return await bot.send_animation(user.id, fid, **kwargs)
+                    else:
+                        # send_document не принимает show_caption_above_media — убираем только для него
+                        doc_kwargs = {k: v for k, v in kwargs.items() if k != "show_caption_above_media"}
+                        return await bot.send_document(user.id, fid, **doc_kwargs)
 
-    except Exception as e:
-        # Доставка не удалась — снимаем пометку, чтобы другой бот канала мог доставить,
-        # и логируем ЯВНО (раньше глоталось на DEBUG и было не видно).
+                try:
+                    m = await send_wl(media_fid)
+                except Exception as e:
+                    error_msg = str(e).lower()
+                    if "wrong file identifier" in error_msg or "file reference" in error_msg or "invalid file" in error_msg:
+                        logger.info(f"Re-uploading welcome media {media_fid} for bot {bot.id}")
+                        try:
+                            from config import settings
+                            from aiogram import Bot as AioBot
+                            from aiogram.types import BufferedInputFile
+                            main_bot = AioBot(token=settings.bot_token)
+                            file_info = await main_bot.get_file(media_fid)
+                            file_bytes = await main_bot.download_file(file_info.file_path)
+                            await main_bot.session.close()
+                            input_file = BufferedInputFile(file_bytes.read(), filename=f"wl.{media_type}")
+                            m = await send_wl(input_file)
+                        except Exception as inner_e:
+                            logger.error(f"[WL REUPLOAD ERR] {inner_e}")
+                            m = await bot.send_message(user.id, text, parse_mode="HTML", reply_markup=user_kb)
+                    else:
+                        m = await bot.send_message(user.id, text, parse_mode="HTML", reply_markup=user_kb)
+                sent_msgs.append(m)
+            else:
+                # Только текст (нет медиа)
+                m = await bot.send_message(user.id, text, parse_mode="HTML", reply_markup=user_kb)
+                sent_msgs.append(m)
+
+            # Авто-удаление базы
+            if timer_val > 0:
+                for sent in sent_msgs:
+                    asyncio.create_task(_delete_later(bot, user.id, sent.message_id, timer_val))
+        except Exception as e:
+            # База должна была уйти, но упала (напр. ЛС закрыта) — снимаем пометку, чтобы
+            # другой бот канала мог доставить. Цепочку тут НЕ планируем (тот же ЛС закрыт).
+            _welcome_release(chat_id, user.id)
+            reason = _dm_blocked_reason(e)
+            bot_id = getattr(bot, "id", "?")
+            if reason:
+                logger.warning(f"[WELCOME] Не доставлено ({reason}) user={user.id} bot={bot_id} chat={chat_id}: {e}")
+            else:
+                logger.warning(f"[WELCOME] Ошибка отправки user={user.id} bot={bot_id} chat={chat_id}: {e}")
+            return False
+
+    # Цепочка №2+ — планируем ВСЕГДА (сама пропустит, если шагов нет). Возвращает число
+    # сообщений-шагов, чтобы понять, ушло ли что-то, когда база пропущена.
+    scheduled_msgs = 0
+    try:
+        base_ids = [m.message_id for m in sent_msgs if m]
+        scheduled_msgs = await _schedule_welcome_sequence(
+            bot, chat_id, user,
+            settings_row.get("owner_id"),
+            settings_row.get("chat_title", ""),
+            base_ids,
+        )
+    except Exception as _se:
+        logger.debug(f"[WSEQ] schedule failed for user {user.id}: {_se}")
+
+    if not send_base and not scheduled_msgs:
+        # Ни базы, ни доп. сообщений — ничего не ушло, снимаем пометку дедупа
         _welcome_release(chat_id, user.id)
-        reason = _dm_blocked_reason(e)
-        bot_id = getattr(bot, "id", "?")
-        if reason:
-            logger.warning(f"[WELCOME] Не доставлено ({reason}) user={user.id} bot={bot_id} chat={chat_id}: {e}")
-        else:
-            logger.warning(f"[WELCOME] Ошибка отправки user={user.id} bot={bot_id} chat={chat_id}: {e}")
         return False
 
     return True
@@ -719,17 +723,19 @@ def _fill_msg_vars(text: str, user, chat_title: str) -> str:
     )
 
 
-async def _schedule_welcome_sequence(bot: Bot, chat_id: int, user, owner_id, chat_title: str, base_msg_ids: list[int]):
-    """Планирует отправку дополнительных шагов цепочки приветствий."""
+async def _schedule_welcome_sequence(bot: Bot, chat_id: int, user, owner_id, chat_title: str, base_msg_ids: list[int]) -> int:
+    """Планирует отправку дополнительных шагов цепочки приветствий.
+    Возвращает число сообщений-шагов (без шага-очистки) — чтобы вызывающий понял,
+    ушло ли что-то, когда базовое приветствие пропущено (выключено/пусто)."""
     if not owner_id:
-        return
+        return 0
     steps = await db.fetch(
         "SELECT * FROM welcome_steps WHERE owner_id=$1 AND chat_id=$2::bigint "
         "ORDER BY step_order ASC, delay_sec ASC, id ASC",
         owner_id, chat_id,
     )
     if not steps:
-        return
+        return 0
     key = (chat_id, user.id)
     # База (№1) — первые сообщения цепочки, чтобы шаг-удаление мог их снять
     _welcome_seq_msgs[key] = list(base_msg_ids)
@@ -739,6 +745,7 @@ async def _schedule_welcome_sequence(bot: Bot, chat_id: int, user, owner_id, cha
         asyncio.create_task(_welcome_step_task(bot, chat_id, user, chat_title, dict(step)))
     # Гарантированная очистка ключа из памяти после завершения цепочки
     asyncio.create_task(_prune_seq_key(key, max_delay + 300))
+    return sum(1 for s in steps if (s["action"] or "message") != "delete")
 
 
 async def _prune_seq_key(key: tuple[int, int], after_sec: int):

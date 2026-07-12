@@ -254,10 +254,12 @@ async def _show_manager(event, chat_id: int, owner_id: int):
         owner_id, chat_id,
     )
     base = await db.fetchrow(
-        "SELECT welcome_text, welcome_media FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint",
+        "SELECT welcome_text, welcome_media, welcome_enabled FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint",
         owner_id, chat_id,
     )
     has_base = bool(base and (base["welcome_text"] or base["welcome_media"]))
+    # база «в игре», только если задана И тумблер не выключен (NULL/None = включено)
+    base_on = has_base and (base["welcome_enabled"] is not False)
 
     # Шаги-сообщения нумеруются; авто-очистка (action='delete') — свойство цепочки
     msg_steps = [s for s in steps if (s["action"] or "message") != "delete"]
@@ -266,10 +268,12 @@ async def _show_manager(event, chat_id: int, owner_id: int):
 
     # ── Тело: компактный таймлайн (одна строка на шаг) ──
     lines = ["⛓ <b>Цепочка сообщений</b>", ""]
-    if has_base:
+    if not has_base:
+        lines.append("<b>№1</b> · <i>сразу</i> · ⚠️ не задано")
+    elif base_on:
         lines.append("<b>№1</b> · <i>сразу</i> · 👋 приветствие")
     else:
-        lines.append("<b>№1</b> · <i>сразу</i> · ⚠️ не задано")
+        lines.append("<b>№1</b> · <s>👋 приветствие</s> · выключено")
 
     max_delay = 0
     for i, st in enumerate(msg_steps, start=2):
@@ -281,17 +285,23 @@ async def _show_manager(event, chat_id: int, owner_id: int):
     if autoclear_sec > 0:
         lines += ["", f"🧹 <b>через +{format_delay_short(autoclear_sec)}</b> — вся переписка очистится"]
 
-    if not msg_steps and autoclear_sec == 0:
-        lines += ["", "Пока только приветствие (№1). Добавьте сообщения ниже — до 10."]
+    # Что реально уйдёт: база (если включена) + сообщения-шаги
+    sending_total = (1 if base_on else 0) + len(msg_steps)
+    if sending_total == 0:
+        reason = "приветствие не задано, других сообщений нет" if not has_base \
+                 else "приветствие выключено, других сообщений нет"
+        lines += ["", f"⚠️ <b>Ничего не отправится</b> — {reason}."]
     else:
-        total = (1 if has_base else 0) + len(msg_steps)
-        fin = "сразу" if max_delay == 0 else f"+{format_delay_short(max_delay)}"
-        summary = f"Итог: {total} сообщ. · финал {fin}"
+        if base_on:
+            first = "№1 · сразу"
+        else:
+            first = f"№2 · {_delay_offset(int(msg_steps[0]['delay_sec'] or 0))}"
+        summary = f"Первым уйдёт {first} · всего {sending_total}"
         if autoclear_sec > 0:
             summary += f" · очистка +{format_delay_short(autoclear_sec)}"
         lines += ["", f"<i>{summary}.</i>"]
-    if not has_base:
-        lines += ["", "⚠️ <b>Приветствие (№1) не задано — цепочка не отправится.</b> Задайте его кнопкой ниже."]
+        if not msg_steps:
+            lines += ["", "Пока только приветствие (№1). Добавьте сообщения ниже — до 10."]
 
     # ── Клавиатура ──
     kb_rows = [[InlineKeyboardButton(
@@ -1122,7 +1132,7 @@ async def on_wseq_test(callback: CallbackQuery, platform_user: dict | None):
         return
 
     row = await db.fetchrow(
-        "SELECT welcome_text, welcome_media, welcome_media_type, welcome_buttons, chat_title "
+        "SELECT welcome_text, welcome_media, welcome_media_type, welcome_buttons, welcome_enabled, chat_title "
         "FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint",
         owner_id, chat_id,
     )
@@ -1132,8 +1142,13 @@ async def on_wseq_test(callback: CallbackQuery, platform_user: dict | None):
         owner_id, chat_id,
     )
     has_base = bool(row and (row["welcome_text"] or row["welcome_media"]))
-    if not has_base:
-        await callback.answer("Сначала задайте приветствие №1 — иначе цепочка не отправится.", show_alert=True)
+    base_on = has_base and (row["welcome_enabled"] is not False)
+    _msg_steps_cnt = sum(1 for s in steps if (s["action"] or "message") != "delete")
+    if not base_on and _msg_steps_cnt == 0:
+        if not has_base:
+            await callback.answer("Сначала задайте приветствие №1 — цепочке нечего отправить.", show_alert=True)
+        else:
+            await callback.answer("Приветствие выключено, других сообщений нет — отправлять нечего.", show_alert=True)
         return
 
     await callback.answer("👁 Предпросмотр ниже")
@@ -1162,10 +1177,16 @@ async def on_wseq_test(callback: CallbackQuery, platform_user: dict | None):
         if sent:
             mids.append(sent.message_id)
 
-    # №1 — приветствие
-    base_txt = _apply_vars(row["welcome_text"] or "", user, chat_title)
-    base_kb = build_inline_keyboard(row["welcome_buttons"])
-    _track(await _preview_one(bot, tg, "№1 · приветствие", base_txt, row["welcome_media"], row["welcome_media_type"], base_kb))
+    # №1 — приветствие (только если включено и задано; иначе сдержанная пометка)
+    if base_on:
+        base_txt = _apply_vars(row["welcome_text"] or "", user, chat_title)
+        base_kb = build_inline_keyboard(row["welcome_buttons"])
+        _track(await _preview_one(bot, tg, "№1 · приветствие", base_txt, row["welcome_media"], row["welcome_media_type"], base_kb))
+    elif has_base:
+        try:
+            _track(await bot.send_message(tg, "<s>№1 · приветствие</s> — выключено, не отправится", parse_mode="HTML"))
+        except Exception:
+            pass
 
     # №2…№N — сообщения
     for i, st in enumerate(msg_steps, start=2):

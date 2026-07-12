@@ -1029,15 +1029,24 @@ async def _handle_message(bot: Bot, child_bot_id: int, owner_id: int, message):
             )
         logger.info(f"[START] user {user.id} activated bot {child_bot_id} ({len(chats)} channels)")
 
-        # Подтверждение пользователю
+        # Вместо системной строки про рассылку шлём НАСТОЯЩЕЕ приветствие (и цепочку)
+        # канала — то же, что и при вступлении. Если приветствие выключено тумблером
+        # или не задано, бот молчит: человек уже тихо зарегистрирован для рассылок выше.
         try:
-            await bot.send_message(
-                user.id,
-                "✅ Вы подписались на уведомления от канала. "
-                "Теперь вы будете получать приветствие и рассылки.",
-            )
+            if chats:
+                from db.channels import get_channel
+                from handlers.join_requests import _send_welcome
+                # На /start мы не знаем, из-за какого канала пришёл человек; для бота с
+                # одним каналом (обычный случай) это он и есть. Берём канонические
+                # настройки канала — как в потоке вступления (нулевая регрессия).
+                start_chat_id = chats[0]["chat_id"]
+                _canon = await get_channel(start_chat_id)
+                if _canon:
+                    welcome_row = dict(_canon)
+                    if welcome_row.get("welcome_text") or welcome_row.get("welcome_media"):
+                        await _send_welcome(bot, start_chat_id, user, welcome_row)
         except Exception as e:
-            logger.debug(f"[START] send reply failed for {user.id}: {e}")
+            logger.debug(f"[START] welcome send failed for {user.id}: {e}")
 
     else:
         # ── 3. Обычное сообщение → обратная связь ───────────────

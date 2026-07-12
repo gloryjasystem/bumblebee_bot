@@ -100,6 +100,9 @@ def create_app(bot: Bot, dp: Dispatcher) -> FastAPI:
                 "UPDATE bot_chats SET autoaccept_delay_sec = COALESCE(autoaccept_delay,0)*60 WHERE autoaccept_delay_sec IS NULL",
                 # Указатель шага-редактора цепочки приветствий (эхо-сообщение)
                 "ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS edit_wstep_mid       INTEGER",
+                # Тумблер Вкл/Выкл приветствия и прощания (по умолчанию включено)
+                "ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS welcome_enabled      BOOLEAN DEFAULT true",
+                "ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS farewell_enabled     BOOLEAN DEFAULT true",
                 # Миграция captcha_lang: если колонка была BOOLEAN — конвертируем в TEXT
                 "ALTER TABLE bot_chats ALTER COLUMN captcha_lang TYPE TEXT USING CASE WHEN captcha_lang::text = 'true' THEN 'ru' ELSE 'off' END",
                 # Миграция captcha_button_style: старые значения 1x1/1x2/2x2 → inline

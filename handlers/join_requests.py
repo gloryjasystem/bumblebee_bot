@@ -582,6 +582,8 @@ async def _send_welcome(bot: Bot, chat_id: int, user, settings_row: dict) -> boo
     короткого окна игнорируется — так гарантируется РОВНО ОДНО приветствие,
     даже если сработали оба пути (одобрение заявки и событие вступления).
     При неудаче пометка снимается — чтобы другой бот канала мог доставить."""
+    if not settings_row.get("welcome_enabled", True):
+        return False  # приветствие выключено тумблером — не шлём, настройки целы
     if _welcome_already_sent(chat_id, user.id):
         logger.info(f"[WELCOME] Пропуск дубля приветствия user={user.id} chat={chat_id}")
         return True
@@ -819,6 +821,8 @@ async def _send_farewell(bot: Bot, chat_id: int, user, settings_row: dict) -> bo
     Возвращает True при успешной доставке, False — если не удалось.
     Дедуп по факту доставки: на общем канале событие 'left' приходит нескольким
     ботам, каждый пробует отправить; доставит тот, у кого открыта личка, ровно раз."""
+    if not settings_row.get("farewell_enabled", True):
+        return False  # прощание выключено тумблером — не шлём, настройки целы
     if _farewell_delivered(chat_id, user.id):
         logger.info(f"[FAREWELL] Пропуск — уже доставлено user={user.id} chat={chat_id}")
         return True

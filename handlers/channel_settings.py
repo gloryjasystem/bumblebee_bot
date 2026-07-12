@@ -788,6 +788,7 @@ _MSG_FIELDS = {
         "preview_col": "welcome_preview",
         "timer_col": "welcome_timer",
         "media_below_col": "welcome_media_below",
+        "enabled_col": "welcome_enabled",
     },
     "farewell": {
         "label": "🤚 Прощание",
@@ -798,6 +799,7 @@ _MSG_FIELDS = {
         "preview_col": "farewell_preview",
         "timer_col": "farewell_timer",
         "media_below_col": "farewell_media_below",
+        "enabled_col": "farewell_enabled",
     },
 }
 
@@ -866,7 +868,15 @@ def _build_editor_kb(chat_id_str: str, msg_type: str, ch: dict, scope: str = "ch
     # Используем ch_msg_back чтобы удалить эхо-сообщение при нажатии «Назад»
     back_cb = f"ch_msg_back:{chat_id_str}:{msg_type}" if scope == "ch" else f"bs_messages:{chat_id_str}"
 
-    return InlineKeyboardMarkup(inline_keyboard=[
+    rows = []
+    # Тумблер Вкл/Выкл — первой строкой (для площадки)
+    if scope == "ch":
+        enabled = bool(ch.get(f["enabled_col"], True))
+        rows.append([InlineKeyboardButton(
+            text="🟢 Включено" if enabled else "🔴 Выключено",
+            callback_data=f"{pfx}_toggle:{chat_id_str}:{msg_type}",
+        )])
+    rows += [
         [InlineKeyboardButton(text="✏️ Редактировать",  callback_data=f"{pfx}_edit:{chat_id_str}:{msg_type}")],
         [InlineKeyboardButton(text="🎛 Кнопки",          callback_data=f"{pfx}_btns:{chat_id_str}:{msg_type}")],
         [InlineKeyboardButton(text=media_label,           callback_data=f"{pfx}_media:{chat_id_str}:{msg_type}")],
@@ -874,7 +884,8 @@ def _build_editor_kb(chat_id_str: str, msg_type: str, ch: dict, scope: str = "ch
         [InlineKeyboardButton(text=timer_label_txt,       callback_data=f"{pfx}_timer:{chat_id_str}:{msg_type}")],
         [InlineKeyboardButton(text="🗑 Удалить",          callback_data=f"{pfx}_del:{chat_id_str}:{msg_type}")],
         [InlineKeyboardButton(text="◀️ Назад",            callback_data=back_cb)],
-    ])
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 async def _show_msg_editor(event: Message | CallbackQuery, chat_id_str: str, msg_type: str,
@@ -888,6 +899,11 @@ async def _show_msg_editor(event: Message | CallbackQuery, chat_id_str: str, msg
     media_fid = ch.get(f["media_col"])
     media_type = ch.get(f["media_type_col"])
     buttons_raw = ch.get(f["buttons_col"])
+
+    # Тумблер: если выключено — эхо помечаем, что пользователю не придёт
+    enabled = bool(ch.get(f["enabled_col"], True))
+    off_prefix = "" if enabled else "⏸ <i>выключено — пользователю не придёт</i>\n\n"
+    disp_text = (off_prefix + text) if off_prefix else text
 
     from utils.keyboard import build_inline_keyboard
     user_msg_kb = build_inline_keyboard(buttons_raw)
@@ -924,7 +940,7 @@ async def _show_msg_editor(event: Message | CallbackQuery, chat_id_str: str, msg
     if media_fid:
         media_below = bool(ch.get(f["media_below_col"], False))
         kwargs = {
-            "caption": text or None,
+            "caption": disp_text or None,
             "reply_markup": user_msg_kb,
             "parse_mode": "HTML",
             "show_caption_above_media": media_below,
@@ -938,7 +954,7 @@ async def _show_msg_editor(event: Message | CallbackQuery, chat_id_str: str, msg
         else:
             sent_echo = await msg.answer_document(media_fid, **kwargs)
     else:
-        sent_echo = await msg.answer(text or "—", reply_markup=user_msg_kb,
+        sent_echo = await msg.answer(disp_text or "—", reply_markup=user_msg_kb,
                                       parse_mode="HTML",
                                       disable_web_page_preview=not bool(ch.get(f["preview_col"])))
 
@@ -1296,6 +1312,24 @@ async def on_ch_msg_timer(callback: CallbackQuery, platform_user: dict | None):
     await callback.message.edit_reply_markup(
         reply_markup=_build_editor_kb(chat_id_str, msg_type, dict(ch), scope="ch")
     )
+
+
+@router.callback_query(F.data.startswith("ch_msg_toggle:"))
+async def on_ch_msg_toggle(callback: CallbackQuery, state: FSMContext, platform_user: dict | None):
+    if not platform_user:
+        return
+    _, chat_id_str, msg_type = callback.data.split(":")
+    f = _MSG_FIELDS[msg_type]
+    owner_id = await resolve_chat_owner(platform_user["user_id"], int(chat_id_str))
+    ch = await _get_chat_by_id(owner_id, int(chat_id_str))
+    new_val = (not bool(ch.get(f["enabled_col"], True))) if ch else False
+    await db.execute(
+        f"UPDATE bot_chats SET {f['enabled_col']}=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
+        new_val, owner_id, int(chat_id_str),
+    )
+    await callback.answer("🟢 Включено" if new_val else "🔴 Выключено")
+    ch = await _get_chat_by_id(owner_id, int(chat_id_str))
+    await _show_msg_editor(callback, chat_id_str, msg_type, dict(ch), scope="ch", state=state)
 
 
 @router.callback_query(F.data.startswith("ch_msg_del:"))

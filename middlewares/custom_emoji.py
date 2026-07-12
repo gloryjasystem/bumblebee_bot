@@ -20,7 +20,7 @@ from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramBadRequest
 
 from config import settings
-from utils.custom_emoji_map import CUSTOM_EMOJI
+from utils.custom_emoji_map import CUSTOM_EMOJI, SKIP_IF_CONTAINS
 
 logger = logging.getLogger(__name__)
 
@@ -94,6 +94,13 @@ class CustomEmojiMiddleware(BaseRequestMiddleware):
             elif getattr(method, "caption", None):
                 field = "caption"
             else:
+                return await make_request(bot, method)
+
+            # 1b) экраны-исключения (легенды кнопок, напр. /help) — целиком без иконок
+            value = getattr(method, field)
+            if SKIP_IF_CONTAINS and isinstance(value, str) and any(
+                sig in value for sig in SKIP_IF_CONTAINS
+            ):
                 return await make_request(bot, method)
 
             # 2) тест-гейт по получателю (иконки только для указанных чатов)

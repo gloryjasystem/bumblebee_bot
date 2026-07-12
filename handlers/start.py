@@ -27,8 +27,8 @@ def kb_main_menu() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="📨 Рассылка",         callback_data="menu:mailing"),
         ],
         [
-            InlineKeyboardButton(text="💳 Тарифы",           callback_data="menu:tariffs"),
-            InlineKeyboardButton(text="🔑 Управление",       callback_data="menu:settings"),
+            InlineKeyboardButton(text="💎 Тарифы",           callback_data="menu:tariffs"),
+            InlineKeyboardButton(text="👤 Мой кабинет",      callback_data="menu:settings"),
         ],
     ])
 
@@ -331,7 +331,7 @@ async def on_settings_menu(callback: CallbackQuery, platform_user: dict | None):
 
     await navigate(
         callback,
-        f"🔑 <b>Личный кабинет</b>\n\n"
+        f"👤 <b>Мой кабинет</b>\n\n"
         f"👤 Ваш ID: <code>{platform_user['user_id']}</code>\n"
         f"💎 Тариф: {label}{until_str}\n\n"
         f"📊 <b>Ваши лимиты:</b>\n"

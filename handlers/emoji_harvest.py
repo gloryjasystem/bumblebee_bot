@@ -50,5 +50,10 @@ async def cmd_emojiid(message: Message):
         )
         return
 
+    # Пишем в лог, чтобы забрать ID с сервера точь-в-точь (без копипаста цифр).
+    for ch, cid in found:
+        logger.info(f"[EMOJI_HARVEST] {ch} {cid}")
+    logger.info(f"[EMOJI_HARVEST] total={len(found)}")
+
     lines = [f"{ch}  →  <code>{cid}</code>" for ch, cid in found]
-    await message.reply(f"Собрал {len(found)} шт.:\n\n" + "\n".join(lines))
+    await message.reply(f"Собрал {len(found)} шт. — записал на сервере ✅\n\n" + "\n".join(lines))

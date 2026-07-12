@@ -3078,7 +3078,7 @@ async def on_bs_lang_filters(callback: CallbackQuery, platform_user: dict | None
         "🏁Фильтр по языкам\n\n"
         "🔵— Отклонять заявки\n"
         "⚪️— Принимать заявки\n\n"
-        "Выберите действие⬇️",
+        "Выберите действие 👇",
         reply_markup=_build_bs_lang_kb(blocked_codes, child_bot_id),
     )
     await callback.answer()
@@ -3151,7 +3151,7 @@ async def on_bs_settings(callback: CallbackQuery, platform_user: dict | None):
     btn_team = InlineKeyboardButton(text=("🔒 Команда" if is_free else "👥 Команда"), callback_data="paywall:team" if is_free else f"bs_team:{child_bot_id}")
 
     await callback.message.edit_text(
-        "⚙️ <b>Управление</b>\n\nВыберите действие ⬇️",
+        "⚙️ <b>Управление</b>\n\nВыберите действие 👇",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🗄 База",          callback_data=f"bs_base:{child_bot_id}")],
             [btn_team],
@@ -5147,7 +5147,7 @@ async def on_bs_timezone(callback: CallbackQuery, platform_user: dict | None,
         "🌙 <b>Часовой пояс</b>\n\n"
         f"<blockquote>ℹ Сейчас установлен часовой пояс: {current_tz}.</blockquote>\n"
         f"<blockquote>🕐 Текущее время: {time_str}</blockquote>\n\n"
-        "Выберите действие ⬇️",
+        "Выберите действие 👇",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(
@@ -5188,7 +5188,7 @@ async def on_bs_tz_change(callback: CallbackQuery, platform_user: dict | None):
         f"🌙 <b>Часовой пояс:</b> {current_tz}\n\n"
         "<blockquote>ℹ Для смены часового пояса выберите текущее время "
         "для вашего региона.</blockquote>\n\n"
-        "Выберите действие ⬇️",
+        "Выберите действие 👇",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=grid),
     )
@@ -5280,7 +5280,7 @@ async def on_bs_mailing(callback: CallbackQuery, state: FSMContext, platform_use
         await _delete_draft_echo(callback.bot, mid)
 
     await callback.message.edit_text(
-        "📨 <b>Рассылка</b>\n\nВыберите действие ⬇️",
+        "📨 <b>Рассылка</b>\n\nВыберите действие 👇",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="➕ Создать рассылку",
                                   callback_data=f"mailing_bot_start:{child_bot_id}")],
@@ -5374,7 +5374,7 @@ async def _show_bs_team(callback: CallbackQuery, bot: Bot,
         "👑 Чтобы сменить владельца бота,\n"
         f"   отправьте ему ссылку →\n<code>{owner_link}</code>"
         f"{member_lines}\n\n"
-        "Выберите действие ⬇️",
+        "Выберите действие 👇",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="→ Добавить администратора",
                                   url=f"https://t.me/share/url?url={admin_link}")],

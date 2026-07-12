@@ -134,7 +134,7 @@ async def _show_mass_mailing(callback: CallbackQuery, state: FSMContext,
         "</blockquote>\n\n"
         f"🔒 Выбрано ботов: {sel_count}\n"
         f"👥 Пользователей: {total_users:,}\n\n"
-        "Выберите действие ⬇️",
+        "Выберите действие 👇",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
     )
 
@@ -690,7 +690,7 @@ async def on_ch_mailing(callback: CallbackQuery, platform_user: dict | None):
 
     await navigate(
         callback,
-        f"📨 <b>Рассылка</b>\n\nВыберите действие ⬇️",
+        f"📨 <b>Рассылка</b>\n\nВыберите действие 👇",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="➕ Создать рассылку", callback_data=f"mailing_start:{chat_id}")],
             [InlineKeyboardButton(text="📅 Запланированные",  callback_data=f"mailing_scheduled:{chat_id}")],
@@ -764,7 +764,7 @@ async def on_mailing_bot_scheduled(callback: CallbackQuery, platform_user: dict 
 
     if not rows:
         await callback.message.edit_text(
-            "📅 <b>Запланированные</b>\n\nСписок задач ⬇️\n\nНет запланированных рассылок.",
+            "📅 <b>Запланированные</b>\n\nСписок задач 👇\n\nНет запланированных рассылок.",
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="◄ Назад",
@@ -786,7 +786,7 @@ async def on_mailing_bot_scheduled(callback: CallbackQuery, platform_user: dict 
                                           callback_data=f"bs_mailing:{child_bot_id}")])
 
     await callback.message.edit_text(
-        "📅 <b>Запланированные</b>\n\nСписок задач ⬇️",
+        "📅 <b>Запланированные</b>\n\nСписок задач 👇",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
     )
@@ -1034,7 +1034,7 @@ async def on_ml_sched_reschedule(callback: CallbackQuery, state: FSMContext,
         f"└ <code>{now_str} (+3)</code> [Текущая дата]\n\n"
         "<blockquote>⏱ Если необходимо, укажите в скобках ваш <a href='https://time.is/UTC'>часовой пояс</a>.</blockquote>\n\n"
         "<blockquote>⏱ Отправить сейчас: <code>now</code></blockquote>\n\n"
-        "Выберите действие ⬇️",
+        "Выберите действие 👇",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🚫 Отменить", callback_data=back_cb)],
@@ -1688,7 +1688,7 @@ async def on_mailing_schedule(callback: CallbackQuery, state: FSMContext, platfo
         f"└ <code>{now_str} (+3)</code> [Текущая дата]\n\n"
         "<blockquote>⏱ Если необходимо, то укажите в скобках ваш <a href='https://time.is/UTC'>часовой пояс</a>. </blockquote>\n\n"
         "<blockquote>⏱ Если рассылку необходимо отправить сейчас, пришлите: <code>now</code></blockquote>\n\n"
-        "Выберите действие ⬇️",
+        "Выберите действие 👇",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🚫 Отменить", callback_data=back_cb)],
@@ -1769,7 +1769,7 @@ async def on_schedule_input(message: Message, state: FSMContext):
                 try:
                     await message.bot.send_message(
                         chat_id=upd_chat_id,
-                        text="📨 <b>Рассылка</b>\n\nВыберите действие ⬇️",
+                        text="📨 <b>Рассылка</b>\n\nВыберите действие 👇",
                         parse_mode="HTML",
                         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                             [InlineKeyboardButton(text="➕ Создать рассылку",
@@ -2230,7 +2230,7 @@ async def on_mailing_run(callback: CallbackQuery, bot: Bot, platform_user: dict 
                     header = f"📨 <b>Рассылка @{target_bot_username} завершена</b>" if target_bot_username else "📨 <b>Массовая рассылка завершена</b>"
                     await bot.send_message(
                         chat_id=initial_chat_id,
-                        text=f"{header}\n\nВыберите действие ⬇️",
+                        text=f"{header}\n\nВыберите действие 👇",
                         parse_mode="HTML",
                         reply_markup=final_kb,
                     )

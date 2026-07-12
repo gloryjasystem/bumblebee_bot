@@ -131,7 +131,7 @@ async def _show_ch_messages(callback: CallbackQuery, chat_id: int, owner_id: int
         "🖨 <b>Печать</b> — бот имитирует написание текста при отправке сообщений.\n\n"
         "❤️ <b>Реакции</b> — бот будет ставить реакции на сообщения пользователей."
         "</blockquote>\n\n"
-        "Выберите действие ⬇️",
+        "Выберите действие 👇",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="⛓ Цепочка сообщений", callback_data=f"wseq:{chat_id}")],
             [InlineKeyboardButton(text=captcha_label,  callback_data=f"ch_captcha:{chat_id}")],
@@ -952,7 +952,7 @@ async def _show_autoreply(callback: CallbackQuery, chat_id: int, owner_id: int):
     await callback.message.edit_text(
         "<blockquote>Вы можете установить <b>автоматические ответы</b> бота на "
         "любой текст или команду от пользователей.</blockquote>\n\n"
-        "Выберите действие ⬇️",
+        "Выберите действие 👇",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
     )

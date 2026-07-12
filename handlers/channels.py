@@ -206,7 +206,7 @@ async def on_bot_settings(callback: CallbackQuery, state: FSMContext, platform_u
             "<blockquote>ℹ️ Чтобы перевыпустить токен: нужно перейти в @BotFather ➔ my bots ➔ "
             "выбрать нужного бота ➔ API Token ➔ Revoke current token ➔ скопировать новый токен "
             "и отправить его сюда.</blockquote>\n\n"
-            "Выберите действие 🔽",
+            "Выберите действие 👇",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="🗑 Удалить бот", callback_data=f"bot_delete:{child_bot_id}")],
                 [InlineKeyboardButton(text="◄ Назад", callback_data="menu:channels")],
@@ -1311,7 +1311,7 @@ async def on_channel_in_bot(callback: CallbackQuery, platform_user: dict | None)
         callback,
         f"📍 <b>Площадка:</b> {type_icon} {title_html}\n\n"
         f"📅 <b>Дата добавления:</b> {added}\n\n"
-        f"Выберите действие ⬇️",
+        f"Выберите действие 👇",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text=status_label, callback_data=f"ch_in_bot_toggle:{ch_id}:{child_bot_id or ''}")],
             [InlineKeyboardButton(text="🗑 Удалить",  callback_data=f"ch_delete:{ch_id}:{child_bot_id or ''}")],

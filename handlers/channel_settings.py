@@ -1347,16 +1347,26 @@ async def on_ch_msg_del(callback: CallbackQuery, platform_user: dict | None):
         return
     _, chat_id_str, msg_type = callback.data.split(":")
     f = _MSG_FIELDS[msg_type]
+    owner_id = await resolve_chat_owner(platform_user["user_id"], int(chat_id_str))
+
+    # Удаляем эхо-сообщение над меню, чтобы после удаления оно не осталось в чате
+    echo_mid = await _get_echo_mid(owner_id, int(chat_id_str), msg_type)
+    if echo_mid:
+        try:
+            await callback.bot.delete_message(chat_id=callback.message.chat.id, message_id=echo_mid)
+        except Exception:
+            pass
+
     await db.execute(
         f"UPDATE bot_chats SET {f['text_col']}=NULL, {f['media_col']}=NULL, "
         f"{f['media_type_col']}=NULL, {f['buttons_col']}=NULL, {f['enabled_col']}=true "
         "WHERE owner_id=$1 AND chat_id=$2::bigint",
-        await resolve_chat_owner(platform_user["user_id"], int(chat_id_str)), int(chat_id_str),
+        owner_id, int(chat_id_str),
     )
     await callback.answer("🗑 Удалено")
     fake_cb = callback.model_copy(update={"data": f"ch_messages:{chat_id_str}"})
     from handlers.messages import _show_ch_messages
-    await _show_ch_messages(fake_cb, int(chat_id_str), await resolve_chat_owner(platform_user["user_id"], int(chat_id_str)))
+    await _show_ch_messages(fake_cb, int(chat_id_str), owner_id)
 
 
 @router.callback_query(F.data.startswith("ch_msg_back:"))

@@ -212,7 +212,7 @@ async def on_language_select(callback: CallbackQuery, platform_user: dict | None
     text = "🇷🇺 Язык установлен: Русский" if lang == "ru" else "🇺🇸 Language set: English"
     await navigate(
         callback,
-        f"{text}{trial_msg}\n\n⇨ Главное меню",
+        f"{text}{trial_msg}\n\n👇 Главное меню",
         reply_markup=kb_main_menu(),
     )
 
@@ -237,7 +237,7 @@ async def on_main_menu(callback: CallbackQuery, platform_user: dict | None):
         callback,
         f"⚡ <b>Bumblebee Bot</b> — ваш главный помощник для работы с трафиком.\n\n"
         f"Тариф: {label}{until}\n\n"
-        f"⇨ Главное меню",
+        f"👇 Главное меню",
         reply_markup=kb_main_menu(),
     )
 
@@ -258,7 +258,7 @@ async def _show_main_menu(message: Message, platform_user: dict | None, extra: s
     sent = await message.answer(
         f"⚡ <b>Bumblebee Bot</b> — ваш главный помощник для работы с трафиком.\n\n"
         f"Тариф: {label}{until}\n\n"
-        f"⇨ Главное меню{extra}",
+        f"👇 Главное меню{extra}",
         reply_markup=kb_main_menu(),
     )
     from utils.nav import set_active_msg

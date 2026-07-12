@@ -902,7 +902,7 @@ async def _show_msg_editor(event: Message | CallbackQuery, chat_id_str: str, msg
 
     # Тумблер: если выключено — эхо помечаем, что пользователю не придёт
     enabled = bool(ch.get(f["enabled_col"], True))
-    off_prefix = "" if enabled else "<blockquote>⏸ <b>Выключено</b> · сообщение не отправляется</blockquote>\n"
+    off_prefix = "" if enabled else "<blockquote>Выкл · <b>сообщение не отправляется</b></blockquote>\n\n"
     disp_text = (off_prefix + text) if off_prefix else text
 
     from utils.keyboard import build_inline_keyboard

@@ -96,6 +96,11 @@ async def _show_ch_messages(callback: CallbackQuery, chat_id: int, owner_id: int
         await callback.answer("Площадка не найдена", show_alert=True)
         return
 
+    # Пользователь на меню «Сообщения» → сбрасываем пометку «приветствие из цепочки»
+    # (следующий вход в редактор приветствия отсюда обычный, «Назад» ведёт в меню).
+    from handlers.channel_settings import _welcome_from_chain
+    _welcome_from_chain.discard((owner_id, chat_id))
+
     captcha_type   = ch.get("captcha_type") or "off"
     typing_on      = ch.get("typing_action", False)
     reaction       = ch.get("reaction_emoji") or ""

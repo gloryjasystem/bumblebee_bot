@@ -805,6 +805,11 @@ _MSG_FIELDS = {
 
 _MSG_TIMER_CYCLE = [0, 5, 15, 30, 60, 120, 300]  # секунды
 
+# Приветствие открыто ИЗ «Цепочки сообщений» → «Назад» в редакторе вернёт в менеджер
+# цепочки, а не в меню «Сообщения». Ключ (owner_id, chat_id). In-memory; сбрасывается
+# при показе меню «Сообщения» (_show_ch_messages) и при возврате из цепочки (on_ch_msg_back).
+_welcome_from_chain: set[tuple[int, int]] = set()
+
 # Кэш message_id эхо-сообщения (теперь в БД): edit_welcome_mid, edit_farewell_mid
 import json as _json
 
@@ -1033,6 +1038,26 @@ async def on_welcome_set(callback: CallbackQuery, state: FSMContext, platform_us
         # Сообщения нет — «Отмена» возвращает на экран Сообщений (скрин 1), а не на редактор
         await _show_msg_prompt(callback, chat_id_str, "welcome", scope="ch",
                                cancel_cb=f"ch_messages:{chat_id_str}", state=state)
+
+
+@router.callback_query(F.data.startswith("welcome_set_chain:"))
+async def on_welcome_set_chain(callback: CallbackQuery, state: FSMContext, platform_user: dict | None):
+    """Вход в редактор приветствия ИЗ менеджера цепочки — «Назад» вернёт в цепочку."""
+    if not platform_user:
+        return
+    chat_id_str = callback.data.split(":")[1]
+    owner_id = await resolve_chat_owner(platform_user["user_id"], int(chat_id_str))
+    _welcome_from_chain.add((owner_id, int(chat_id_str)))
+    ch = await _get_chat_by_id(owner_id, int(chat_id_str))
+    if ch and (ch.get("welcome_text") or ch.get("welcome_media")):
+        await _show_msg_editor(callback, chat_id_str, "welcome", dict(ch), scope="ch", state=state)
+    else:
+        await state.set_state(SettingsFSM.waiting_for_welcome_text)
+        await state.update_data(chat_id=int(chat_id_str), owner_id=owner_id,
+                                 msg_type="welcome", scope="ch")
+        # из цепочки — «Отмена» тоже возвращает в менеджер цепочки
+        await _show_msg_prompt(callback, chat_id_str, "welcome", scope="ch",
+                               cancel_cb=f"wseq:{chat_id_str}", state=state)
 
 
 @router.callback_query(F.data.startswith("farewell_set:"))
@@ -1395,6 +1420,14 @@ async def on_ch_msg_back(callback: CallbackQuery, state: FSMContext, platform_us
             await callback.bot.delete_message(chat_id=echo_chat_id, message_id=echo_mid)
         except Exception:
             pass  # уже удалено или недоступно
+
+    # Если приветствие открывали ИЗ «Цепочки сообщений» — «Назад» возвращает в менеджер
+    # цепочки, а не в меню «Сообщения». Иначе — как раньше.
+    if msg_type == "welcome" and (owner_id, chat_id) in _welcome_from_chain:
+        _welcome_from_chain.discard((owner_id, chat_id))
+        from handlers.welcome_seq import _show_manager
+        await _show_manager(callback, chat_id, owner_id)
+        return
 
     # Меню редактируем на месте в экран «Сообщения»
     from handlers.messages import _show_ch_messages

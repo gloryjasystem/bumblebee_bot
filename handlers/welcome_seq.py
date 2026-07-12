@@ -296,7 +296,7 @@ async def _show_manager(event, chat_id: int, owner_id: int):
     # ── Клавиатура ──
     kb_rows = [[InlineKeyboardButton(
         text=("✏️ №1 Приветствие" if has_base else "✏️ Задать приветствие №1"),
-        callback_data=f"welcome_set:{chat_id}",
+        callback_data=f"welcome_set_chain:{chat_id}",
     )]]
     for i, st in enumerate(msg_steps, start=2):
         delay = int(st["delay_sec"] or 0)

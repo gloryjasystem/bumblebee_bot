@@ -44,6 +44,13 @@ class Settings(BaseSettings):
     # Mode
     bot_mode: str = "polling"  # polling | webhook
 
+    # ── Премиум-иконки (custom_emoji) в текстах главного бота ──
+    # По умолчанию ВЫКЛ — прод не меняется, пока не включим.
+    custom_emoji_enabled: bool = False
+    # CSV telegram-id: если задано — иконки применяются ТОЛЬКО к этим чатам
+    # (тест-режим: сначала показываем только владельцу). Пусто = всем.
+    custom_emoji_test_uids: str = ""
+
     # ── Тарифные цены (USD) ──────────────────────────
     tariff_prices: dict = {
         "start_month":     50,

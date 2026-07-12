@@ -949,6 +949,26 @@ async def on_wstep_rm(callback: CallbackQuery, state: FSMContext, platform_user:
 
 @router.callback_query(F.data.startswith("wseq_clear:"))
 async def on_wseq_clear(callback: CallbackQuery, state: FSMContext, platform_user: dict | None):
+    """Шаг 1 — подтверждение. Само удаление в on_wseq_clear_do."""
+    if not platform_user:
+        return
+    chat_id = int(callback.data.split(":")[1])
+    text = (
+        "⚠️ <b>Удалить всю цепочку?</b>\n\n"
+        "Все дополнительные сообщения (№2 и далее) и очистка переписки будут удалены "
+        "без возможности восстановления.\n\n"
+        "Приветствие №1 останется. Его можно убрать только внутри самого приветствия."
+    )
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🗑 Да, удалить всё", callback_data=f"wseq_clear_do:{chat_id}")],
+        [InlineKeyboardButton(text="◀️ Отмена", callback_data=f"wseq:{chat_id}")],
+    ])
+    await navigate(callback, text, reply_markup=kb, disable_web_page_preview=True)
+
+
+@router.callback_query(F.data.startswith("wseq_clear_do:"))
+async def on_wseq_clear_do(callback: CallbackQuery, state: FSMContext, platform_user: dict | None):
+    """Шаг 2 — реальное удаление цепочки. Приветствие №1 (bot_chats) не трогаем."""
     if not platform_user:
         return
     chat_id = int(callback.data.split(":")[1])
@@ -957,7 +977,7 @@ async def on_wseq_clear(callback: CallbackQuery, state: FSMContext, platform_use
         "DELETE FROM welcome_steps WHERE owner_id=$1 AND chat_id=$2::bigint",
         owner_id, chat_id,
     )
-    await callback.answer("🗑 Всё удалено")
+    await callback.answer("🗑 Цепочка удалена")
     await state.clear()
     await _show_manager(callback, chat_id, owner_id)
 

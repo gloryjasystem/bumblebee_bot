@@ -23,6 +23,7 @@ import db.pool as db
 from db.channels import resolve_chat_owner, resolve_bot_chat_owner
 from services.security import sanitize, decrypt_token
 from utils.nav import navigate
+from utils.timing import format_delay_short, parse_delay_input
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -40,6 +41,7 @@ class SettingsFSM(StatesGroup):
     # Редактор сообщений: кнопки и медиа
     waiting_for_msg_buttons   = State()
     waiting_for_msg_media     = State()
+    waiting_for_msg_selfdel   = State()   # своё время авто-удаления (как у шагов цепочки)
     # ЧС: загрузка файлов (бот-уровень)
     bs_bl_waiting_add_file  = State()
     bs_bl_waiting_del_file  = State()
@@ -803,7 +805,8 @@ _MSG_FIELDS = {
     },
 }
 
-_MSG_TIMER_CYCLE = [0, 5, 15, 30, 60, 120, 300]  # секунды
+# Чипсы авто-удаления — идентичны шагам цепочки (welcome_seq._SELFDEL_CHIPS)
+_MSG_SELFDEL_CHIPS = [(0, "нет"), (15, "15с"), (60, "1 мин"), (300, "5 мин"), (900, "15 мин"), (1800, "30 мин")]
 
 # Приветствие открыто ИЗ «Цепочки сообщений» → «Назад» в редакторе вернёт в менеджер
 # цепочки, а не в меню «Сообщения». Ключ (owner_id, chat_id). In-memory; сбрасывается
@@ -814,12 +817,10 @@ _welcome_from_chain: set[tuple[int, int]] = set()
 import json as _json
 
 
-def _timer_label(v: int) -> str:
-    if not v:
-        return "нету"
-    if v < 60:
-        return f"{v} сек"
-    return f"{v // 60} мин"
+def _selfdel_label(sec) -> str:
+    """Подпись авто-удаления — идентична шагам цепочки (welcome_seq._self_del_label)."""
+    sec = int(sec or 0)
+    return "нет" if sec <= 0 else format_delay_short(sec)
 
 
 async def _get_chat_by_id(owner_id: int, chat_id: int):
@@ -867,7 +868,7 @@ def _build_editor_kb(chat_id_str: str, msg_type: str, ch: dict, scope: str = "ch
     else:
         media_label = "🎬 Медиа: нет"
     preview_label = f"👁 Превью: {'да' if preview_on else 'нет'}"
-    timer_label_txt = f"⏱ Таймер: {_timer_label(timer_val)}"
+    selfdel_label_txt = f"⏳ Авто-удаление: {_selfdel_label(timer_val)}"
 
     pfx = f"{scope}_msg"  # ch_msg or bs_msg
     # Используем ch_msg_back чтобы удалить эхо-сообщение при нажатии «Назад»
@@ -886,7 +887,7 @@ def _build_editor_kb(chat_id_str: str, msg_type: str, ch: dict, scope: str = "ch
         [InlineKeyboardButton(text="🎛 Кнопки",          callback_data=f"{pfx}_btns:{chat_id_str}:{msg_type}")],
         [InlineKeyboardButton(text=media_label,           callback_data=f"{pfx}_media:{chat_id_str}:{msg_type}")],
         [InlineKeyboardButton(text=preview_label,         callback_data=f"{pfx}_preview:{chat_id_str}:{msg_type}")],
-        [InlineKeyboardButton(text=timer_label_txt,       callback_data=f"{pfx}_timer:{chat_id_str}:{msg_type}")],
+        [InlineKeyboardButton(text=selfdel_label_txt,     callback_data=f"{pfx}_selfdel:{chat_id_str}:{msg_type}")],
         [InlineKeyboardButton(text="🗑 Удалить",          callback_data=f"{pfx}_del:{chat_id_str}:{msg_type}")],
         [InlineKeyboardButton(text="◀️ Назад",            callback_data=back_cb)],
     ]
@@ -1323,29 +1324,133 @@ async def on_ch_msg_preview(callback: CallbackQuery, platform_user: dict | None)
     )
 
 
-@router.callback_query(F.data.startswith("ch_msg_timer:"))
-async def on_ch_msg_timer(callback: CallbackQuery, platform_user: dict | None):
+# ── Авто-удаление приветствия/прощания: чипсы + своё (как у шагов цепочки) ──
+# Раньше это была кнопка «⏱ Таймер» с циклом значений; теперь — экран-чипсы,
+# идентичный шагам (welcome_seq: on_wstep_selfdel). Пишем в ту же колонку
+# welcome_timer/farewell_timer (семантика = авто-удаление), движок не меняется.
+
+async def _drop_welcome_echo(callback: CallbackQuery, state: FSMContext | None,
+                             owner_id: int, chat_id_str: str, msg_type: str):
+    """Удаляет эхо-превью редактора перед показом под-экрана (как _drop_echo у шагов)."""
+    fsm_data = (await state.get_data()) if state else {}
+    echo_mid = fsm_data.get("editor_echo_mid")
+    echo_chat = fsm_data.get("editor_echo_chat_id") or callback.message.chat.id
+    if not echo_mid:
+        echo_mid = await _get_echo_mid(owner_id, int(chat_id_str), msg_type)
+    if echo_mid:
+        try:
+            await callback.bot.delete_message(chat_id=echo_chat, message_id=echo_mid)
+        except Exception:
+            pass
+    if state:
+        await state.update_data(editor_echo_mid=None)
+    await _set_echo_mid(owner_id, int(chat_id_str), msg_type, None)
+
+
+@router.callback_query(F.data.startswith("ch_msg_selfdel:"))
+async def on_ch_msg_selfdel(callback: CallbackQuery, state: FSMContext, platform_user: dict | None):
+    """Экран авто-удаления: чипсы + «Своё значение» (калька с шагов цепочки)."""
     if not platform_user:
         return
     _, chat_id_str, msg_type = callback.data.split(":")
     f = _MSG_FIELDS[msg_type]
-    ch = await _get_chat_by_id(await resolve_chat_owner(platform_user["user_id"], int(chat_id_str)), int(chat_id_str))
-    cur = int(ch.get(f["timer_col"]) or 0 if ch else 0)
-    try:
-        idx = _MSG_TIMER_CYCLE.index(cur)
-    except ValueError:
-        idx = 0
-    new_val = _MSG_TIMER_CYCLE[(idx + 1) % len(_MSG_TIMER_CYCLE)]
+    owner_id = await resolve_chat_owner(platform_user["user_id"], int(chat_id_str))
+    ch = await _get_chat_by_id(owner_id, int(chat_id_str))
+    cur = int((ch.get(f["timer_col"]) or 0) if ch else 0)
+
+    await _drop_welcome_echo(callback, state, owner_id, chat_id_str, msg_type)
+    await state.set_state(None)
+
+    chip_rows, row = [], []
+    for sec, label in _MSG_SELFDEL_CHIPS:
+        mark = " ✅" if sec == cur else ""
+        row.append(InlineKeyboardButton(text=f"{label}{mark}", callback_data=f"ch_msg_selfdelset:{chat_id_str}:{msg_type}:{sec}"))
+        if len(row) == 3:
+            chip_rows.append(row); row = []
+    if row:
+        chip_rows.append(row)
+    chip_rows.append([InlineKeyboardButton(text="✏️ Своё значение", callback_data=f"ch_msg_selfdelcustom:{chat_id_str}:{msg_type}")])
+    back_cb = f"welcome_set:{chat_id_str}" if msg_type == "welcome" else f"farewell_set:{chat_id_str}"
+    chip_rows.append([InlineKeyboardButton(text="◀️ Назад", callback_data=back_cb)])
+
+    await navigate(
+        callback,
+        "⏳ <b>Авто-удаление сообщения</b>\n\n"
+        "Через сколько удалить это сообщение после отправки.\n"
+        f"Сейчас: <b>{_selfdel_label(cur)}</b>",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=chip_rows),
+    )
+
+
+@router.callback_query(F.data.startswith("ch_msg_selfdelset:"))
+async def on_ch_msg_selfdelset(callback: CallbackQuery, state: FSMContext, platform_user: dict | None):
+    if not platform_user:
+        return
+    _, chat_id_str, msg_type, sec_s = callback.data.split(":")
+    f = _MSG_FIELDS[msg_type]
+    owner_id = await resolve_chat_owner(platform_user["user_id"], int(chat_id_str))
+    sec = max(0, int(sec_s))
     await db.execute(
         f"UPDATE bot_chats SET {f['timer_col']}=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
-        new_val, await resolve_chat_owner(platform_user["user_id"], int(chat_id_str)), int(chat_id_str),
+        sec, owner_id, int(chat_id_str),
     )
-    await callback.answer(f"⏱ Таймер: {_timer_label(new_val)}")
-    ch = await _get_chat_by_id(await resolve_chat_owner(platform_user["user_id"], int(chat_id_str)), int(chat_id_str))
-    # Только обновляем кнопки меню на месте—без новых сообщений
-    await callback.message.edit_reply_markup(
-        reply_markup=_build_editor_kb(chat_id_str, msg_type, dict(ch), scope="ch")
+    await callback.answer(f"⏳ Авто-удаление: {_selfdel_label(sec)}")
+    ch = await _get_chat_by_id(owner_id, int(chat_id_str))
+    await _show_msg_editor(callback, chat_id_str, msg_type, dict(ch) if ch else {}, scope="ch", state=state)
+
+
+@router.callback_query(F.data.startswith("ch_msg_selfdelcustom:"))
+async def on_ch_msg_selfdelcustom(callback: CallbackQuery, state: FSMContext, platform_user: dict | None):
+    if not platform_user:
+        return
+    _, chat_id_str, msg_type = callback.data.split(":")
+    owner_id = await resolve_chat_owner(platform_user["user_id"], int(chat_id_str))
+    await state.set_state(SettingsFSM.waiting_for_msg_selfdel)
+    await state.update_data(chat_id=int(chat_id_str), owner_id=owner_id, msg_type=msg_type, scope="ch")
+    prompt = await navigate(
+        callback,
+        "✏️ <b>Своё время авто-удаления</b>\n\n"
+        "Пришлите число. По умолчанию — <b>секунды</b>.\n"
+        "Примеры: <code>45</code>, <code>10м</code>, <code>1ч</code>. "
+        "<code>0</code> или <code>нет</code> — выключить.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="◀️ Отмена", callback_data=f"ch_msg_selfdel:{chat_id_str}:{msg_type}")],
+        ]),
     )
+    if prompt:
+        await state.update_data(editor_prompt_mid=prompt.message_id)
+
+
+@router.message(SettingsFSM.waiting_for_msg_selfdel)
+async def on_msg_selfdel_input(message: Message, state: FSMContext):
+    data = await state.get_data()
+    owner_id = data.get("owner_id")
+    msg_type = data.get("msg_type", "welcome")
+    chat_id = data.get("chat_id")
+    if not owner_id or not chat_id:
+        await state.clear()
+        return
+    f = _MSG_FIELDS[msg_type]
+    sec = parse_delay_input(message.text or "")
+    if sec is None:
+        await message.answer(
+            "Не понял значение. Пришлите число, напр. <code>45</code>, <code>10м</code>, <code>1ч</code>, или <code>0</code>.",
+            parse_mode="HTML",
+        )
+        return
+    # удалить приглашение (ввод пользователя удалит _show_msg_editor)
+    prompt_mid = data.get("editor_prompt_mid")
+    if prompt_mid:
+        try:
+            await message.bot.delete_message(chat_id=message.chat.id, message_id=prompt_mid)
+        except Exception:
+            pass
+    await db.execute(
+        f"UPDATE bot_chats SET {f['timer_col']}=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
+        sec, owner_id, int(chat_id),
+    )
+    ch = await _get_chat_by_id(owner_id, int(chat_id))
+    await _show_msg_editor(message, str(chat_id), msg_type, dict(ch) if ch else {}, scope="ch", state=state)
 
 
 @router.callback_query(F.data.startswith("ch_msg_toggle:"))

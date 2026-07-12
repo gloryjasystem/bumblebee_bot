@@ -103,6 +103,8 @@ def create_app(bot: Bot, dp: Dispatcher) -> FastAPI:
                 # Тумблер Вкл/Выкл приветствия и прощания (по умолчанию включено)
                 "ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS welcome_enabled      BOOLEAN DEFAULT true",
                 "ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS farewell_enabled     BOOLEAN DEFAULT true",
+                # Позиция подписи над медиа приветствия (⬆️/⬇️); farewell-близнец мигрируется отдельно
+                "ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS welcome_media_below  BOOLEAN DEFAULT false",
                 # Миграция captcha_lang: если колонка была BOOLEAN — конвертируем в TEXT
                 "ALTER TABLE bot_chats ALTER COLUMN captcha_lang TYPE TEXT USING CASE WHEN captcha_lang::text = 'true' THEN 'ru' ELSE 'off' END",
                 # Миграция captcha_button_style: старые значения 1x1/1x2/2x2 → inline

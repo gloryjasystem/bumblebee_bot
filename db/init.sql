@@ -274,6 +274,7 @@ ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS welcome_media_type  VARCHAR(16); 
 ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS welcome_buttons      JSONB;         -- [{text, url}, ...]
 ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS welcome_preview      BOOLEAN DEFAULT FALSE;
 ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS welcome_timer        INTEGER DEFAULT 0;  -- секунды; 0 = не удалять
+ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS welcome_media_below  BOOLEAN DEFAULT FALSE;  -- подпись над медиа (⬆️/⬇️)
 ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS farewell_media       TEXT;          -- file_id
 ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS farewell_media_type  VARCHAR(16);
 ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS farewell_buttons     JSONB;

@@ -48,8 +48,7 @@ _AUTOCLEAR_CHIPS = [(0, "выкл"), (60, "1 мин"), (300, "5 мин"), (900, 
 
 class WSeqFSM(StatesGroup):
     adding_content = State()   # ждём текст/медиа нового шага-сообщения
-    step_content   = State()   # ждём новый текст существующего шага
-    step_media     = State()   # ждём медиа шага
+    step_content   = State()   # ждём новый текст+медиа существующего шага (комбо, как в приветствии)
     step_buttons   = State()   # ждём кнопки шага
     step_delay     = State()   # ждём свою задержку шага
     step_selfdel   = State()   # ждём своё время авто-удаления шага
@@ -489,18 +488,21 @@ async def _show_step_editor(event, step_id: int, owner_id: int, state: FSMContex
         txt = st["text"] or ""
         media_fid = st["media"]
         media_type = st["media_type"]
+        # Эхо честно отражает настройки (как у приветствия): позиция подписи и превью ссылок
+        media_below = bool(st["media_below"])
+        no_preview = not bool(st["preview"])
         try:
             if media_fid:
                 if media_type == "photo":
-                    sent = await bot.send_photo(tg_chat_id, media_fid, caption=txt or None, reply_markup=step_kb, parse_mode="HTML")
+                    sent = await bot.send_photo(tg_chat_id, media_fid, caption=txt or None, reply_markup=step_kb, parse_mode="HTML", show_caption_above_media=media_below)
                 elif media_type == "video":
-                    sent = await bot.send_video(tg_chat_id, media_fid, caption=txt or None, reply_markup=step_kb, parse_mode="HTML")
+                    sent = await bot.send_video(tg_chat_id, media_fid, caption=txt or None, reply_markup=step_kb, parse_mode="HTML", show_caption_above_media=media_below)
                 elif media_type == "animation":
-                    sent = await bot.send_animation(tg_chat_id, media_fid, caption=txt or None, reply_markup=step_kb, parse_mode="HTML")
+                    sent = await bot.send_animation(tg_chat_id, media_fid, caption=txt or None, reply_markup=step_kb, parse_mode="HTML", show_caption_above_media=media_below)
                 else:
                     sent = await bot.send_document(tg_chat_id, media_fid, caption=txt or None, reply_markup=step_kb, parse_mode="HTML")
             else:
-                sent = await bot.send_message(tg_chat_id, txt or "—", reply_markup=step_kb, parse_mode="HTML")
+                sent = await bot.send_message(tg_chat_id, txt or "—", reply_markup=step_kb, parse_mode="HTML", disable_web_page_preview=no_preview)
             new_echo_mid = sent.message_id
         except Exception as e:
             logger.debug(f"[WSEQ] echo send failed step={step_id}: {e}")
@@ -524,12 +526,18 @@ async def _show_step_editor(event, step_id: int, owner_id: int, state: FSMContex
             [InlineKeyboardButton(text="◀️ Назад", callback_data=f"wseq:{chat_id}")],
         ]
     else:
-        media_state = "есть" if st["media"] else "нет"
+        # 🎬 Медиа — как в приветствии: показывает позицию ⬆️/⬇️ (само медиа задаётся в «Редактировать»)
+        if st["media"]:
+            media_label = f"🎬 Медиа: {'⬇️' if st['media_below'] else '⬆️'}"
+        else:
+            media_label = "🎬 Медиа: нет"
+        preview_label = f"👁 Превью: {'да' if st['preview'] else 'нет'}"
         body = f"⚙️ <b>Шаг{num_label}</b>"
         kb_rows = [
-            [InlineKeyboardButton(text="✏️ Текст", callback_data=f"wstep_edit:{step_id}")],
+            [InlineKeyboardButton(text="✏️ Редактировать", callback_data=f"wstep_edit:{step_id}")],
             [InlineKeyboardButton(text="🎛 Кнопки", callback_data=f"wstep_btns:{step_id}")],
-            [InlineKeyboardButton(text=f"🎬 Медиа: {media_state}", callback_data=f"wstep_media:{step_id}")],
+            [InlineKeyboardButton(text=media_label, callback_data=f"wstep_media:{step_id}")],
+            [InlineKeyboardButton(text=preview_label, callback_data=f"wstep_preview:{step_id}")],
             [InlineKeyboardButton(text=f"⏱ Задержка: {_delay_offset(st['delay_sec'])}", callback_data=f"wstep_delay:{step_id}")],
             [InlineKeyboardButton(text=f"⏳ Авто-удаление: {_self_del_label(st['self_delete_sec'] or 0)}", callback_data=f"wstep_selfdel:{step_id}")],
             [InlineKeyboardButton(text="🗑 Удалить шаг", callback_data=f"wstep_rm:{step_id}")],
@@ -688,9 +696,11 @@ async def on_wstep_edit(callback: CallbackQuery, state: FSMContext, platform_use
     await state.update_data(wstep_id=step_id)
     prompt = await navigate(
         callback,
-        "✏️ <b>Текст шага</b>\n\n"
-        "Пришлите новый текст сообщения.\n"
-        "Переменные: <code>{name}</code>, <code>{allname}</code>, <code>{username}</code>, <code>{chat}</code>, <code>{day}</code>.",
+        "✏️ <b>Редактировать шаг</b>\n\n"
+        "Пришлите сообщение целиком — текст и, при необходимости, медиа. "
+        "Оно полностью заменит предыдущее.\n\n"
+        "Переменные: <code>{name}</code>, <code>{allname}</code>, <code>{username}</code>, <code>{chat}</code>, <code>{day}</code>.\n"
+        "ⓘ Можно прикрепить фото, видео, GIF или документ.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="◀️ Отмена", callback_data=f"wstep:{step_id}")],
         ]),
@@ -709,18 +719,20 @@ async def on_wstep_content_input(message: Message, state: FSMContext, platform_u
         await state.clear()
         return
     owner_id = await _step_owner(platform_user["user_id"], step_id)
+    # Комбинированный ввод как в приветствии (_handle_msg_input): текст И медиа из
+    # одного сообщения ПОЛНОСТЬЮ заменяют оба поля (нет медиа во вводе → media стирается).
     text = sanitize(message.text or message.caption or "", max_len=1024)
-    if not text:
-        await message.answer("Пришлите текст сообщения (для медиа есть кнопка «🎬 Медиа»).")
-        return
+    media_fid, media_type = _extract_media(message)
     await db.execute(
-        "UPDATE welcome_steps SET text=$1 WHERE id=$2 AND owner_id=$3",
-        text, step_id, owner_id,
+        "UPDATE welcome_steps SET text=$1, media=$2, media_type=$3 WHERE id=$4 AND owner_id=$5",
+        text or None, media_fid, media_type, step_id, owner_id,
     )
     await _show_step_editor(message, step_id, owner_id, state)
 
 
-# ── Медиа шага ───────────────────────────────────────────────────
+# ── Медиа шага: позиция ⬆️/⬇️ (как в приветствии) ────────────────
+# Само медиа добавляется/меняется через «✏️ Редактировать» (комбинированный ввод).
+# Эта кнопка, как у приветствия (on_ch_msg_media), только двигает подпись над/под медиа.
 
 @router.callback_query(F.data.startswith("wstep_media:"))
 async def on_wstep_media(callback: CallbackQuery, state: FSMContext, platform_user: dict | None):
@@ -732,49 +744,37 @@ async def on_wstep_media(callback: CallbackQuery, state: FSMContext, platform_us
     if not st:
         await callback.answer("Шаг не найден", show_alert=True)
         return
-    await _drop_echo(callback.bot, state, callback.message.chat.id)
-    await state.set_state(WSeqFSM.step_media)
-    await state.update_data(wstep_id=step_id)
-    has_media = bool(st["media"])
-    hint = "Сейчас медиа прикреплено. Пришлите новое, чтобы заменить, или <code>-</code>, чтобы убрать." if has_media \
-        else "Пришлите фото, видео, GIF или документ для этого шага."
-    prompt = await navigate(
-        callback,
-        f"🎬 <b>Медиа шага</b>\n\n{hint}",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="◀️ Отмена", callback_data=f"wstep:{step_id}")],
-        ]),
+    if not st["media"]:
+        await callback.answer("Медиа не прикреплено", show_alert=True)
+        return
+    new_below = not bool(st["media_below"])
+    await db.execute(
+        "UPDATE welcome_steps SET media_below=$1 WHERE id=$2 AND owner_id=$3",
+        new_below, step_id, owner_id,
     )
-    if prompt:
-        await state.update_data(wstep_prompt_mid=prompt.message_id)
+    await callback.answer(f"🎬 Медиа: {'⬇️' if new_below else '⬆️'}")
+    await _show_step_editor(callback, step_id, owner_id, state)
 
 
-@router.message(WSeqFSM.step_media)
-async def on_wstep_media_input(message: Message, state: FSMContext, platform_user: dict | None):
+# ── Превью ссылок шага (как в приветствии) ───────────────────────
+
+@router.callback_query(F.data.startswith("wstep_preview:"))
+async def on_wstep_preview(callback: CallbackQuery, state: FSMContext, platform_user: dict | None):
     if not platform_user:
         return
-    data = await state.get_data()
-    step_id = data.get("wstep_id")
-    if not step_id:
-        await state.clear()
-        return
+    step_id = int(callback.data.split(":")[1])
     owner_id = await _step_owner(platform_user["user_id"], step_id)
-    if (message.text or "").strip() == "-":
-        await db.execute(
-            "UPDATE welcome_steps SET media=NULL, media_type=NULL WHERE id=$1 AND owner_id=$2",
-            step_id, owner_id,
-        )
-        await _show_step_editor(message, step_id, owner_id, state)
+    st = await _get_step(owner_id, step_id)
+    if not st:
+        await callback.answer("Шаг не найден", show_alert=True)
         return
-    media_fid, media_type = _extract_media(message)
-    if not media_fid:
-        await message.answer("⚠️ Поддерживаются: фото, видео, GIF, документ. Или <code>-</code>, чтобы убрать.", parse_mode="HTML")
-        return
+    new_val = not bool(st["preview"])
     await db.execute(
-        "UPDATE welcome_steps SET media=$1, media_type=$2 WHERE id=$3 AND owner_id=$4",
-        media_fid, media_type, step_id, owner_id,
+        "UPDATE welcome_steps SET preview=$1 WHERE id=$2 AND owner_id=$3",
+        new_val, step_id, owner_id,
     )
-    await _show_step_editor(message, step_id, owner_id, state)
+    await callback.answer(f"👁 Превью: {'да' if new_val else 'нет'}")
+    await _show_step_editor(callback, step_id, owner_id, state)
 
 
 # ── Кнопки шага ──────────────────────────────────────────────────
@@ -794,10 +794,20 @@ async def on_wstep_btns(callback: CallbackQuery, state: FSMContext, platform_use
     await state.update_data(wstep_id=step_id)
     prompt = await navigate(
         callback,
-        "🎛 <b>Кнопки шага</b>\n\n"
-        "Пришлите кнопки в формате:\n"
-        "<blockquote><code>Текст — https://ссылка</code></blockquote>\n"
-        "Несколько в ряд — через <code>|</code>. Отправьте <code>-</code>, чтобы убрать кнопки.",
+        "📎 Отправьте <b>кнопки</b>, которые будут добавлены к сообщению.\n\n"
+        "🔗 <u><b>URL-кнопки</b></u>\n\n"
+        "<b>Одна кнопка в ряду:</b>\n"
+        "<blockquote><code>Кнопка 1 — ссылка</code>\n"
+        "<code>Кнопка 2 — ссылка</code></blockquote>\n\n"
+        "<b>Несколько кнопок в ряду:</b>\n"
+        "<blockquote><code>Кнопка 1 — ссылка | Кнопка 2 — ссылка</code></blockquote>\n\n"
+        "🎨 <u><b>Цветные кнопки</b></u> (добавь emoji перед названием):\n"
+        "<blockquote><code>🟦 Кнопка — ссылка</code> — синяя\n"
+        "<code>🟩 Кнопка — ссылка</code> — зелёная\n"
+        "<code>🟥 Кнопка — ссылка</code> — красная</blockquote>\n\n"
+        "<b>WebApp кнопки:</b>\n"
+        "<blockquote><code>Кнопка 1 — ссылка (webapp)</code></blockquote>\n\n"
+        "ℹ️ Нажмите, чтобы скопировать. Отправьте <code>-</code>, чтобы убрать кнопки.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="◀️ Отмена", callback_data=f"wstep:{step_id}")],
         ]),
@@ -816,17 +826,38 @@ async def on_wstep_btns_input(message: Message, state: FSMContext, platform_user
         await state.clear()
         return
     owner_id = await _step_owner(platform_user["user_id"], step_id)
+    prompt_mid = data.get("wstep_prompt_mid")
     raw = sanitize(message.text or "", max_len=2048)
     if raw == "-":
         buttons = []
     else:
         buttons = _parse_buttons(raw)
         if not buttons:
-            await message.answer(
-                "⚠️ Не распознал кнопки. Формат: <code>Текст — https://ссылка</code>. "
-                "Или <code>-</code>, чтобы убрать.",
-                parse_mode="HTML",
+            # Ошибка — как в приветствии: удаляем ввод, переписываем промпт in-place с «Отмена».
+            try:
+                await message.delete()
+            except Exception:
+                pass
+            err_text = (
+                "⚠️ <b>Не удалось распознать кнопки.</b>\n\n"
+                "Формат: <code>Текст — https://ссылка</code>\n"
+                "Несколько в ряд — через <code>|</code>\n\n"
+                "✏️ Введите кнопки в поле ниже ещё раз."
             )
+            err_kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="◀️ Отмена", callback_data=f"wstep:{step_id}")]])
+            if prompt_mid:
+                try:
+                    await message.bot.edit_message_text(
+                        chat_id=message.chat.id, message_id=prompt_mid,
+                        text=err_text, reply_markup=err_kb, parse_mode="HTML",
+                    )
+                    return
+                except Exception as e:
+                    if "not modified" in str(e).lower():
+                        return
+                    # промпт недоступен — пошлём новое предупреждение и запомним его
+            m = await message.answer(err_text, reply_markup=err_kb, parse_mode="HTML")
+            await state.update_data(wstep_prompt_mid=m.message_id)
             return
     await db.execute(
         "UPDATE welcome_steps SET buttons=$1::jsonb WHERE id=$2 AND owner_id=$3",

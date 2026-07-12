@@ -114,8 +114,8 @@ async def _show_ch_messages(callback: CallbackQuery, chat_id: int, owner_id: int
     farewell_on   = ch.get("farewell_enabled", True)
     has_welcome   = bool(ch.get("welcome_text") or ch.get("welcome_media"))
     has_farewell  = bool(ch.get("farewell_text") or ch.get("farewell_media"))
-    welcome_label  = f"👋 Приветствие: {('вкл' if welcome_on else 'выкл') if has_welcome else 'не задано'}"
-    farewell_label = f"🤚 Прощание: {('вкл' if farewell_on else 'выкл') if has_farewell else 'не задано'}"
+    welcome_label  = f"👋 Приветствие: {'вкл' if (has_welcome and welcome_on) else 'выкл'}"
+    farewell_label = f"🤚 Прощание: {'вкл' if (has_farewell and farewell_on) else 'выкл'}"
 
     await navigate(
         callback,

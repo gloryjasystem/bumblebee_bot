@@ -332,7 +332,7 @@ async def on_settings_menu(callback: CallbackQuery, platform_user: dict | None):
     await navigate(
         callback,
         f"👤 <b>Мой кабинет</b>\n\n"
-        f"👤 Ваш ID: <code>{platform_user['user_id']}</code>\n"
+        f"🆔 Ваш ID: <code>{platform_user['user_id']}</code>\n"
         f"💎 Тариф: {label}{until_str}\n\n"
         f"📊 <b>Ваши лимиты:</b>\n"
         f"├ 🤖 Боты: <b>{bots_count}</b> из {max_bots}\n"

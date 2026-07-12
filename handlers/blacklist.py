@@ -36,7 +36,7 @@ def kb_blacklist_main(chat_id: int) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="🔎 Найти в базе",               callback_data=f"bl_search:{chat_id}")],
         [InlineKeyboardButton(text="📤 Экспорт базы",               callback_data=f"bl_export:{chat_id}")],
         [InlineKeyboardButton(text="🗑 Очистить базу",              callback_data=f"bl_clear_confirm:{chat_id}")],
-        [InlineKeyboardButton(text="◀️ Назад",                      callback_data=f"channel_by_chat:{chat_id}")],
+        [InlineKeyboardButton(text="◄ Назад",                      callback_data=f"channel_by_chat:{chat_id}")],
     ])
 
 
@@ -402,7 +402,7 @@ async def on_bs_bl_text(message: Message, state: FSMContext, platform_user: dict
             f"⚡ Запускаю зачистку из каналов...",
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="◀️ Назад к ЧС", callback_data=f"bs_blacklist:{child_bot_id}")]
+                [InlineKeyboardButton(text="◄ Назад к ЧС", callback_data=f"bs_blacklist:{child_bot_id}")]
             ])
         )
         # Фоновый кик — передаём child_bot_id для per-bot счётчика
@@ -427,7 +427,7 @@ async def on_bs_bl_text(message: Message, state: FSMContext, platform_user: dict
             f"{result_text}\n\n"
             f"Итого в ЧС: {total:,}",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="◀️ Назад к ЧС", callback_data=f"bs_blacklist:{child_bot_id}")]
+                [InlineKeyboardButton(text="◄ Назад к ЧС", callback_data=f"bs_blacklist:{child_bot_id}")]
             ])
         )
         # LAZY PASS: после удаления из ЧС не отправляем unban_chat_member.
@@ -516,7 +516,7 @@ async def on_bs_bl_file(message: Message, bot: Bot, state: FSMContext,
                         parse_mode="HTML",
                         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                             [InlineKeyboardButton(
-                                text="◀️ Назад к ЧС",
+                                text="◄ Назад к ЧС",
                                 callback_data=f"bs_blacklist:{child_bot_id}",
                             )],
                         ]),
@@ -588,7 +588,7 @@ async def on_bs_bl_file(message: Message, bot: Bot, state: FSMContext,
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(
-                    text="◀️ Назад к ЧС",
+                    text="◄ Назад к ЧС",
                     callback_data=f"bs_blacklist:{child_bot_id}",
                 )],
             ]),

@@ -190,7 +190,7 @@ async def on_tariff_detail(callback: CallbackQuery, platform_user: dict | None):
         [
             InlineKeyboardButton(text=btn_year_text, callback_data=f"tariff_buy:{tariff_key}:year")
         ],
-        [InlineKeyboardButton(text="◀️ Назад", callback_data="menu:tariffs_back")]
+        [InlineKeyboardButton(text="◄ Назад", callback_data="menu:tariffs_back")]
     ]
 
     await callback.message.edit_text(
@@ -235,7 +235,7 @@ async def on_tariff_buy(callback: CallbackQuery, platform_user: dict | None):
                 web_app=WebAppInfo(url=webapp_url),
             )],
             [InlineKeyboardButton(
-                text="◀️ Назад к тарифу",
+                text="◄ Назад к тарифу",
                 callback_data=f"tariff_detail:{tariff_key}",
             )],
         ]),

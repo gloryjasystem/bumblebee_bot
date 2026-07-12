@@ -52,7 +52,7 @@ def _kb_api_settings(owner_id: int) -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="🔑 Изменить Key",  callback_data="api_set_key"),
             InlineKeyboardButton(text="✏️ Изменить Host", callback_data="api_set_host"),
         ],
-        [InlineKeyboardButton(text="◀️ Назад", callback_data=f"ga_bl:{owner_id}")],
+        [InlineKeyboardButton(text="◄ Назад", callback_data=f"ga_bl:{owner_id}")],
     ])
 
 

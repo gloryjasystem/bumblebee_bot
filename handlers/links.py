@@ -87,7 +87,7 @@ def kb_links_list(links: list, chat_id: int, child_bot_id: int,
         callback_data=f"link_create:{chat_id}:{child_bot_id}",
     )])
     buttons.append([InlineKeyboardButton(
-        text="◀️ Назад",
+        text="◄ Назад",
         # Идём сразу в настройки бота, минуя picker (который ломается)
         callback_data=f"bot_settings:{child_bot_id}" if child_bot_id else "noop",
     )])
@@ -101,7 +101,7 @@ def kb_link_types(chat_id: int, child_bot_id: int) -> InlineKeyboardMarkup:
                               callback_data=f"link_type:{chat_id}:{child_bot_id}:request")],
         [InlineKeyboardButton(text="🔗 Обычная ссылка",
                               callback_data=f"link_type:{chat_id}:{child_bot_id}:regular")],
-        [InlineKeyboardButton(text="◀️ Назад",
+        [InlineKeyboardButton(text="◄ Назад",
                               callback_data=f"ch_links:{chat_id}:{child_bot_id}")],
     ])
 
@@ -121,7 +121,7 @@ def kb_link_detail(link_id: int, chat_id: int, child_bot_id: int,
                               callback_data=f"link_auto_accept:{link_id}:{chat_id}:{child_bot_id}")],
         [InlineKeyboardButton(text="🗑 Удалить",
                               callback_data=f"link_delete_ask:{link_id}:{chat_id}:{child_bot_id}")],
-        [InlineKeyboardButton(text="◀️ Назад",
+        [InlineKeyboardButton(text="◄ Назад",
                               callback_data=f"ch_links:{chat_id}:{child_bot_id}")],
     ])
 
@@ -445,7 +445,7 @@ async def on_link_budget(event, state: FSMContext, bot: Bot):
         kb=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="📊 Детали ссылки",
                                    callback_data=f"link_detail:{link_id}:{chat_id}:{child_bot_id}")],
-            [InlineKeyboardButton(text="◀️ К списку ссылок",
+            [InlineKeyboardButton(text="◄ К списку ссылок",
                                    callback_data=f"ch_links:{chat_id}:{child_bot_id}")],
         ]),
     )
@@ -590,7 +590,7 @@ async def on_link_share(callback: CallbackQuery, platform_user: dict | None):
         f"Скопируйте ссылку:\n<code>{link_url}</code>",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="↗️ Поделиться в Telegram", url=share_url)],
-            [InlineKeyboardButton(text="◀️ Назад", callback_data=f"link_detail:{link_id}:{chat_id}:{child_bot_id}")],
+            [InlineKeyboardButton(text="◄ Назад", callback_data=f"link_detail:{link_id}:{chat_id}:{child_bot_id}")],
         ]),
     )
 

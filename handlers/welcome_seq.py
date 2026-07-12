@@ -329,7 +329,7 @@ async def _show_manager(event, chat_id: int, owner_id: int):
         kb_rows.append([InlineKeyboardButton(text="🗑 Удалить всё", callback_data=f"wseq_clear:{chat_id}")])
     if has_base or msg_steps:
         kb_rows.append([InlineKeyboardButton(text="👁 Проверить цепочку", callback_data=f"wseq_test:{chat_id}")])
-    kb_rows.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"ch_messages:{chat_id}")])
+    kb_rows.append([InlineKeyboardButton(text="◄ Назад", callback_data=f"ch_messages:{chat_id}")])
 
     kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
     text = "\n".join(lines)
@@ -401,7 +401,7 @@ async def on_wseq_add(callback: CallbackQuery, state: FSMContext, platform_user:
         "<b>Переменные:</b> <code>{name}</code>, <code>{allname}</code>, "
         "<code>{username}</code>, <code>{chat}</code>, <code>{day}</code>.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="◀️ Отмена", callback_data=f"wseq:{chat_id}")],
+            [InlineKeyboardButton(text="◄ Отмена", callback_data=f"wseq:{chat_id}")],
         ]),
     )
     if prompt:
@@ -525,7 +525,7 @@ async def _show_step_editor(event, step_id: int, owner_id: int, state: FSMContex
         kb_rows = [
             [InlineKeyboardButton(text=f"⏱ Задержка: {_delay_offset(st['delay_sec'])}", callback_data=f"wstep_delay:{step_id}")],
             [InlineKeyboardButton(text="🗑 Удалить шаг", callback_data=f"wstep_rm:{step_id}")],
-            [InlineKeyboardButton(text="◀️ Назад", callback_data=f"wseq:{chat_id}")],
+            [InlineKeyboardButton(text="◄ Назад", callback_data=f"wseq:{chat_id}")],
         ]
     else:
         # 🎬 Медиа — как в приветствии: показывает позицию ⬆️/⬇️ (само медиа задаётся в «Редактировать»)
@@ -543,7 +543,7 @@ async def _show_step_editor(event, step_id: int, owner_id: int, state: FSMContex
             [InlineKeyboardButton(text=f"⏱ Задержка: {_delay_offset(st['delay_sec'])}", callback_data=f"wstep_delay:{step_id}")],
             [InlineKeyboardButton(text=f"⏳ Авто-удаление: {_self_del_label(st['self_delete_sec'] or 0)}", callback_data=f"wstep_selfdel:{step_id}")],
             [InlineKeyboardButton(text="🗑 Удалить шаг", callback_data=f"wstep_rm:{step_id}")],
-            [InlineKeyboardButton(text="◀️ Назад", callback_data=f"wseq:{chat_id}")],
+            [InlineKeyboardButton(text="◄ Назад", callback_data=f"wseq:{chat_id}")],
         ]
     kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
 
@@ -608,7 +608,7 @@ async def on_wstep_delay(callback: CallbackQuery, state: FSMContext, platform_us
     if row:
         chip_rows.append(row)
     chip_rows.append([InlineKeyboardButton(text="✏️ Своё значение", callback_data=f"wstep_delaycustom:{step_id}")])
-    chip_rows.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"wstep:{step_id}")])
+    chip_rows.append([InlineKeyboardButton(text="◄ Назад", callback_data=f"wstep:{step_id}")])
 
     await navigate(
         callback,
@@ -655,7 +655,7 @@ async def on_wstep_delaycustom(callback: CallbackQuery, state: FSMContext, platf
         "Пришлите число. По умолчанию — <b>секунды</b>.\n"
         "Примеры: <code>15</code>, <code>90с</code>, <code>5м</code>, <code>1ч</code>.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="◀️ Отмена", callback_data=f"wstep_delay:{step_id}")],
+            [InlineKeyboardButton(text="◄ Отмена", callback_data=f"wstep_delay:{step_id}")],
         ]),
     )
     if prompt:
@@ -706,7 +706,7 @@ async def on_wstep_edit(callback: CallbackQuery, state: FSMContext, platform_use
         "Переменные: <code>{name}</code>, <code>{allname}</code>, <code>{username}</code>, <code>{chat}</code>, <code>{day}</code>.\n"
         "ⓘ Можно прикрепить фото, видео, GIF или документ.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="◀️ Отмена", callback_data=f"wstep:{step_id}")],
+            [InlineKeyboardButton(text="◄ Отмена", callback_data=f"wstep:{step_id}")],
         ]),
     )
     if prompt:
@@ -813,7 +813,7 @@ async def on_wstep_btns(callback: CallbackQuery, state: FSMContext, platform_use
         "<blockquote><code>Кнопка 1 — ссылка (webapp)</code></blockquote>\n\n"
         "ℹ️ Нажмите, чтобы скопировать. Отправьте <code>-</code>, чтобы убрать кнопки.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="◀️ Отмена", callback_data=f"wstep:{step_id}")],
+            [InlineKeyboardButton(text="◄ Отмена", callback_data=f"wstep:{step_id}")],
         ]),
     )
     if prompt:
@@ -848,7 +848,7 @@ async def on_wstep_btns_input(message: Message, state: FSMContext, platform_user
                 "Несколько в ряд — через <code>|</code>\n\n"
                 "✏️ Введите кнопки в поле ниже ещё раз."
             )
-            err_kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="◀️ Отмена", callback_data=f"wstep:{step_id}")]])
+            err_kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="◄ Отмена", callback_data=f"wstep:{step_id}")]])
             if prompt_mid:
                 try:
                     await message.bot.edit_message_text(
@@ -895,7 +895,7 @@ async def on_wstep_selfdel(callback: CallbackQuery, state: FSMContext, platform_
     if row:
         chip_rows.append(row)
     chip_rows.append([InlineKeyboardButton(text="✏️ Своё значение", callback_data=f"wstep_selfdelcustom:{step_id}")])
-    chip_rows.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"wstep:{step_id}")])
+    chip_rows.append([InlineKeyboardButton(text="◄ Назад", callback_data=f"wstep:{step_id}")])
 
     await navigate(
         callback,
@@ -941,7 +941,7 @@ async def on_wstep_selfdelcustom(callback: CallbackQuery, state: FSMContext, pla
         "Примеры: <code>45</code>, <code>10м</code>, <code>1ч</code>. "
         "<code>0</code> или <code>нет</code> — выключить.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="◀️ Отмена", callback_data=f"wstep_selfdel:{step_id}")],
+            [InlineKeyboardButton(text="◄ Отмена", callback_data=f"wstep_selfdel:{step_id}")],
         ]),
     )
     if prompt:
@@ -1006,7 +1006,7 @@ async def on_wseq_clear(callback: CallbackQuery, state: FSMContext, platform_use
     )
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🗑 Да, удалить всё", callback_data=f"wseq_clear_do:{chat_id}")],
-        [InlineKeyboardButton(text="◀️ Отмена", callback_data=f"wseq:{chat_id}")],
+        [InlineKeyboardButton(text="◄ Отмена", callback_data=f"wseq:{chat_id}")],
     ])
     await navigate(callback, text, reply_markup=kb, disable_web_page_preview=True)
 
@@ -1075,7 +1075,7 @@ async def on_wseq_autoclear(callback: CallbackQuery, state: FSMContext, platform
     if row:
         chip_rows.append(row)
     chip_rows.append([InlineKeyboardButton(text="✏️ Своё значение", callback_data=f"wseq_autoclearcustom:{chat_id}")])
-    chip_rows.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"wseq:{chat_id}")])
+    chip_rows.append([InlineKeyboardButton(text="◄ Назад", callback_data=f"wseq:{chat_id}")])
 
     await navigate(
         callback,
@@ -1120,7 +1120,7 @@ async def on_wseq_autoclearcustom(callback: CallbackQuery, state: FSMContext, pl
         "Пришлите число. По умолчанию — <b>секунды</b>.\n"
         "Примеры: <code>90</code>, <code>5м</code>, <code>1ч</code>. <code>0</code> или <code>выкл</code> — выключить.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="◀️ Отмена", callback_data=f"wseq_autoclear:{chat_id}")],
+            [InlineKeyboardButton(text="◄ Отмена", callback_data=f"wseq_autoclear:{chat_id}")],
         ]),
     )
 

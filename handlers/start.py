@@ -347,7 +347,7 @@ async def on_settings_menu(callback: CallbackQuery, platform_user: dict | None):
                 InlineKeyboardButton(text="📖 Инструкция",       callback_data="menu:help"),
                 InlineKeyboardButton(text="💬 Служба поддержки", url=support_url),
             ],
-            [InlineKeyboardButton(text="◀️ Назад к меню",        callback_data="menu:main")],
+            [InlineKeyboardButton(text="◄ Назад к меню",        callback_data="menu:main")],
         ]),
     )
 
@@ -387,7 +387,7 @@ async def on_settings_history(callback: CallbackQuery, platform_user: dict | Non
         callback,
         text,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="◀️ Назад", callback_data="menu:settings")],
+            [InlineKeyboardButton(text="◄ Назад", callback_data="menu:settings")],
         ]),
     )
 

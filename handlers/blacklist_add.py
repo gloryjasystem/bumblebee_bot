@@ -145,7 +145,7 @@ async def on_rapidapi_forward_input(
     data     = await state.get_data()
     back_cb  = data.get("back_cb", "ga_bl")
     back_btn = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="◀️ Назад", callback_data=back_cb)]
+        [InlineKeyboardButton(text="◄ Назад", callback_data=back_cb)]
     ])
 
     origin  = msg.forward_origin
@@ -242,7 +242,7 @@ async def _kick_off_pipeline(
         data     = await state.get_data()
         back_cb  = data.get("back_cb", "ga_bl")
         back_btn = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="◀️ Назад", callback_data=back_cb)]
+            [InlineKeyboardButton(text="◄ Назад", callback_data=back_cb)]
         ])
         await msg.answer(
             "⚠️ <b>Не найдено ни одного валидного значения.</b>\n\n"

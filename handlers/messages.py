@@ -145,7 +145,7 @@ async def _show_ch_messages(callback: CallbackQuery, chat_id: int, owner_id: int
                 InlineKeyboardButton(text=reaction_label, callback_data=f"ch_reactions:{chat_id}"),
             ],
             [InlineKeyboardButton(text=delete_label, callback_data=f"ch_delete_toggle:{chat_id}")],
-            [InlineKeyboardButton(text="◀️ Назад",    callback_data=back_cb)],
+            [InlineKeyboardButton(text="◄ Назад",    callback_data=back_cb)],
         ]),
     )
 
@@ -192,7 +192,7 @@ def _build_reaction_keyboard(chat_id: int, current: str) -> InlineKeyboardMarkup
         text=e + (" ✅" if e == current else ""),
         callback_data=f"ch_set_reaction:{chat_id}:{e}",
     )] for e in _REACTION_OPTIONS]
-    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"ch_messages:{chat_id}")])
+    buttons.append([InlineKeyboardButton(text="◄ Назад", callback_data=f"ch_messages:{chat_id}")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
@@ -366,7 +366,7 @@ async def _show_captcha(callback: CallbackQuery, chat_id: int, owner_id: int):
             )],
         ])
 
-    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"ch_messages:{chat_id}")])
+    buttons.append([InlineKeyboardButton(text="◄ Назад", callback_data=f"ch_messages:{chat_id}")])
 
     await navigate(
         callback,
@@ -487,7 +487,7 @@ async def on_ch_cap_reset(callback: CallbackQuery, platform_user: dict | None):
         "Подтвердить сброс?",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="✅ Подтвердить", callback_data=f"ch_cap_reset_ok:{chat_id}")],
-            [InlineKeyboardButton(text="◀️ Отмена",     callback_data=f"ch_captcha:{chat_id}")],
+            [InlineKeyboardButton(text="◄ Отмена",     callback_data=f"ch_captcha:{chat_id}")],
         ]),
     )
 
@@ -528,7 +528,7 @@ async def on_ch_captcha_emoji(callback: CallbackQuery, platform_user: dict | Non
         text=es + (" ✅" if es == current else ""),
         callback_data=f"ch_cap_set_emoji:{chat_id}:{i}",
     )] for i, es in enumerate(_EMOJI_SETS)]
-    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"ch_captcha:{chat_id}")])
+    buttons.append([InlineKeyboardButton(text="◄ Назад", callback_data=f"ch_captcha:{chat_id}")])
 
     await navigate(
         callback,
@@ -631,11 +631,11 @@ async def on_ch_cap_anim_menu(call: CallbackQuery, state: FSMContext, platform_u
         menu_msg = await call.message.answer(
             text,
             parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=kb + [[InlineKeyboardButton(text="◀️ Назад", callback_data=f"ch_cap_anim_back:{chat_id}")]]),
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=kb + [[InlineKeyboardButton(text="◄ Назад", callback_data=f"ch_cap_anim_back:{chat_id}")]]),
         )
     else:
         # No animation yet, just edit the existing text
-        kb.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"ch_cap_anim_back:{chat_id}")])
+        kb.append([InlineKeyboardButton(text="◄ Назад", callback_data=f"ch_cap_anim_back:{chat_id}")])
         menu_msg = await call.message.edit_text(
             text,
             parse_mode="HTML",
@@ -776,7 +776,7 @@ async def on_captcha_anim_upload(message: Message, state: FSMContext):
     await message.answer(
         "✅ Анимация успешно установлена!",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="◀️ Назад", callback_data=f"ch_cap_anim_menu:{chat_id}")],
+            [InlineKeyboardButton(text="◄ Назад", callback_data=f"ch_cap_anim_menu:{chat_id}")],
         ]),
     )
 
@@ -947,7 +947,7 @@ async def _show_autoreply(callback: CallbackQuery, chat_id: int, owner_id: int):
         text="+ Добавить ответ",
         callback_data=f"ch_ar_add:{chat_id}",
     )])
-    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"ch_messages:{chat_id}")])
+    buttons.append([InlineKeyboardButton(text="◄ Назад", callback_data=f"ch_messages:{chat_id}")])
 
     await callback.message.edit_text(
         "<blockquote>Вы можете установить <b>автоматические ответы</b> бота на "
@@ -1076,7 +1076,7 @@ async def _show_global_mgmt(message, chat_id: int, owner_id: int):
         [InlineKeyboardButton(text=f"🎬 Медиа: {media_icon}", callback_data=f"ch_ar_media_global:{chat_id}")],
         [InlineKeyboardButton(text=f"👁 Превью: {preview_label}", callback_data=f"ch_ar_preview_global:{chat_id}")],
         [InlineKeyboardButton(text="🗑 Удалить",          callback_data=f"ch_ar_delete_global:{chat_id}")],
-        [InlineKeyboardButton(text="◀️ Назад",            callback_data=f"ch_ar_back_global:{chat_id}")],
+        [InlineKeyboardButton(text="◄ Назад",            callback_data=f"ch_ar_back_global:{chat_id}")],
     ])
 
     try:
@@ -1151,7 +1151,7 @@ async def on_ch_ar_toggle_global(
             "└ Текущая дата: <code>{day}</code>\n\n"
             "ⓘ Можно прикрепить медиа.",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="◀️ Отмена", callback_data=f"ch_autoreply:{chat_id}")],
+                [InlineKeyboardButton(text="◄ Отмена", callback_data=f"ch_autoreply:{chat_id}")],
             ]),
         )
         await callback.answer()
@@ -1240,7 +1240,7 @@ async def on_ch_ar_edit_global(
         "ⓘ Можно прикрепить медиа.",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="◀️ Отмена", callback_data=f"ch_autoreply:{chat_id}")],
+            [InlineKeyboardButton(text="◄ Отмена", callback_data=f"ch_autoreply:{chat_id}")],
         ]),
     )
     await callback.answer()
@@ -1341,7 +1341,7 @@ async def on_ch_ar_btns_global(
         "ℹ️ Нажмите, чтобы скопировать.",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="◀️ Отмена", callback_data=f"ch_autoreply:{chat_id}")],
+            [InlineKeyboardButton(text="◄ Отмена", callback_data=f"ch_autoreply:{chat_id}")],
         ]),
     )
     await callback.answer()
@@ -1457,7 +1457,7 @@ async def on_ch_ar_add(callback: CallbackQuery, state: FSMContext, platform_user
         "└ <code>/bonus</code>",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="◀️ Отмена", callback_data=f"ch_autoreply:{chat_id}")],
+            [InlineKeyboardButton(text="◄ Отмена", callback_data=f"ch_autoreply:{chat_id}")],
         ]),
     )
     await callback.answer()
@@ -1494,7 +1494,7 @@ async def on_ar_kw_input(message: Message, state: FSMContext):
         "ⓘ Можно прикрепить медиа.",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="◀️ Назад", callback_data=f"ch_autoreply:{data['chat_id']}")],
+            [InlineKeyboardButton(text="◄ Назад", callback_data=f"ch_autoreply:{data['chat_id']}")],
         ]),
     )
     await state.update_data(keyword=kw, prompt_mid=prompt_msg.message_id)
@@ -1681,7 +1681,7 @@ async def _show_keyword_mgmt(message, chat_id: int, owner_id: int, ar_id: int):
         [InlineKeyboardButton(text=f"🎬 Медиа: {media_icon}", callback_data=f"ch_ar_kw_media:{chat_id}:{ar_id}")],
         [InlineKeyboardButton(text=f"👁 Превью: {preview_label}", callback_data=f"ch_ar_kw_preview:{chat_id}:{ar_id}")],
         [InlineKeyboardButton(text="🗑 Удалить",              callback_data=f"ch_ar_del:{chat_id}:{ar_id}")],
-        [InlineKeyboardButton(text="◀️ Назад",               callback_data=f"ch_ar_kw_back:{chat_id}:{ar_id}")],
+        [InlineKeyboardButton(text="◄ Назад",               callback_data=f"ch_ar_kw_back:{chat_id}:{ar_id}")],
     ])
     await message.answer(
         f"💬 <b>Автоответчик</b>\n\nТриггер: <code>{keyword}</code>",
@@ -1767,7 +1767,7 @@ async def on_ch_ar_kw_edit(
         "ⓘ Можно прикрепить медиа.",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="◀️ Отмена", callback_data=f"ch_ar_view:{chat_id}:{ar_id}")],
+            [InlineKeyboardButton(text="◄ Отмена", callback_data=f"ch_ar_view:{chat_id}:{ar_id}")],
         ]),
     )
     await callback.answer()
@@ -1849,7 +1849,7 @@ async def on_ch_ar_kw_media(
         [InlineKeyboardButton(text=f"🎬 Медиа: {media_icon}", callback_data=f"ch_ar_kw_media:{chat_id}:{ar_id}")],
         [InlineKeyboardButton(text=f"👁 Превью: {preview_label}", callback_data=f"ch_ar_kw_preview:{chat_id}:{ar_id}")],
         [InlineKeyboardButton(text="🗑 Удалить",              callback_data=f"ch_ar_del:{chat_id}:{ar_id}")],
-        [InlineKeyboardButton(text="◀️ Назад",               callback_data=f"ch_ar_kw_back:{chat_id}:{ar_id}")],
+        [InlineKeyboardButton(text="◄ Назад",               callback_data=f"ch_ar_kw_back:{chat_id}:{ar_id}")],
     ])
     try:
         await callback.message.edit_reply_markup(reply_markup=new_kb)
@@ -1902,7 +1902,7 @@ async def on_ch_ar_kw_btns(
         "ℹ️ Нажмите, чтобы скопировать.",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="◀️ Назад", callback_data=f"ch_ar_view:{chat_id}:{ar_id}")],
+            [InlineKeyboardButton(text="◄ Назад", callback_data=f"ch_ar_view:{chat_id}:{ar_id}")],
         ]),
     )
     await callback.answer()

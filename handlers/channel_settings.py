@@ -122,7 +122,7 @@ async def _show_requests_menu(callback: CallbackQuery, platform_user: dict, chat
                 InlineKeyboardButton(text="✖️ Отклонить", callback_data=f"req_decide:decline:ch:{chat_id}"),
             ],
             [InlineKeyboardButton(text=delay_label,  callback_data=f"req_delay:ch:{chat_id}")],
-            [InlineKeyboardButton(text="◀️ Назад",    callback_data=f"channel_by_chat:{chat_id}")],
+            [InlineKeyboardButton(text="◄ Назад",    callback_data=f"channel_by_chat:{chat_id}")],
         ]),
     )
 
@@ -275,14 +275,14 @@ def _delay_menu_kb(scope: str, target_id: int) -> InlineKeyboardMarkup:
     ]
     rows[-1].append(InlineKeyboardButton(
         text="✏️ Своё", callback_data=f"req_delay_custom:{scope}:{target_id}"))
-    rows.append([InlineKeyboardButton(text="◀️ Назад", callback_data=back_cb)])
+    rows.append([InlineKeyboardButton(text="◄ Назад", callback_data=back_cb)])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def _delay_prompt_kb(scope: str, target_id: int) -> InlineKeyboardMarkup:
     """Одна кнопка «Назад» — возврат из режима ввода к сетке пресетов."""
     return InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="◀️ Назад", callback_data=f"req_delay:{scope}:{target_id}"),
+        InlineKeyboardButton(text="◄ Назад", callback_data=f"req_delay:{scope}:{target_id}"),
     ]])
 
 
@@ -476,7 +476,7 @@ async def _show_req_percent_menu(callback: CallbackQuery, max_count: int, sel_co
         ],
         [InlineKeyboardButton(text=_btn_text(100, "Все: 100%"), callback_data="req_pct:100")],
         [InlineKeyboardButton(text=f"{action_icon} {action_verb}", callback_data="req_confirm")],
-        [InlineKeyboardButton(text="◀️ Назад", callback_data=back_cb)],
+        [InlineKeyboardButton(text="◄ Назад", callback_data=back_cb)],
     ])
     
     await navigate(callback, text, reply_markup=kb)
@@ -658,7 +658,7 @@ def kb_captcha_settings(ch: dict) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text=f"⏱ Таймер: {ch.get('captcha_timer',60)} сек", callback_data=f"captcha_timer:{chat_id}")],
         [InlineKeyboardButton(text="✏️ Изменить текст капчи", callback_data=f"captcha_text:{chat_id}")],
         [InlineKeyboardButton(text=delete_label,              callback_data=f"captcha_delete:{chat_id}")],
-        [InlineKeyboardButton(text="◀️ Назад",                callback_data=f"ch_requests:{chat_id}")],
+        [InlineKeyboardButton(text="◄ Назад",                callback_data=f"ch_requests:{chat_id}")],
     ])
 
 
@@ -906,7 +906,7 @@ def _build_editor_kb(chat_id_str: str, msg_type: str, ch: dict, scope: str = "ch
     rows += [
         [InlineKeyboardButton(text=selfdel_label_txt,     callback_data=f"{pfx}_selfdel:{chat_id_str}:{msg_type}")],
         [InlineKeyboardButton(text="🗑 Удалить",          callback_data=f"{pfx}_del:{chat_id_str}:{msg_type}")],
-        [InlineKeyboardButton(text="◀️ Назад",            callback_data=back_cb)],
+        [InlineKeyboardButton(text="◄ Назад",            callback_data=back_cb)],
     ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -1028,7 +1028,7 @@ async def _show_msg_prompt(callback: CallbackQuery, chat_id_str: str, msg_type: 
         "└ Текущая дата: <code>{day}</code>\n\n"
         "ⓘ Можно прикрепить медиа.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="◀️ Отмена", callback_data=cancel_cb)],
+            [InlineKeyboardButton(text="◄ Отмена", callback_data=cancel_cb)],
         ]),
     )
     if prompt_msg and hasattr(prompt_msg, "message_id") and state:
@@ -1255,7 +1255,7 @@ async def on_ch_msg_btns(callback: CallbackQuery, state: FSMContext, platform_us
         "<blockquote><code>Кнопка 1 — ссылка (webapp)</code></blockquote>\n\n"
         "ℹ️ Нажмите, чтобы скопировать.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="◀️ Отмена", callback_data=cancel_cb)],
+            [InlineKeyboardButton(text="◄ Отмена", callback_data=cancel_cb)],
         ]),
         parse_mode="HTML",
     )
@@ -1388,7 +1388,7 @@ async def on_ch_msg_selfdel(callback: CallbackQuery, state: FSMContext, platform
         chip_rows.append(row)
     chip_rows.append([InlineKeyboardButton(text="✏️ Своё значение", callback_data=f"ch_msg_selfdelcustom:{chat_id_str}:{msg_type}")])
     back_cb = f"welcome_set:{chat_id_str}" if msg_type == "welcome" else f"farewell_set:{chat_id_str}"
-    chip_rows.append([InlineKeyboardButton(text="◀️ Назад", callback_data=back_cb)])
+    chip_rows.append([InlineKeyboardButton(text="◄ Назад", callback_data=back_cb)])
 
     await navigate(
         callback,
@@ -1431,7 +1431,7 @@ async def on_ch_msg_selfdelcustom(callback: CallbackQuery, state: FSMContext, pl
         "Примеры: <code>45</code>, <code>10м</code>, <code>1ч</code>. "
         "<code>0</code> или <code>нет</code> — выключить.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="◀️ Отмена", callback_data=f"ch_msg_selfdel:{chat_id_str}:{msg_type}")],
+            [InlineKeyboardButton(text="◄ Отмена", callback_data=f"ch_msg_selfdel:{chat_id_str}:{msg_type}")],
         ]),
     )
     if prompt:
@@ -1500,7 +1500,7 @@ async def on_ch_msg_delay(callback: CallbackQuery, state: FSMContext, platform_u
     if row:
         chip_rows.append(row)
     chip_rows.append([InlineKeyboardButton(text="✏️ Своё значение", callback_data=f"ch_msg_delaycustom:{chat_id_str}:{msg_type}")])
-    chip_rows.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"welcome_set:{chat_id_str}")])
+    chip_rows.append([InlineKeyboardButton(text="◄ Назад", callback_data=f"welcome_set:{chat_id_str}")])
 
     await navigate(
         callback,
@@ -1548,7 +1548,7 @@ async def on_ch_msg_delaycustom(callback: CallbackQuery, state: FSMContext, plat
         "Примеры: <code>15</code>, <code>90с</code>, <code>5м</code>, <code>1ч</code>. "
         "<code>0</code> или <code>сразу</code> — без задержки.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="◀️ Отмена", callback_data=f"ch_msg_delay:{chat_id_str}:{msg_type}")],
+            [InlineKeyboardButton(text="◄ Отмена", callback_data=f"ch_msg_delay:{chat_id_str}:{msg_type}")],
         ]),
     )
     if prompt:
@@ -1744,7 +1744,7 @@ async def on_msg_buttons_input(message: Message, state: FSMContext):
         cancel_cb = data.get("editor_cancel_cb") or (
             f"welcome_set:{data.get('chat_id')}" if msg_type == "welcome" else f"farewell_set:{data.get('chat_id')}"
         )
-        err_kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="◀️ Отмена", callback_data=cancel_cb)]])
+        err_kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="◄ Отмена", callback_data=cancel_cb)]])
         if prompt_mid:
             try:
                 await message.bot.edit_message_text(
@@ -1891,7 +1891,7 @@ def kb_reactions(current: list, chat_id: int, tariff: str) -> InlineKeyboardMark
         buttons.append(row)
     note = f"(макс. {max_reactions}: {', '.join(current) if current else 'не выбрано'})"
     buttons.append([InlineKeyboardButton(text=note, callback_data="noop")])
-    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"ch_messages:{chat_id}")])
+    buttons.append([InlineKeyboardButton(text="◄ Назад", callback_data=f"ch_messages:{chat_id}")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
@@ -1975,7 +1975,7 @@ def kb_protection(ch: dict, blocked_langs: list) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text=f"{rtl} RTL-символы в имени",           callback_data=f"filter_rtl:{chat_id}")],
         [InlineKeyboardButton(text=f"{hiero} Иероглифы в имени",           callback_data=f"filter_hier:{chat_id}")],
         [InlineKeyboardButton(text=f"{no_photo} Аккаунты без фото",        callback_data=f"filter_photo:{chat_id}")],
-        [InlineKeyboardButton(text="◀️ Назад",                             callback_data=f"channel_by_chat:{chat_id}")],
+        [InlineKeyboardButton(text="◄ Назад",                             callback_data=f"channel_by_chat:{chat_id}")],
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -2069,7 +2069,7 @@ def kb_limits(ch: dict, back_callback: str | None = None) -> InlineKeyboardMarku
         [InlineKeyboardButton(text=pun_label,    callback_data=f"{prefix}_pun:{chat_id}")],
         [InlineKeyboardButton(text=time_label,   callback_data=f"{prefix}_time:{chat_id}")],
         [InlineKeyboardButton(text=limit_label,  callback_data=f"{prefix}_count:{chat_id}")],
-        [InlineKeyboardButton(text="◀️ Назад",   callback_data=back_callback or f"filter_limits_back:{chat_id}")],
+        [InlineKeyboardButton(text="◄ Назад",   callback_data=back_callback or f"filter_limits_back:{chat_id}")],
     ])
 
 
@@ -2230,7 +2230,7 @@ async def on_lang_filters(callback: CallbackQuery, platform_user: dict | None):
             text=f"{mark} {label}",
             callback_data=f"lang_toggle:{chat_id}:{code}",
         )])
-    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"channel_by_chat:{chat_id}")])
+    buttons.append([InlineKeyboardButton(text="◄ Назад", callback_data=f"channel_by_chat:{chat_id}")])
 
     await callback.message.edit_text(
         "🌍 <b>Языковые фильтры</b>\n\n"
@@ -2318,7 +2318,7 @@ async def on_ch_stats(callback: CallbackQuery, platform_user: dict | None):
         f"└ За 7 дней: {week:,}\n\n"
         f"🛡 Чёрный список (всего): {bl_count:,}",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="◀️ Назад", callback_data=f"channel_by_chat:{chat_id}")]
+            [InlineKeyboardButton(text="◄ Назад", callback_data=f"channel_by_chat:{chat_id}")]
         ]),
     )
     await callback.answer()
@@ -2393,7 +2393,7 @@ async def on_ch_settings(callback: CallbackQuery, platform_user: dict | None):
             [InlineKeyboardButton(text=toggle_text, callback_data=f"ch_toggle:{ch_id}")],
             [InlineKeyboardButton(text="🕐 Часовой пояс", callback_data=f"ch_tz:{ch_id}")],
             [InlineKeyboardButton(text="📊 Статистика",   callback_data=f"ch_stats:{chat_id}")],
-            [InlineKeyboardButton(text="◀️ Назад",         callback_data=f"channel:{ch_id}")],
+            [InlineKeyboardButton(text="◄ Назад",         callback_data=f"channel:{ch_id}")],
         ]),
     )
     await callback.answer()
@@ -2408,7 +2408,7 @@ async def on_ch_tz(callback: CallbackQuery, platform_user: dict | None):
         [InlineKeyboardButton(text=label, callback_data=f"ch_tz_set:{ch_id}:{tz}")]
         for label, tz in TIMEZONES
     ]
-    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"ch_settings:{ch_id}")])
+    buttons.append([InlineKeyboardButton(text="◄ Назад", callback_data=f"ch_settings:{ch_id}")])
     await callback.message.edit_text(
         "🕐 <b>Выберите часовой пояс</b>",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
@@ -2433,7 +2433,7 @@ async def on_ch_tz_set(callback: CallbackQuery, platform_user: dict | None):
     await callback.message.edit_text(
         "✅ Часовой пояс обновлён.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="◀️ Назад", callback_data=f"ch_settings:{ch_id}")],
+            [InlineKeyboardButton(text="◄ Назад", callback_data=f"ch_settings:{ch_id}")],
         ]),
     )
 
@@ -2540,7 +2540,7 @@ async def _show_bs_requests(callback: CallbackQuery, platform_user: dict, child_
                 InlineKeyboardButton(text="✖️ Отклонить",callback_data=f"req_decide:decline:bs:{child_bot_id}"),
             ],
             [InlineKeyboardButton(text=delay_label,          callback_data=f"req_delay:bs:{child_bot_id}")],
-            [InlineKeyboardButton(text="◀️ Назад",            callback_data=f"bot_settings:{child_bot_id}")],
+            [InlineKeyboardButton(text="◄ Назад",            callback_data=f"bot_settings:{child_bot_id}")],
         ]),
     )
     await callback.answer()
@@ -2742,7 +2742,7 @@ async def on_bs_messages(callback: CallbackQuery, platform_user: dict | None):
         text=f"📍 {ch['chat_title'] or ch['chat_id']}",
         callback_data=f"ch_messages:{ch['chat_id']}",
     )] for ch in chats]
-    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"bot_settings:{child_bot_id}")])
+    buttons.append([InlineKeyboardButton(text="◄ Назад", callback_data=f"bot_settings:{child_bot_id}")])
     await callback.message.edit_text(
         "💬 <b>Сообщения</b>\n\nВыберите площадку:",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
@@ -2853,7 +2853,7 @@ async def _show_bs_protection(callback: CallbackQuery, platform_user: dict, chil
             [InlineKeyboardButton(text=f"{rtl} RTL-символы в имени",   callback_data=f"bs_filter_rtl:{child_bot_id}")],
             [InlineKeyboardButton(text=f"{hiero} Иероглифы в имени",   callback_data=f"bs_filter_hier:{child_bot_id}")],
             [InlineKeyboardButton(text=f"{no_photo} Аккаунты без фото",callback_data=f"bs_filter_photo:{child_bot_id}")],
-            [InlineKeyboardButton(text="◀️ Назад",                     callback_data=f"bot_settings:{child_bot_id}")],
+            [InlineKeyboardButton(text="◄ Назад",                     callback_data=f"bot_settings:{child_bot_id}")],
         ]),
     )
     await callback.answer()
@@ -3055,7 +3055,7 @@ def _build_bs_lang_kb(blocked_codes: set, child_bot_id: int) -> InlineKeyboardMa
                 callback_data=f"bs_lang_toggle:{child_bot_id}:{code}"
             ))
         buttons.append(row)
-    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"bs_protection:{child_bot_id}")])
+    buttons.append([InlineKeyboardButton(text="◄ Назад", callback_data=f"bs_protection:{child_bot_id}")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
@@ -3156,7 +3156,7 @@ async def on_bs_settings(callback: CallbackQuery, platform_user: dict | None):
             [InlineKeyboardButton(text="🗄 База",          callback_data=f"bs_base:{child_bot_id}")],
             [btn_team],
             [InlineKeyboardButton(text="🕐 Часовой пояс",  callback_data=f"bs_timezone:{child_bot_id}")],
-            [InlineKeyboardButton(text="◀️ Назад",          callback_data=f"bot_settings:{child_bot_id}")],
+            [InlineKeyboardButton(text="◄ Назад",          callback_data=f"bot_settings:{child_bot_id}")],
         ]),
     )
     await callback.answer()
@@ -3211,7 +3211,7 @@ async def on_bs_base(callback: CallbackQuery, platform_user: dict | None):
             [InlineKeyboardButton(text="⚙️ Управление подписчиками", callback_data=f"bs_base_edit:{child_bot_id}")],
             [InlineKeyboardButton(text="⛔️ ЧС пользователей", callback_data=f"bs_blacklist:{child_bot_id}")],
             [InlineKeyboardButton(text="📥 Экспорт базы", callback_data=f"bs_base_export_menu:{child_bot_id}")],
-            [InlineKeyboardButton(text="◀️ Назад",                    callback_data=f"bs_settings:{child_bot_id}")],
+            [InlineKeyboardButton(text="◄ Назад",                    callback_data=f"bs_settings:{child_bot_id}")],
         ]),
     )
     await callback.answer()
@@ -3248,7 +3248,7 @@ async def on_bs_base_edit(callback: CallbackQuery, state: FSMContext,
         "<b>Выберите действие:</b>",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🔎 Найти / Вызвать карточку",    callback_data=f"bs_base_del:{child_bot_id}")],
-            [InlineKeyboardButton(text="◀️ Назад",                    callback_data=f"bs_base:{child_bot_id}")],
+            [InlineKeyboardButton(text="◄ Назад",                    callback_data=f"bs_base:{child_bot_id}")],
         ]),
     )
     await callback.answer()
@@ -3475,7 +3475,7 @@ async def on_bs_base_user_search(message: Message, state: FSMContext,
             f"{detail_text}\n\n"
             f"👥 Осталось в базе: <b>{total_now:,}</b>",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="◀️ Назад к управлению",
+                [InlineKeyboardButton(text="◄ Назад к управлению",
                                       callback_data=f"bs_base_edit:{child_bot_id}")],
             ]),
         )
@@ -3489,7 +3489,7 @@ async def on_bs_base_user_search(message: Message, state: FSMContext,
         await message.answer(
             "❌ Не удалось распознать пользователя. Пришлите ID, @username или перешлите его сообщение.",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="◀️ Назад к управлению", callback_data=f"bs_base_edit:{child_bot_id}")],
+                [InlineKeyboardButton(text="◄ Назад к управлению", callback_data=f"bs_base_edit:{child_bot_id}")],
             ])
         )
         return
@@ -3520,7 +3520,7 @@ async def on_bs_base_user_search(message: Message, state: FSMContext,
             f"❌ Пользователь <b>{ident}</b> не найден в базе этого бота.\n"
             f"Убедитесь, что он писал сообщения в вашей группе.",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="◀️ Назад к управлению", callback_data=f"bs_base_edit:{child_bot_id}")],
+                [InlineKeyboardButton(text="◄ Назад к управлению", callback_data=f"bs_base_edit:{child_bot_id}")],
             ])
         )
         return
@@ -3596,7 +3596,7 @@ async def _show_user_card(message: Message | CallbackQuery, state: FSMContext, c
         [InlineKeyboardButton(text=admin_text, callback_data=f"bs_um_promote:{child_bot_id}:{uid}")],
         [InlineKeyboardButton(text="🚷 Кикнуть (Удалить из группы)", callback_data=f"bs_um_kick:{child_bot_id}:{uid}")],
         [InlineKeyboardButton(text=ban_text, callback_data=f"bs_um_ban:{child_bot_id}:{uid}")],
-        [InlineKeyboardButton(text="◀️ Назад к управлению", callback_data=f"bs_base_edit:{child_bot_id}")],
+        [InlineKeyboardButton(text="◄ Назад к управлению", callback_data=f"bs_base_edit:{child_bot_id}")],
     ]
 
     await state.clear()
@@ -3623,7 +3623,7 @@ async def on_bs_um_pm(callback: CallbackQuery, state: FSMContext, platform_user:
         "Напишите текст, который бот отправит этому пользователю в личные сообщения.\n"
         "<i>Поддерживается форматирование и эмодзи.</i>",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="◀️ Отмена", callback_data=f"bs_um_card:{child_bot_id_str}:{uid_str}")]
+            [InlineKeyboardButton(text="◄ Отмена", callback_data=f"bs_um_card:{child_bot_id_str}:{uid_str}")]
         ])
     )
     await state.update_data(pm_prompt_msg_id=sent_msg.message_id)
@@ -3665,7 +3665,7 @@ async def on_bs_um_pm_input(message: Message, state: FSMContext, platform_user: 
             "Напишите текст, который бот отправит этому пользователю в личные сообщения.\n"
             "<i>Поддерживается форматирование и эмодзи.</i>",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="◀️ Отмена", callback_data=f"bs_um_card:{child_bot_id}:{target_uid}")]
+                [InlineKeyboardButton(text="◄ Отмена", callback_data=f"bs_um_card:{child_bot_id}:{target_uid}")]
             ])
         )
         await state.update_data(pm_prompt_msg_id=sent_prompt.message_id)
@@ -3792,7 +3792,7 @@ async def on_bs_um_promote(callback: CallbackQuery, state: FSMContext, platform_
         for chat_id, chat_title in active_chats:
             buttons.append([InlineKeyboardButton(text=chat_title, callback_data=f"bs_prm_c:{child_bot_id}:{uid}:{chat_id}")])
             
-        buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"bs_um_card:{child_bot_id}:{uid}")])
+        buttons.append([InlineKeyboardButton(text="◄ Назад", callback_data=f"bs_um_card:{child_bot_id}:{uid}")])
         
         await callback.message.edit_text(
             "🛡 <b>Выбор площадки</b>\n\n"
@@ -3860,7 +3860,7 @@ async def _render_admin_menu(callback: CallbackQuery, perms: dict, child_bot_id:
         [InlineKeyboardButton(text=f"{'✅' if perms['invite'] else '❌'} Приглашение по ссылкам", callback_data="bs_adm_tgl:invite")],
         [InlineKeyboardButton(text=f"{'✅' if perms['promote'] else '❌'} Добавление админов", callback_data="bs_adm_tgl:promote")],
         [InlineKeyboardButton(text="Применить и Выдать права 🛡", callback_data="bs_adm_apply")],
-        [InlineKeyboardButton(text="◀️ Назад", callback_data=f"bs_um_card:{child_bot_id}:{uid}")]
+        [InlineKeyboardButton(text="◄ Назад", callback_data=f"bs_um_card:{child_bot_id}:{uid}")]
     ]
     await callback.message.edit_text(
         "🛡 <b>Выдача прав администратора</b>\n"
@@ -4070,7 +4070,7 @@ async def on_bs_blacklist(callback: CallbackQuery, platform_user: dict | None):
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="⚙️ Управлять базой ЧС",  callback_data=f"bs_bl_manage:{child_bot_id}")],
             [InlineKeyboardButton(text="📤 Экспортировать базу ЧС", callback_data=f"bs_bl_export:{child_bot_id}")],
-            [InlineKeyboardButton(text="◀️ Назад",               callback_data=f"bs_base:{child_bot_id}")],
+            [InlineKeyboardButton(text="◄ Назад",               callback_data=f"bs_base:{child_bot_id}")],
         ]),
     )
     await callback.answer()
@@ -4106,7 +4106,7 @@ async def on_bs_sync(callback: CallbackQuery, bot: Bot,
         await callback.message.edit_text(
             "❌ Бот не найден.",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="◀️ Назад", callback_data=f"bs_base:{child_bot_id}")]
+                [InlineKeyboardButton(text="◄ Назад", callback_data=f"bs_base:{child_bot_id}")]
             ]),
         )
         return
@@ -4236,7 +4236,7 @@ async def on_bs_sync(callback: CallbackQuery, bot: Bot,
         f"👥 Активных в базе: <b>{total_now:,}</b>",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="◀️ Назад к базе",
+            [InlineKeyboardButton(text="◄ Назад к базе",
                                   callback_data=f"bs_base:{child_bot_id}")],
         ]),
     )
@@ -4266,7 +4266,7 @@ async def on_bs_bl_export(callback: CallbackQuery, platform_user: dict | None):
                 "⚠️ База ЧС пуста. Нечего экспортировать.",
                 parse_mode="HTML",
                 reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                    [InlineKeyboardButton(text="◀️ Назад", callback_data=f"bs_blacklist:{child_bot_id}")],
+                    [InlineKeyboardButton(text="◄ Назад", callback_data=f"bs_blacklist:{child_bot_id}")],
                 ]),
             )
         else:
@@ -4282,7 +4282,7 @@ async def on_bs_bl_export(callback: CallbackQuery, platform_user: dict | None):
                 reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                     [InlineKeyboardButton(text="📥 Скачать CSV (полная база)",       callback_data=f"bs_bl_export_csv:{child_bot_id}")],
                     [InlineKeyboardButton(text="📋 Скачать TXT (для импорта в бот)", callback_data=f"bs_bl_export_txt:{child_bot_id}")],
-                    [InlineKeyboardButton(text="◀️ Назад",                           callback_data=f"bs_blacklist:{child_bot_id}")],
+                    [InlineKeyboardButton(text="◄ Назад",                           callback_data=f"bs_blacklist:{child_bot_id}")],
                 ]),
             )
     except Exception as e:
@@ -4291,7 +4291,7 @@ async def on_bs_bl_export(callback: CallbackQuery, platform_user: dict | None):
             "❌ <b>Ошибка при загрузке данных.</b>\n\nПопробуйте позже.",
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="◀️ Назад", callback_data=f"bs_blacklist:{child_bot_id}")],
+                [InlineKeyboardButton(text="◄ Назад", callback_data=f"bs_blacklist:{child_bot_id}")],
             ]),
         )
     finally:
@@ -4350,7 +4350,7 @@ async def on_bs_bl_export_csv(callback: CallbackQuery, bot: Bot, platform_user: 
             caption=caption,
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="◀️ Назад", callback_data=f"bs_bl_dl_bck:{child_bot_id}:{callback.message.message_id}")],
+                [InlineKeyboardButton(text="◄ Назад", callback_data=f"bs_bl_dl_bck:{child_bot_id}:{callback.message.message_id}")],
             ]),
         )
     except Exception as e:
@@ -4359,7 +4359,7 @@ async def on_bs_bl_export_csv(callback: CallbackQuery, bot: Bot, platform_user: 
             await callback.message.edit_text(
                 "❌ Ошибка при отправке файла. Попробуйте позже.",
                 reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                    [InlineKeyboardButton(text="◀️ Назад", callback_data=f"bs_blacklist:{child_bot_id}")],
+                    [InlineKeyboardButton(text="◄ Назад", callback_data=f"bs_blacklist:{child_bot_id}")],
                 ]),
             )
         except Exception:
@@ -4423,7 +4423,7 @@ async def on_bs_bl_export_txt(callback: CallbackQuery, bot: Bot, platform_user: 
             caption=caption,
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="◀️ Назад", callback_data=f"bs_bl_dl_bck:{child_bot_id}:{callback.message.message_id}")],
+                [InlineKeyboardButton(text="◄ Назад", callback_data=f"bs_bl_dl_bck:{child_bot_id}:{callback.message.message_id}")],
             ]),
         )
     except Exception as e:
@@ -4432,7 +4432,7 @@ async def on_bs_bl_export_txt(callback: CallbackQuery, bot: Bot, platform_user: 
             await callback.message.edit_text(
                 "❌ Ошибка при отправке файла. Попробуйте позже.",
                 reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                    [InlineKeyboardButton(text="◀️ Назад", callback_data=f"bs_blacklist:{child_bot_id}")],
+                    [InlineKeyboardButton(text="◄ Назад", callback_data=f"bs_blacklist:{child_bot_id}")],
                 ]),
             )
         except Exception:
@@ -4485,7 +4485,7 @@ async def on_bs_bl_dl_bck(callback: CallbackQuery, bot: Bot, platform_user: dict
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="⚙️ Управлять базой ЧС",  callback_data=f"bs_bl_manage:{child_bot_id}")],
             [InlineKeyboardButton(text="📤 Экспортировать базу ЧС", callback_data=f"bs_bl_export:{child_bot_id}")],
-            [InlineKeyboardButton(text="◀️ Назад",               callback_data=f"bs_base:{child_bot_id}")],
+            [InlineKeyboardButton(text="◄ Назад",               callback_data=f"bs_base:{child_bot_id}")],
         ]),
     )
     await callback.answer()
@@ -4568,7 +4568,7 @@ async def on_bs_bl_ban_all(callback: CallbackQuery, bot: Bot,
         "✅ <b>Готово!</b>\n\n"
         f"🚫 Забанено: <b>{banned}</b> из {len(violators)}",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="◀️ Назад", callback_data=f"bs_blacklist:{child_bot_id}")],
+            [InlineKeyboardButton(text="◄ Назад", callback_data=f"bs_blacklist:{child_bot_id}")],
         ]),
     )
 
@@ -4648,7 +4648,7 @@ async def _show_bs_bl_manage(callback: CallbackQuery, platform_user: dict,
                                   callback_data=f"bs_bl_del:{child_bot_id}")],
             [InlineKeyboardButton(text="🗑 Очистить базу",
                                   callback_data=f"bs_bl_clear:{child_bot_id}")],
-            [InlineKeyboardButton(text="◀️ Назад",
+            [InlineKeyboardButton(text="◄ Назад",
                                   callback_data=f"bs_blacklist:{child_bot_id}")],
         ]),
     )
@@ -4799,7 +4799,7 @@ async def on_bs_bl_clear_do(callback: CallbackQuery, platform_user: dict | None)
         f"Процесс очистки черного списка запущен. База ЧС будет в скором времени полностью очищена.\n"
         f"Это может занять некоторое время в зависимости от размера базы.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="◀️ Назад к базе",
+            [InlineKeyboardButton(text="◄ Назад к базе",
                                   callback_data=f"bs_blacklist:{child_bot_id}")],
         ]),
     )
@@ -4860,7 +4860,7 @@ async def on_bs_base_export_menu(callback: CallbackQuery, platform_user: dict | 
             [InlineKeyboardButton(text="📥 Выгрузить всю базу (CSV)",  callback_data=f"bs_base_export:{child_bot_id}:all")],
             [InlineKeyboardButton(text="🟢 Выгрузить живых",         callback_data=f"bs_base_export:{child_bot_id}:active")],
             [InlineKeyboardButton(text="⭐ Выгрузить Premium",           callback_data=f"bs_base_export:{child_bot_id}:premium")],
-            [InlineKeyboardButton(text="◀️ Назад",                       callback_data=f"bs_base:{child_bot_id}")],
+            [InlineKeyboardButton(text="◄ Назад",                       callback_data=f"bs_base:{child_bot_id}")],
         ]),
     )
     await callback.answer()
@@ -4907,7 +4907,7 @@ async def on_bs_base_export(callback: CallbackQuery, bot: Bot, platform_user: di
                 "🗄 <b>База пользователей</b>\n\n"
                 "⚠️ Нет пользователей для выгрузки по выбранному фильтру.",
                 reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                    [InlineKeyboardButton(text="◀️ Назад", callback_data=f"bs_base:{child_bot_id}")],
+                    [InlineKeyboardButton(text="◄ Назад", callback_data=f"bs_base:{child_bot_id}")],
                 ]),
             )
         except Exception:
@@ -4959,7 +4959,7 @@ async def on_bs_base_export(callback: CallbackQuery, bot: Bot, platform_user: di
             caption=caption,
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="◀️ Назад", callback_data=f"bs_base_dl_bck:{child_bot_id}:{callback.message.message_id}")],
+                [InlineKeyboardButton(text="◄ Назад", callback_data=f"bs_base_dl_bck:{child_bot_id}:{callback.message.message_id}")],
             ]),
         )
     except Exception as e:
@@ -4968,7 +4968,7 @@ async def on_bs_base_export(callback: CallbackQuery, bot: Bot, platform_user: di
             await callback.message.edit_text(
                 "❌ Ошибка при отправке файла. Попробуйте позже.",
                 reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                    [InlineKeyboardButton(text="◀️ Назад", callback_data=f"bs_base:{child_bot_id}")],
+                    [InlineKeyboardButton(text="◄ Назад", callback_data=f"bs_base:{child_bot_id}")],
                 ]),
             )
         except Exception:
@@ -5051,7 +5051,7 @@ async def on_bs_base_dl_bck(callback: CallbackQuery, bot: Bot, platform_user: di
             [InlineKeyboardButton(text="📥 Выгрузить всю базу (CSV)",  callback_data=f"bs_base_export:{child_bot_id}:all")],
             [InlineKeyboardButton(text="🟢 Выгрузить живых",         callback_data=f"bs_base_export:{child_bot_id}:active")],
             [InlineKeyboardButton(text="⭐ Выгрузить Premium",           callback_data=f"bs_base_export:{child_bot_id}:premium")],
-            [InlineKeyboardButton(text="◀️ Назад",                       callback_data=f"bs_base:{child_bot_id}")],
+            [InlineKeyboardButton(text="◄ Назад",                       callback_data=f"bs_base:{child_bot_id}")],
         ]),
     )
     await callback.answer()
@@ -5155,7 +5155,7 @@ async def on_bs_timezone(callback: CallbackQuery, platform_user: dict | None,
                 callback_data=f"bs_tz_change:{child_bot_id}",
             )],
             [InlineKeyboardButton(
-                text="◀️ Назад",
+                text="◄ Назад",
                 callback_data=f"bs_settings:{child_bot_id}",
             )],
         ]),
@@ -5180,7 +5180,7 @@ async def on_bs_tz_change(callback: CallbackQuery, platform_user: dict | None):
         callback_data=f"bs_tz_change:{child_bot_id}",
     )])
     grid.append([InlineKeyboardButton(
-        text="◀️ Назад",
+        text="◄ Назад",
         callback_data=f"bs_timezone:{child_bot_id}",
     )])
 
@@ -5240,7 +5240,7 @@ async def _bs_channel_picker(callback: CallbackQuery, platform_user: dict,
         # Передаём child_bot_id в callback чтобы Back-кнопка не терялась
         callback_data=f"{section}:{ch['chat_id']}:{child_bot_id}",
     )] for ch in chats]
-    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"bot_settings:{child_bot_id}")])
+    buttons.append([InlineKeyboardButton(text="◄ Назад", callback_data=f"bot_settings:{child_bot_id}")])
     await callback.message.edit_text(
         f"{title}\n\nВыберите площадку:",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
@@ -5286,7 +5286,7 @@ async def on_bs_mailing(callback: CallbackQuery, state: FSMContext, platform_use
                                   callback_data=f"mailing_bot_start:{child_bot_id}")],
             [InlineKeyboardButton(text="📅 Запланированные",
                                   callback_data=f"mailing_bot_scheduled:{child_bot_id}")],
-            [InlineKeyboardButton(text="◀️ Назад",
+            [InlineKeyboardButton(text="◄ Назад",
                                   callback_data=f"bot_settings:{child_bot_id}")],
         ]),
     )
@@ -5386,7 +5386,7 @@ async def _show_bs_team(callback: CallbackQuery, bot: Bot,
                 [InlineKeyboardButton(text="👤 Участники команды",
                                       callback_data=f"bs_team_members:{child_bot_id}")]
             ] if members else []),
-            [InlineKeyboardButton(text="◀️ Назад",
+            [InlineKeyboardButton(text="◄ Назад",
                                   callback_data=f"bs_settings:{child_bot_id}")],
         ]),
     )
@@ -5452,7 +5452,7 @@ async def on_bs_team_members(callback: CallbackQuery, platform_user: dict | None
             callback_data=f"bs_team_remove:{child_bot_id}:{m['id']}",
         )])
     buttons.append([InlineKeyboardButton(
-        text="◀️ Назад", callback_data=f"bs_team:{child_bot_id}",
+        text="◄ Назад", callback_data=f"bs_team:{child_bot_id}",
     )])
 
     await callback.message.edit_text(

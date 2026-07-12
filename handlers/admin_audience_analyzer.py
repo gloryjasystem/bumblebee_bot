@@ -152,7 +152,7 @@ async def _show_analyzer_panel(message_or_cb, owner_id: int, state: FSMContext, 
 
     kb.append([InlineKeyboardButton(text=f"📊 Найти совпадения ({sel_count})", callback_data=f"aa_analyze:{owner_id}")])
     kb.append([
-        InlineKeyboardButton(text="◀️ Назад", callback_data=f"ga_users:{owner_id}"),
+        InlineKeyboardButton(text="◄ Назад", callback_data=f"ga_users:{owner_id}"),
         InlineKeyboardButton(text="♻️ Сбросить", callback_data=f"aa_reset:{owner_id}")
     ])
 
@@ -383,7 +383,7 @@ async def on_aa_export(callback: CallbackQuery, state: FSMContext):
         doc = FSInputFile(path, filename=filename)
 
         kb = [
-            [InlineKeyboardButton(text="◀️ Назад к Результатам анализа", callback_data=f"aa_analyze:{owner_id}")]
+            [InlineKeyboardButton(text="◄ Назад к Результатам анализа", callback_data=f"aa_analyze:{owner_id}")]
         ]
         markup = InlineKeyboardMarkup(inline_keyboard=kb)
 

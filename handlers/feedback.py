@@ -84,7 +84,7 @@ async def show_bot_feedback(callback: CallbackQuery, platform_user: dict, child_
         [InlineKeyboardButton(text="Выберите язык",                   callback_data="noop")],
     ]
     keyboard += _mk_lang_rows(child_bot_id, "bsf_lang", lang)
-    keyboard.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"bot_settings:{child_bot_id}")])
+    keyboard.append([InlineKeyboardButton(text="◄ Назад", callback_data=f"bot_settings:{child_bot_id}")])
 
     await navigate(
         callback,
@@ -222,7 +222,7 @@ async def _show_feedback(callback: CallbackQuery, platform_user: dict, chat_id: 
         [InlineKeyboardButton(text="Выберите язык", callback_data="noop")],
     ]
     keyboard += _lang_rows(chat_id, lang)
-    keyboard.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"channel_by_chat:{chat_id}")])
+    keyboard.append([InlineKeyboardButton(text="◄ Назад", callback_data=f"channel_by_chat:{chat_id}")])
 
     await navigate(
         callback,

@@ -381,7 +381,7 @@ async def start_ban_pipeline(
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
     back_cb = f"bs_blacklist:{child_bot_id}" if child_bot_id else f"ga_bl:{owner_id}"
     back_markup = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="◀️ Назад в ЧС", callback_data=back_cb)]
+        [InlineKeyboardButton(text="◄ Назад в ЧС", callback_data=back_cb)]
     ])
     if stop_event.is_set():
         done = sum(results[k] for k in ("ok", "not_found", "error", "already_in_bl"))

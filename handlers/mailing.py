@@ -124,7 +124,7 @@ async def _show_mass_mailing(callback: CallbackQuery, state: FSMContext,
 
     buttons.append([InlineKeyboardButton(text="🚀 Начать рассылку", callback_data="ml_mass_start")])
     buttons.append([InlineKeyboardButton(text="📅 Запланированные", callback_data="ml_mass_scheduled")])
-    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data="menu:main")])
+    buttons.append([InlineKeyboardButton(text="◄ Назад", callback_data="menu:main")])
 
     await navigate(
         callback,
@@ -230,7 +230,7 @@ async def on_ml_mass_start(callback: CallbackQuery, state: FSMContext,
         f"🔒 Выбрано ботов: {len(selected)}\n"
         f"👥 Получателей: <b>{total_users:,}</b>",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="◀️ Назад", callback_data="menu:mailing")],
+            [InlineKeyboardButton(text="◄ Назад", callback_data="menu:mailing")],
         ]),
     )
     if prompt_msg and hasattr(prompt_msg, 'message_id'):
@@ -351,7 +351,7 @@ async def on_ml_mass_scheduled(callback: CallbackQuery, platform_user: dict | No
             "📅 <b>Запланированные рассылки</b>\n\nНет запланированных рассылок.",
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="◀️ Назад", callback_data="menu:mailing")],
+                [InlineKeyboardButton(text="◄ Назад", callback_data="menu:mailing")],
             ]),
         )
         await callback.answer()
@@ -396,7 +396,7 @@ async def on_ml_mass_scheduled(callback: CallbackQuery, platform_user: dict | No
             nav_row.append(InlineKeyboardButton(text="·", callback_data="ml_noop"))
         buttons.append(nav_row)
 
-    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data="menu:mailing")])
+    buttons.append([InlineKeyboardButton(text="◄ Назад", callback_data="menu:mailing")])
 
     await callback.message.edit_text(
         f"📅 <b>Запланированные рассылки</b>",
@@ -469,7 +469,7 @@ def _kb_draft(m: dict) -> InlineKeyboardMarkup:
         # Кнопка «Назад»: если это массовая кампания (child_bot_id=None) → в меню рассылки
         # Иначе: если chat_id=None — рассылка на уровне бота → возвращаем на bs_mailing
         [InlineKeyboardButton(
-            text="◀️ Назад",
+            text="◄ Назад",
             callback_data=(
                 "menu:mailing" if not m.get('child_bot_id') and m.get('campaign_id')
                 else (f"bs_mailing:{m['child_bot_id']}" if not m.get('chat_id') else f"ch_mailing:{m['chat_id']}")
@@ -694,7 +694,7 @@ async def on_ch_mailing(callback: CallbackQuery, platform_user: dict | None):
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="➕ Создать рассылку", callback_data=f"mailing_start:{chat_id}")],
             [InlineKeyboardButton(text="📅 Запланированные",  callback_data=f"mailing_scheduled:{chat_id}")],
-            [InlineKeyboardButton(text="◀️ Назад",             callback_data=f"channel_by_chat:{chat_id}")],
+            [InlineKeyboardButton(text="◄ Назад",             callback_data=f"channel_by_chat:{chat_id}")],
         ]),
     )
 
@@ -736,7 +736,7 @@ async def on_mailing_bot_start(callback: CallbackQuery, state: FSMContext,
         f"ⓘ Можно прикрепить медиа.\n\n"
         f"👥 Получателей (все площадки): <b>{count:,}</b>",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="◀️ Отмена",
+            [InlineKeyboardButton(text="◄ Отмена",
                                    callback_data=f"bs_mailing:{child_bot_id}")],
         ]),
     )
@@ -767,7 +767,7 @@ async def on_mailing_bot_scheduled(callback: CallbackQuery, platform_user: dict 
             "📅 <b>Запланированные</b>\n\nСписок задач ⬇️\n\nНет запланированных рассылок.",
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="◀️ Назад",
+                [InlineKeyboardButton(text="◄ Назад",
                                       callback_data=f"bs_mailing:{child_bot_id}")],
             ]),
         )
@@ -782,7 +782,7 @@ async def on_mailing_bot_scheduled(callback: CallbackQuery, platform_user: dict 
             text=f"{dt} | {preview}",
             callback_data=f"ml_scheduled_view:{r['id']}:{child_bot_id}",
         )])
-    buttons.append([InlineKeyboardButton(text="◀️ Назад",
+    buttons.append([InlineKeyboardButton(text="◄ Назад",
                                           callback_data=f"bs_mailing:{child_bot_id}")])
 
     await callback.message.edit_text(
@@ -821,7 +821,7 @@ def _kb_scheduled(m: dict, child_bot_id: int) -> InlineKeyboardMarkup:
         ],
         [InlineKeyboardButton(text="⏰ Изменить время",   callback_data=f"ml_sched_reschedule:{mid}:{child_bot_id}")],
         [InlineKeyboardButton(text="🚫 Отменить рассылку", callback_data=f"ml_sched_cancel:{mid}:{child_bot_id}")],
-        [InlineKeyboardButton(text="◀️ Назад",               callback_data=f"mailing_bot_scheduled:{child_bot_id}")],
+        [InlineKeyboardButton(text="◄ Назад",               callback_data=f"mailing_bot_scheduled:{child_bot_id}")],
     ])
 
 
@@ -1002,7 +1002,7 @@ async def on_ml_sched_cancel(callback: CallbackQuery, platform_user: dict | None
         "✅ <b>Запланированная рассылка отменена.</b>",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="◀️ К списку",
+            [InlineKeyboardButton(text="◄ К списку",
                                   callback_data=f"mailing_bot_scheduled:{child_bot_id}")],
         ]),
     )
@@ -1175,7 +1175,7 @@ async def on_mailing_scheduled(callback: CallbackQuery, platform_user: dict | No
         await callback.message.edit_text(
             "📅 <b>Запланированные рассылки</b>\n\nНет запланированных рассылок.",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="◀️ Назад", callback_data=f"ch_mailing:{chat_id}")],
+                [InlineKeyboardButton(text="◄ Назад", callback_data=f"ch_mailing:{chat_id}")],
             ]),
         )
         await callback.answer()
@@ -1191,7 +1191,7 @@ async def on_mailing_scheduled(callback: CallbackQuery, platform_user: dict | No
             text=f"🗓 {dt} — {preview[:20]}…",
             callback_data=f"ml_view_draft:{r['id']}:{chat_id}",
         )])
-    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"ch_mailing:{chat_id}")])
+    buttons.append([InlineKeyboardButton(text="◄ Назад", callback_data=f"ch_mailing:{chat_id}")])
 
     await callback.message.edit_text(
         text, parse_mode="HTML",
@@ -1236,7 +1236,7 @@ async def on_mailing_start(callback: CallbackQuery, state: FSMContext, platform_
         f"ⓘ Можно прикрепить медиа.\n\n"
         f"👥 Получателей: <b>{count:,}</b>",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="◀️ Назад", callback_data=f"ch_mailing:{chat_id}")],
+            [InlineKeyboardButton(text="◄ Назад", callback_data=f"ch_mailing:{chat_id}")],
         ]),
     )
     await state.update_data(prompt_msg_id=callback.message.message_id)
@@ -1511,7 +1511,7 @@ async def on_ml_url_buttons(callback: CallbackQuery, state: FSMContext, platform
         _URL_BUTTONS_HELP + now_text,
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="◀️ Назад", callback_data=f"ml_view_draft:{mid}:")],
+            [InlineKeyboardButton(text="◄ Назад", callback_data=f"ml_view_draft:{mid}:")],
         ]),
     )
     # Сохраняем ID промпта для удаления после ввода
@@ -1560,7 +1560,7 @@ async def on_ml_input_buttons(callback: CallbackQuery, state: FSMContext, platfo
         "Каждая строка — отдельный ряд кнопок.",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="◀️ Назад", callback_data=f"ml_url_buttons:{mid}")],
+            [InlineKeyboardButton(text="◄ Назад", callback_data=f"ml_url_buttons:{mid}")],
         ]),
     )
     await callback.answer()
@@ -1776,7 +1776,7 @@ async def on_schedule_input(message: Message, state: FSMContext):
                                                   callback_data=f"mailing_bot_start:{child_bot_id}")],
                             [InlineKeyboardButton(text="📅 Запланированные",
                                                   callback_data=f"mailing_bot_scheduled:{child_bot_id}")],
-                            [InlineKeyboardButton(text="◀️ Назад",
+                            [InlineKeyboardButton(text="◄ Назад",
                                                   callback_data=back_cb)],
                         ]),
                     )
@@ -2213,18 +2213,18 @@ async def on_mailing_run(callback: CallbackQuery, bot: Bot, platform_user: dict 
                         final_kb = InlineKeyboardMarkup(inline_keyboard=[
                             [InlineKeyboardButton(text="➕ Создать рассылку", callback_data=f"mailing_start:{chat_id_from_m}")],
                             [InlineKeyboardButton(text="📅 Запланированные",  callback_data=f"mailing_scheduled:{chat_id_from_m}")],
-                            [InlineKeyboardButton(text="◀️ Назад",             callback_data=f"channel_by_chat:{chat_id_from_m}")],
+                            [InlineKeyboardButton(text="◄ Назад",             callback_data=f"channel_by_chat:{chat_id_from_m}")],
                         ])
                     elif child_bot_from_m:
                         final_kb = InlineKeyboardMarkup(inline_keyboard=[
                             [InlineKeyboardButton(text="➕ Создать рассылку", callback_data=f"mailing_bot_start:{child_bot_from_m}")],
                             [InlineKeyboardButton(text="📅 Запланированные",  callback_data=f"mailing_bot_scheduled:{child_bot_from_m}")],
-                            [InlineKeyboardButton(text="◀️ Назад",             callback_data=f"bs_mailing:{child_bot_from_m}")],
+                            [InlineKeyboardButton(text="◄ Назад",             callback_data=f"bs_mailing:{child_bot_from_m}")],
                         ])
                     else:
                         final_kb = InlineKeyboardMarkup(inline_keyboard=[
                             [InlineKeyboardButton(text="➕ Создать рассылку", callback_data="menu:mailing")],
-                            [InlineKeyboardButton(text="◀️ Назад",             callback_data="menu:mailing")],
+                            [InlineKeyboardButton(text="◄ Назад",             callback_data="menu:mailing")],
                         ])
 
                     header = f"📨 <b>Рассылка @{target_bot_username} завершена</b>" if target_bot_username else "📨 <b>Массовая рассылка завершена</b>"

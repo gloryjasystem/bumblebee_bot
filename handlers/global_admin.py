@@ -288,7 +288,7 @@ async def on_ga_admin_hub(callback: CallbackQuery):
     kb = [
         [InlineKeyboardButton(text="🔍 Пользователи платформы", callback_data=f"ga_manage_users:{owner_id}")],
         [InlineKeyboardButton(text="🤖 Боты платформы",             callback_data=f"ga_platform:{callback.from_user.id}:0")],
-        [InlineKeyboardButton(text="◀️ Назад",                      callback_data=f"ga_main:{owner_id}")],
+        [InlineKeyboardButton(text="◄ Назад",                      callback_data=f"ga_main:{owner_id}")],
     ]
     await navigate(
         callback,
@@ -316,7 +316,7 @@ async def on_ga_manage_users(callback: CallbackQuery, state: FSMContext):
         "Пример: <code>@ivan_user</code>  или  <code>123456789</code>",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="◀️ Назад", callback_data=f"ga_admin_hub:{owner_id}")]
+            [InlineKeyboardButton(text="◄ Назад", callback_data=f"ga_admin_hub:{owner_id}")]
         ])
     )
     if prompt_msg and hasattr(prompt_msg, 'message_id'):
@@ -355,7 +355,7 @@ async def on_ga_user_search_input(message: Message, state: FSMContext):
             f"⚠️ Пользователь <b>{raw}</b> не найден в базе платформы.",
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="◀️ Назад", callback_data=f"ga_manage_users:{owner_id}")]
+                [InlineKeyboardButton(text="◄ Назад", callback_data=f"ga_manage_users:{owner_id}")]
             ])
         )
     await _show_platform_user_card(message, owner_id, row)
@@ -421,7 +421,7 @@ async def _show_platform_user_card(message_or_cb, admin_owner_id: int, row):
             callback_data=f"ga_pu_unblock:{uid}:{admin_owner_id}" if is_banned else f"ga_pu_block:{uid}:{admin_owner_id}"
         )],
         [InlineKeyboardButton(text="📝 Добавить заметку",     callback_data=f"ga_pu_note:{uid}:{admin_owner_id}")],
-        [InlineKeyboardButton(text="◀️ Назад к поиску",       callback_data=f"ga_manage_users:{admin_owner_id}")],
+        [InlineKeyboardButton(text="◄ Назад к поиску",       callback_data=f"ga_manage_users:{admin_owner_id}")],
     ]
     markup = InlineKeyboardMarkup(inline_keyboard=kb)
     if isinstance(message_or_cb, Message):
@@ -636,7 +636,7 @@ async def on_ga_pu_delete_confirm(callback: CallbackQuery):
         f"✅ Аккаунт <code>{target_uid}</code> удалён.",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="◀️ Назад", callback_data=f"ga_manage_users:{admin_owner_id}")]
+            [InlineKeyboardButton(text="◄ Назад", callback_data=f"ga_manage_users:{admin_owner_id}")]
         ])
     )
 
@@ -684,14 +684,14 @@ async def on_ga_pu_pm_input(message: Message, state: FSMContext):
             f"✅ <b>Сообщение отправлено</b> пользователю <code>{target_uid}</code>.",
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="◀️ Назад", callback_data=f"ga_pu_card:{target_uid}:{owner_id}")]
+                [InlineKeyboardButton(text="◄ Назад", callback_data=f"ga_pu_card:{target_uid}:{owner_id}")]
             ])
         )
     except Exception:
         await message.answer(
             "❌ Не удалось отправить. Возможно, пользователь не запускал бота.",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="◀️ Назад", callback_data=f"ga_pu_card:{target_uid}:{owner_id}")]
+                [InlineKeyboardButton(text="◄ Назад", callback_data=f"ga_pu_card:{target_uid}:{owner_id}")]
             ])
         )
 
@@ -719,7 +719,7 @@ async def on_ga_pu_note(callback: CallbackQuery, state: FSMContext):
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="🔄 Изменить заметку", callback_data=f"ga_pu_note_edit:{target_uid}:{admin_owner_id}")],
                 [InlineKeyboardButton(text="🗑 Удалить заметку", callback_data=f"ga_pu_note_del:{target_uid}:{admin_owner_id}")],
-                [InlineKeyboardButton(text="◀️ Назад", callback_data=f"ga_pu_card:{target_uid}:{admin_owner_id}")]
+                [InlineKeyboardButton(text="◄ Назад", callback_data=f"ga_pu_card:{target_uid}:{admin_owner_id}")]
             ])
         )
     else:
@@ -809,7 +809,7 @@ async def on_ga_pu_note_input(message: Message, state: FSMContext):
         "✅ <b>Заметка сохранена.</b>",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="◀️ Назад", callback_data=f"ga_pu_card:{target_uid}:{owner_id}")]
+            [InlineKeyboardButton(text="◄ Назад", callback_data=f"ga_pu_card:{target_uid}:{owner_id}")]
         ])
     )
 
@@ -833,7 +833,7 @@ async def on_ga_pu_bots(callback: CallbackQuery):
             f"🤖 <b>Боты {uname}</b>\n\nУ пользователя нет подключённых ботов.",
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="◀️ Назад к карточке", callback_data=f"ga_pu_card:{target_uid}:{admin_owner_id}")]
+                [InlineKeyboardButton(text="◄ Назад к карточке", callback_data=f"ga_pu_card:{target_uid}:{admin_owner_id}")]
             ])
         )
         return
@@ -850,7 +850,7 @@ async def on_ga_pu_bots(callback: CallbackQuery):
         lines.append(f"• {label}")
         kb.append([InlineKeyboardButton(text=f"🤖 @{b['bot_username']} ({cnt} пл.)",
                                         callback_data=f"ga_pu_bot_detail:{b['id']}:{target_uid}:{admin_owner_id}")])
-    kb.append([InlineKeyboardButton(text="◀️ Назад к карточке", callback_data=f"ga_pu_card:{target_uid}:{admin_owner_id}")])
+    kb.append([InlineKeyboardButton(text="◄ Назад к карточке", callback_data=f"ga_pu_card:{target_uid}:{admin_owner_id}")])
     await navigate(
         callback,
         f"🤖 <b>Боты {uname}</b>\n\n" + "\n".join(lines),
@@ -869,7 +869,7 @@ async def on_ga_pu_bot_detail(callback: CallbackQuery):
         f"ga_platform:{admin_owner_id}:0" if from_platform
         else f"ga_pu_bots:{target_uid}:{admin_owner_id}"
     )
-    back_label = "◀️ Назад к ботам" if not from_platform else "◀️ Назад к реестру"
+    back_label = "◄ Назад к ботам" if not from_platform else "◄ Назад к реестру"
     async with get_pool().acquire() as conn:
         bot_row = await conn.fetchrow("SELECT bot_username FROM child_bots WHERE id=$1", bot_id)
         chats = await conn.fetch(
@@ -1062,7 +1062,7 @@ async def on_ga_pu_tariff(callback: CallbackQuery):
             continue
         row_btns.append(InlineKeyboardButton(text=TARIFF_LABELS[t], callback_data=f"ga_pu_tariff_pick:{t}:{target_uid}:{admin_owner_id}"))
     kb.append(row_btns)  # all tariff buttons in one row
-    kb.append([InlineKeyboardButton(text="◀️ Назад к карточке", callback_data=f"ga_pu_card:{target_uid}:{admin_owner_id}")])
+    kb.append([InlineKeyboardButton(text="◄ Назад к карточке", callback_data=f"ga_pu_card:{target_uid}:{admin_owner_id}")])
     await navigate(
         callback,
         f"💎 <b>Управление тарифом</b> {uname}\n\n{tariff_line}\n\nСмените тариф:",
@@ -1092,7 +1092,7 @@ async def on_ga_pu_tariff_pick(callback: CallbackQuery):
         for dur_key, dur_label, _ in DURATIONS
     ]
     kb.append(dur_row)  # all durations in one row
-    kb.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"ga_pu_tariff:{target_uid}:{admin_owner_id}")])
+    kb.append([InlineKeyboardButton(text="◄ Назад", callback_data=f"ga_pu_tariff:{target_uid}:{admin_owner_id}")])
     await navigate(
         callback,
         f"💎 <b>Тариф: {label}</b>\n\nВыберите срок:",
@@ -1243,7 +1243,7 @@ async def on_ga_pu_history(callback: CallbackQuery):
         callback,
         "\n".join(lines), parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="◀️ Назад к карточке", callback_data=f"ga_pu_card:{target_uid}:{admin_owner_id}")]
+            [InlineKeyboardButton(text="◄ Назад к карточке", callback_data=f"ga_pu_card:{target_uid}:{admin_owner_id}")]
         ])
     )
 
@@ -1279,7 +1279,7 @@ async def on_ga_team(callback: CallbackQuery):
     kb = [
         [InlineKeyboardButton(text="➕ Добавить админа", callback_data=f"ga_team_howto:{owner_id}")],
         [InlineKeyboardButton(text="➖ Удалить админа", callback_data=f"ga_team_remove:{owner_id}")],
-        [InlineKeyboardButton(text="◀️ Назад", callback_data=f"ga_main:{owner_id}")]
+        [InlineKeyboardButton(text="◄ Назад", callback_data=f"ga_main:{owner_id}")]
     ]
     await navigate(callback, text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
 
@@ -1339,7 +1339,7 @@ async def on_ga_team_add_input(message: Message, state: FSMContext):
         return await message.answer(
             "❌ Неверный формат. Введите @username или числовой ID.",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="◀️ Назад", callback_data=f"ga_team:{owner_id}")]
+                [InlineKeyboardButton(text="◄ Назад", callback_data=f"ga_team:{owner_id}")]
             ])
         )
 
@@ -1361,7 +1361,7 @@ async def on_ga_team_add_input(message: Message, state: FSMContext):
                 f"⚠️ Пользователь {display_name} не найден в базе. Убедитесь, что он хоть раз запускал вашего бота, или используйте Telegram ID.",
                 parse_mode="HTML",
                 reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                    [InlineKeyboardButton(text="◀️ Назад", callback_data=f"ga_team:{owner_id}")]
+                    [InlineKeyboardButton(text="◄ Назад", callback_data=f"ga_team:{owner_id}")]
                 ])
             )
 
@@ -1386,7 +1386,7 @@ async def on_ga_team_add_input(message: Message, state: FSMContext):
                 f"✅ Теперь он видит ЧС, базу аудитории и запускает рассылки.",
                 parse_mode="HTML",
                 reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                    [InlineKeyboardButton(text="◀️ К сотрудникам", callback_data=f"ga_team:{owner_id}")]
+                    [InlineKeyboardButton(text="◄ К сотрудникам", callback_data=f"ga_team:{owner_id}")]
                 ])
             )
         except asyncpg.UniqueViolationError:
@@ -1394,7 +1394,7 @@ async def on_ga_team_add_input(message: Message, state: FSMContext):
                 f"⚠️ {display_name} уже является администратором.",
                 parse_mode="HTML",
                 reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                    [InlineKeyboardButton(text="◀️ Назад", callback_data=f"ga_team:{owner_id}")]
+                    [InlineKeyboardButton(text="◄ Назад", callback_data=f"ga_team:{owner_id}")]
                 ])
             )
 
@@ -1447,7 +1447,7 @@ async def on_ga_team_remove_input(message: Message, state: FSMContext):
     else:
         return await message.answer("❌ Неверный формат. Введите @username или числовой ID.",
                                     reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                                        [InlineKeyboardButton(text="◀️ Назад", callback_data=f"ga_team:{owner_id}")]
+                                        [InlineKeyboardButton(text="◄ Назад", callback_data=f"ga_team:{owner_id}")]
                                     ]))
 
     async with get_pool().acquire() as conn:
@@ -1483,7 +1483,7 @@ async def on_ga_team_remove_input(message: Message, state: FSMContext):
                 f"⚠️ Администратор <b>{ident}</b> не найден в вашем списке сотрудников.",
                 parse_mode="HTML",
                 reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                    [InlineKeyboardButton(text="◀️ Назад", callback_data=f"ga_team:{owner_id}")]
+                    [InlineKeyboardButton(text="◄ Назад", callback_data=f"ga_team:{owner_id}")]
                 ])
             )
 
@@ -1503,7 +1503,7 @@ async def on_ga_team_remove_input(message: Message, state: FSMContext):
         f"✅ Администратор {removed_name} успешно удалён из списка сотрудников.",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="◀️ К сотрудникам", callback_data=f"ga_team:{owner_id}")]
+            [InlineKeyboardButton(text="◄ К сотрудникам", callback_data=f"ga_team:{owner_id}")]
         ])
     )
 
@@ -1550,7 +1550,7 @@ async def on_ga_audit(callback: CallbackQuery):
             lines.append(f"{icon} [{dt}] {uid}\n    ↳ {detail}")
         text = "\n".join(lines)
 
-    kb = [[InlineKeyboardButton(text="◀️ Назад", callback_data=f"ga_main:{owner_id}")]]
+    kb = [[InlineKeyboardButton(text="◄ Назад", callback_data=f"ga_main:{owner_id}")]]
     await navigate(callback, text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
 
 
@@ -1712,7 +1712,7 @@ def _period_tabs_kb(owner_id: int, section: str, current_period: str) -> InlineK
     return InlineKeyboardMarkup(inline_keyboard=[
         tabs,
         [InlineKeyboardButton(text="🔄 Обновить", callback_data=f"ga_{section}:{owner_id}:{current_period}")],
-        [InlineKeyboardButton(text="◀️ Назад в Аналитику", callback_data=f"ga_stats:{owner_id}")],
+        [InlineKeyboardButton(text="◄ Назад в Аналитику", callback_data=f"ga_stats:{owner_id}")],
     ])
 
 
@@ -1969,7 +1969,7 @@ async def on_ga_stats(callback: CallbackQuery):
         [InlineKeyboardButton(text="👥 Аудитория", callback_data=f"ga_audience:{owner_id}:all")],
         [InlineKeyboardButton(text="💰 Финансы",   callback_data=f"ga_finance:{owner_id}:all")],
         [InlineKeyboardButton(text="🔄 Обновить", callback_data=f"ga_stats:{owner_id}")],
-        [InlineKeyboardButton(text="◀️ Назад",    callback_data=f"ga_main:{owner_id}")],
+        [InlineKeyboardButton(text="◄ Назад",    callback_data=f"ga_main:{owner_id}")],
     ])
     try:
         await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
@@ -2482,7 +2482,7 @@ async def on_ga_bl(callback: CallbackQuery, state: FSMContext = None):
     if _is_owner_level:
         kb.append([InlineKeyboardButton(text="🔑 Настройки RapidAPI", callback_data="rapidapi_settings")])
 
-    kb.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"ga_main:{owner_id}")])
+    kb.append([InlineKeyboardButton(text="◄ Назад", callback_data=f"ga_main:{owner_id}")])
 
 
     # Если текущее сообщение — документ (например, после загрузки CSV), edit_text недоступен.
@@ -2647,7 +2647,7 @@ async def _export_bl_csv(bot, chat_id: int, admin_id: int, owner_id: int, msg_to
             ORDER BY COALESCE(user_id::text, lower(username)), (child_bot_id IS NULL) DESC, added_at DESC
         """, selected_bot_ids, owner_id)
 
-    kb = [[InlineKeyboardButton(text="◀️ Назад в ЧС", callback_data=f"ga_bl:{owner_id}")]]
+    kb = [[InlineKeyboardButton(text="◄ Назад в ЧС", callback_data=f"ga_bl:{owner_id}")]]
 
     if not rows:
         if msg_to_edit:
@@ -2833,7 +2833,7 @@ async def process_ga_bl_add(message: Message, state: FSMContext, bot: Bot):
             except Exception:
                 pass
 
-    kb = [[InlineKeyboardButton(text="◀️ Вернуться в Глобальный ЧС", callback_data=f"ga_bl:{owner_id}")]]
+    kb = [[InlineKeyboardButton(text="◄ Вернуться в Глобальный ЧС", callback_data=f"ga_bl:{owner_id}")]]
     text_res = (
         f"✅ <b>Операция завершена!</b>\n\n"
         f"📥 Обработано строк: <b>{len(targets):,}</b>\n"
@@ -2904,7 +2904,7 @@ async def _show_ga_users(message_or_cb, admin_id: int, owner_id: int):
         [InlineKeyboardButton(text="📊 Анализ пересечений", callback_data=f"aa_start:{owner_id}")],
         [InlineKeyboardButton(text="📥 Выгрузить всю базу (CSV)", callback_data=f"ga_export_users:all:{owner_id}")],
         [InlineKeyboardButton(text="🟢 Выгрузить только живых", callback_data=f"ga_export_users:alive:{owner_id}")],
-        [InlineKeyboardButton(text="◀️ Назад", callback_data=f"ga_main:{owner_id}")]
+        [InlineKeyboardButton(text="◄ Назад", callback_data=f"ga_main:{owner_id}")]
     ]
 
     markup = InlineKeyboardMarkup(inline_keyboard=kb)
@@ -2960,7 +2960,7 @@ async def _export_users_csv(bot: Bot, chat_id: int, owner_id: int, export_type: 
             pass
 
     if not rows:
-        kb = [[InlineKeyboardButton(text="◀️ Назад в Меню", callback_data=f"ga_dl_bck:{owner_id}")]]
+        kb = [[InlineKeyboardButton(text="◄ Назад в Меню", callback_data=f"ga_dl_bck:{owner_id}")]]
         return await bot.send_message(chat_id, "⚠️ База пуста по заданным критериям.", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
         
     fd, path = tempfile.mkstemp(suffix=".csv")
@@ -2978,7 +2978,7 @@ async def _export_users_csv(bot: Bot, chat_id: int, owner_id: int, export_type: 
             
     doc = FSInputFile(path, filename=f"global_audience_{export_type}.csv")
     
-    kb = [[InlineKeyboardButton(text="◀️ Назад в Базу Аудитории", callback_data=f"ga_dl_bck:{owner_id}")]]
+    kb = [[InlineKeyboardButton(text="◄ Назад в Базу Аудитории", callback_data=f"ga_dl_bck:{owner_id}")]]
     await bot.send_document(chat_id, document=doc, caption="✅ Ваш отчет скомпилирован и готов.", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
     
     try:
@@ -3090,7 +3090,7 @@ async def on_ga_broadcast(callback: CallbackQuery, state: FSMContext):
         [
             InlineKeyboardButton(text=f"🗑 Удаление сообщений: {_global_delete_label(delete_min)}", callback_data=f"ga_bc_del:{owner_id}")
         ],
-        [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"ga_main:{owner_id}")]
+        [InlineKeyboardButton(text="◄ Назад", callback_data=f"ga_main:{owner_id}")]
     ]
     await callback.message.edit_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
     await callback.answer()
@@ -3353,7 +3353,7 @@ async def _show_bots_network_page(callback: CallbackQuery, owner_id: int, page: 
             nav.append(InlineKeyboardButton(text="▶️", callback_data=f"ga_bots:{owner_id}:{page + 1}"))
         kb.append(nav)
 
-    kb.append([InlineKeyboardButton(text="◀️ Назад в Панель", callback_data=f"ga_main:{owner_id}")])
+    kb.append([InlineKeyboardButton(text="◄ Назад в Панель", callback_data=f"ga_main:{owner_id}")])
 
     await callback.message.edit_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
 
@@ -3506,7 +3506,7 @@ async def on_bots_search_input(message: Message, state: FSMContext):
                 f"⚠️ Владелец <b>{raw}</b> не найден.",
                 parse_mode="HTML",
                 reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                    [InlineKeyboardButton(text="◀️ Назад к списку", callback_data=f"ga_bots:{admin_id}:0")]
+                    [InlineKeyboardButton(text="◄ Назад к списку", callback_data=f"ga_bots:{admin_id}:0")]
                 ])
             )
         async with get_pool().acquire() as conn:
@@ -3530,7 +3530,7 @@ async def on_bots_search_input(message: Message, state: FSMContext):
                 f"ℹ️ У владельца <b>@{owner.get('username') or owner['user_id']}</b> нет ботов.",
                 parse_mode="HTML",
                 reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                    [InlineKeyboardButton(text="◀️ Назад к списку", callback_data=f"ga_bots:{admin_id}:0")]
+                    [InlineKeyboardButton(text="◄ Назад к списку", callback_data=f"ga_bots:{admin_id}:0")]
                 ])
             )
         uname = f"@{owner['username']}" if owner.get('username') else str(owner['user_id'])
@@ -3542,7 +3542,7 @@ async def on_bots_search_input(message: Message, state: FSMContext):
                 text=f"{icon} @{b['bot_username']}",
                 callback_data=f"ga_bot_sel:{admin_id}:{b['id']}:0"
             )])
-        kb.append([InlineKeyboardButton(text="◀️ Назад к списку", callback_data=f"ga_bots:{admin_id}:0")])
+        kb.append([InlineKeyboardButton(text="◄ Назад к списку", callback_data=f"ga_bots:{admin_id}:0")])
         await message.answer(
             f"🔍 <b>Боты владельца {uname}</b>\n\n"
             f"Найдено: <b>{len(bots)}</b>  │  В выборке: <b>{selected_count}</b>",
@@ -3575,7 +3575,7 @@ async def on_bots_search_input(message: Message, state: FSMContext):
                 f"⚠️ Боты с названием <b>{raw}</b> не найдены.",
                 parse_mode="HTML",
                 reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                    [InlineKeyboardButton(text="◀️ Назад к списку", callback_data=f"ga_bots:{admin_id}:0")]
+                    [InlineKeyboardButton(text="◄ Назад к списку", callback_data=f"ga_bots:{admin_id}:0")]
                 ])
             )
         selected_count = sum(1 for b in bots if b['selected'])
@@ -3587,7 +3587,7 @@ async def on_bots_search_input(message: Message, state: FSMContext):
                 text=f"{icon} @{b['bot_username']}{owner_tag}",
                 callback_data=f"ga_bot_sel:{admin_id}:{b['id']}:0"
             )])
-        kb.append([InlineKeyboardButton(text="◀️ Назад к списку", callback_data=f"ga_bots:{admin_id}:0")])
+        kb.append([InlineKeyboardButton(text="◄ Назад к списку", callback_data=f"ga_bots:{admin_id}:0")])
         await message.answer(
             f"🔍 <b>Результаты поиска: «{raw}»</b>\n\n"
             f"Найдено: <b>{len(bots)}</b>  │  В выборке: <b>{selected_count}</b>",
@@ -3716,7 +3716,7 @@ async def _show_platform_bots_page(
     if len(nav) > 1:
         kb.append(nav)
 
-    kb.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"ga_admin_hub:{admin_id}")])
+    kb.append([InlineKeyboardButton(text="◄ Назад", callback_data=f"ga_admin_hub:{admin_id}")])
     await navigate(
         callback,
         text,
@@ -3817,7 +3817,7 @@ async def on_platform_search_input(message: Message, state: FSMContext):
         await message.answer(
             "⚠️ Введите хотя бы 1 символ для поиска.",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="◀️ Назад", callback_data=f"ga_platform:{admin_id}:0")]
+                [InlineKeyboardButton(text="◄ Назад", callback_data=f"ga_platform:{admin_id}:0")]
             ]),
         )
         return
@@ -3869,7 +3869,7 @@ async def on_platform_search_input(message: Message, state: FSMContext):
             f"🔍 По запросу <b>«{query}»</b> ничего не найдено.",
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="◀️ Назад к списку", callback_data=f"ga_platform:{admin_id}:0")]
+                [InlineKeyboardButton(text="◄ Назад к списку", callback_data=f"ga_platform:{admin_id}:0")]
             ]),
         )
 
@@ -3880,7 +3880,7 @@ async def on_platform_search_input(message: Message, state: FSMContext):
             text=f"🤖 @{b['bot_username']}  ·  {owner_tag}  ·  🏛{b['chat_count']} 👥{b['total_users']:,}",
             callback_data=f"ga_pu_bot_detail:{b['id']}:{b['owner_id']}:{admin_id}:p",
         )])
-    kb.append([InlineKeyboardButton(text="◀️ Назад к списку", callback_data=f"ga_platform:{admin_id}:0")])
+    kb.append([InlineKeyboardButton(text="◄ Назад к списку", callback_data=f"ga_platform:{admin_id}:0")])
 
     await message.answer(
         f"🔍 <b>Результаты: «{query}»</b>\n\n"
@@ -3919,7 +3919,7 @@ async def on_ga_discounts(callback: CallbackQuery):
             InlineKeyboardButton(text="20%", callback_data=f"ga_discount:{owner_id}:20"),
             InlineKeyboardButton(text="30%", callback_data=f"ga_discount:{owner_id}:30")
         ],
-        [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"ga_main:{owner_id}")]
+        [InlineKeyboardButton(text="◄ Назад", callback_data=f"ga_main:{owner_id}")]
     ]
     await callback.message.edit_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
     await callback.answer()
@@ -3953,7 +3953,7 @@ async def on_ga_discount_select(callback: CallbackQuery):
                 InlineKeyboardButton(text="20%", callback_data=f"ga_discount:{owner_id}:20"),
                 InlineKeyboardButton(text="30%", callback_data=f"ga_discount:{owner_id}:30")
             ],
-            [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"ga_main:{owner_id}")]
+            [InlineKeyboardButton(text="◄ Назад", callback_data=f"ga_main:{owner_id}")]
         ]
         await callback.message.answer(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
         return
@@ -3970,7 +3970,7 @@ async def on_ga_discount_select(callback: CallbackQuery):
             InlineKeyboardButton(text="2 месяца", callback_data=f"ga_dsave:{owner_id}:{percent}:60"),
             InlineKeyboardButton(text="3 месяца", callback_data=f"ga_dsave:{owner_id}:{percent}:90"),
         ],
-        [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"ga_discounts:{owner_id}")]
+        [InlineKeyboardButton(text="◄ Назад", callback_data=f"ga_discounts:{owner_id}")]
     ]
     await callback.message.edit_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
     await callback.answer()
@@ -4010,6 +4010,6 @@ async def on_ga_discount_save(callback: CallbackQuery):
             InlineKeyboardButton(text="20%", callback_data=f"ga_discount:{owner_id}:20"),
             InlineKeyboardButton(text="30%", callback_data=f"ga_discount:{owner_id}:30")
         ],
-        [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"ga_main:{owner_id}")]
+        [InlineKeyboardButton(text="◄ Назад", callback_data=f"ga_main:{owner_id}")]
     ]
     await callback.message.answer(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))

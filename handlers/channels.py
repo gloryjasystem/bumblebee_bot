@@ -129,7 +129,7 @@ async def on_channels_menu(callback: CallbackQuery, platform_user: dict | None):
             callback_data="menu:tariffs",
         )])
 
-    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data="menu:main")])
+    buttons.append([InlineKeyboardButton(text="◄ Назад", callback_data="menu:main")])
 
     await navigate(
         callback,
@@ -209,7 +209,7 @@ async def on_bot_settings(callback: CallbackQuery, state: FSMContext, platform_u
             "Выберите действие 🔽",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="🗑 Удалить бот", callback_data=f"bot_delete:{child_bot_id}")],
-                [InlineKeyboardButton(text="◀️ Назад", callback_data="menu:channels")],
+                [InlineKeyboardButton(text="◄ Назад", callback_data="menu:channels")],
             ]),
         )
         if msg:
@@ -403,7 +403,7 @@ async def on_bot_settings(callback: CallbackQuery, state: FSMContext, platform_u
         if not is_god_mode:
             keyboard.append([InlineKeyboardButton(text="🗑 Удалить бот", callback_data=f"bot_delete:{child_bot_id}")])
             
-        keyboard.append([InlineKeyboardButton(text="◀️ Назад", callback_data="menu:channels")])
+        keyboard.append([InlineKeyboardButton(text="◄ Назад", callback_data="menu:channels")])
     else:
         # Admin: без Управления и Удалить бот, Защита — отдельной строкой
         keyboard = [
@@ -418,7 +418,7 @@ async def on_bot_settings(callback: CallbackQuery, state: FSMContext, platform_u
             ],
             [btn_protection],
             [InlineKeyboardButton(text="📣 Обратная связь",    callback_data=f"bs_feedback:{child_bot_id}")],
-            [InlineKeyboardButton(text="◀️ Назад",             callback_data="menu:channels")],
+            [InlineKeyboardButton(text="◄ Назад",             callback_data="menu:channels")],
         ]
     msg = await navigate(
         callback,
@@ -509,7 +509,7 @@ async def on_bot_chats_list(callback: CallbackQuery, platform_user: dict | None)
         text=verify_label,
         callback_data=f"bot_verify_toggle:{child_bot_id}",
     )])
-    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"bot_settings:{child_bot_id}")])
+    buttons.append([InlineKeyboardButton(text="◄ Назад", callback_data=f"bot_settings:{child_bot_id}")])
 
     username = bot["bot_username"]
     hint = (
@@ -585,7 +585,7 @@ async def on_bot_connect(callback: CallbackQuery, platform_user: dict | None):
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="→ Добавить в канал", url=deep_channel)],
             [InlineKeyboardButton(text="→ Добавить в группу", url=deep_group)],
-            [InlineKeyboardButton(text="◀️ Назад", callback_data=f"bot_chats_list:{child_bot_id}")],
+            [InlineKeyboardButton(text="◄ Назад", callback_data=f"bot_chats_list:{child_bot_id}")],
         ]),
     )
     if msg:
@@ -931,7 +931,7 @@ async def on_retoken_received(message: Message, state: FSMContext, platform_user
         f"🤖 Бот @{bot_username} снова активен и готов к работе.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="⚙️ Открыть настройки", callback_data=f"bot_settings:{child_bot_id}")],
-            [InlineKeyboardButton(text="◀️ Мои боты", callback_data="menu:channels")],
+            [InlineKeyboardButton(text="◄ Мои боты", callback_data="menu:channels")],
         ]),
         parse_mode="HTML",
     )
@@ -1001,7 +1001,7 @@ async def on_chat_verify_input(message: Message, state: FSMContext, platform_use
             f"🔒 Достигнут лимит площадок ({limit} на 1 бота) для тарифа {tariff.capitalize()}.",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="💳 Улучшить тариф", callback_data="menu:tariffs")],
-                [InlineKeyboardButton(text="◀️ Назад",           callback_data="menu:channels")],
+                [InlineKeyboardButton(text="◄ Назад",           callback_data="menu:channels")],
             ]),
         )
         await state.clear()
@@ -1031,7 +1031,7 @@ async def on_chat_verify_input(message: Message, state: FSMContext, platform_use
             f"<b>Один канал — один бот.</b> Сначала удалите @{occupied['bot_username']} "
             f"из администраторов канала, затем подключите его сюда заново.",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="◀️ Назад", callback_data=f"bot_chats_list:{child_bot_id}")],
+                [InlineKeyboardButton(text="◄ Назад", callback_data=f"bot_chats_list:{child_bot_id}")],
             ]),
         )
         await state.clear()
@@ -1216,7 +1216,7 @@ async def _show_channel_detail(callback: CallbackQuery, platform_user: dict, ch_
     ]
     if not is_god_mode:
         keyboard.append([InlineKeyboardButton(text=f"🗑 Удалить площадку",  callback_data=f"ch_delete:{ch_id_b}:{cbot_id}:c:{chat_id}")])
-    keyboard.append([InlineKeyboardButton(text="◀️ Назад",               callback_data=f"bot_chats_list:{cbot_id}")])
+    keyboard.append([InlineKeyboardButton(text="◄ Назад",               callback_data=f"bot_chats_list:{cbot_id}")])
 
     msg = await navigate(
         callback,
@@ -1315,7 +1315,7 @@ async def on_channel_in_bot(callback: CallbackQuery, platform_user: dict | None)
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text=status_label, callback_data=f"ch_in_bot_toggle:{ch_id}:{child_bot_id or ''}")],
             [InlineKeyboardButton(text="🗑 Удалить",  callback_data=f"ch_delete:{ch_id}:{child_bot_id or ''}")],
-            [InlineKeyboardButton(text="◀️ Назад",    callback_data=back_cb)],
+            [InlineKeyboardButton(text="◄ Назад",    callback_data=back_cb)],
         ]),
     )
 
@@ -1350,7 +1350,7 @@ async def on_ch_in_bot_toggle(callback: CallbackQuery, platform_user: dict | Non
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text=status_label, callback_data=f"ch_in_bot_toggle:{ch_id}:{child_bot_id or ''}")],
             [InlineKeyboardButton(text="🗑 Удалить",  callback_data=f"ch_delete:{ch_id}:{child_bot_id or ''}")],
-            [InlineKeyboardButton(text="◀️ Назад",    callback_data=back_cb)],
+            [InlineKeyboardButton(text="◄ Назад",    callback_data=back_cb)],
         ])
     )
 

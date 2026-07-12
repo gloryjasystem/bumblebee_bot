@@ -615,8 +615,8 @@ async def on_wstep_delay(callback: CallbackQuery, state: FSMContext, platform_us
         "⏱ <b>Задержка шага</b>\n\n"
         "Через сколько после заявки показать этот шаг.\n"
         f"Сейчас: <b>{_delay_offset(cur)}</b>\n\n"
-        "ⓘ Задержка работает только для тех, кто уже написал боту "
-        "(прошёл капчу или отправил /start). Иначе сообщение может не дойти.",
+        "ⓘ Сообщение с выставленной задержкой придёт только тем, кто уже "
+        "написал боту — прошёл капчу или отправил /start.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=chip_rows),
     )
 

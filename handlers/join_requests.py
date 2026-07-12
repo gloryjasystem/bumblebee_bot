@@ -605,12 +605,13 @@ async def _send_welcome(bot: Bot, chat_id: int, user, settings_row: dict, contac
     # задержкам (расцепление: выключение №1 больше не гасит всю цепочку).
     send_base = (settings_row.get("welcome_enabled") is not False) and bool(text_tpl or media_fid)
 
-    # Задержку №1 применяем ТОЛЬКО когда ЛС-окно гарантированно открыто: reply-капча (юзер
-    # сам написал боту) или вход по /start. Иначе (без капчи / inline) первое сообщение шлём
-    # СРАЗУ — иначе Telegram не даст его отправить (Forbidden). Так приветствие не теряется.
+    # Задержку №1 применяем ТОЛЬКО когда ЛС-окно гарантированно открыто: включённая капча
+    # (inline-капчи в боте нет — капча всегда reply, юзер сам жмёт кнопку-ответ = пишет боту)
+    # или вход по /start. Иначе (без капчи) первое сообщение шлём СРАЗУ — иначе Telegram не даст
+    # его отправить (Forbidden). Так приветствие не теряется. Стиль кнопки (big/compact) на
+    # установление контакта не влияет — важен только факт включённой капчи.
     _captcha_type = settings_row.get("captcha_type") or "off"
-    _captcha_style = settings_row.get("captcha_button_style") or "reply"
-    dm_open = contact_established or (_captcha_type != "off" and _captcha_style == "reply")
+    dm_open = contact_established or (_captcha_type != "off")
     delay_base = send_base and welcome_delay > 0 and dm_open
 
     sent_msgs = []

@@ -1180,9 +1180,11 @@ async def on_ch_msg_btns(callback: CallbackQuery, state: FSMContext, platform_us
         except Exception:
             pass
 
+    cancel_cb = f"welcome_set:{chat_id_str}" if msg_type == "welcome" else f"farewell_set:{chat_id_str}"
     await state.set_state(SettingsFSM.waiting_for_msg_buttons)
     await state.update_data(chat_id=int(chat_id_str), owner_id=await resolve_chat_owner(platform_user["user_id"], int(chat_id_str)),
-                             msg_type=msg_type, scope="ch", editor_prompt_mid=callback.message.message_id)
+                             msg_type=msg_type, scope="ch", editor_prompt_mid=callback.message.message_id,
+                             editor_cancel_cb=cancel_cb)
     await callback.message.edit_text(
         "📎 Отправьте <b>кнопки</b>, которые будут добавлены к сообщению.\n\n"
         "🔗 <u><b>URL-кнопки</b></u>\n\n"
@@ -1200,10 +1202,7 @@ async def on_ch_msg_btns(callback: CallbackQuery, state: FSMContext, platform_us
         "<blockquote><code>Кнопка 1 — ссылка (webapp)</code></blockquote>\n\n"
         "ℹ️ Нажмите, чтобы скопировать.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(
-                text="◀️ Отмена",
-                callback_data=f"welcome_set:{chat_id_str}" if msg_type == "welcome" else f"farewell_set:{chat_id_str}"
-            )],
+            [InlineKeyboardButton(text="◀️ Отмена", callback_data=cancel_cb)],
         ]),
         parse_mode="HTML",
     )
@@ -1392,14 +1391,10 @@ async def on_msg_buttons_input(message: Message, state: FSMContext):
     msg_type = data.get("msg_type", "welcome")
     scope = data.get("scope", "ch")
     f = _MSG_FIELDS[msg_type]
-    
-    # Удаляем сообщение-приглашение, если оно было сохранено в FSM
+
+    # Сообщение-приглашение (промпт) НЕ удаляем сразу: при ошибке перепишем его на
+    # предупреждение (один экран), при успехе — удалим вместе с мусором.
     prompt_mid = data.get("editor_prompt_mid")
-    if prompt_mid:
-        try:
-            await message.bot.delete_message(chat_id=message.chat.id, message_id=prompt_mid)
-        except Exception:
-            pass
 
     raw = sanitize(message.text or "", max_len=2048)
     if raw == "-":
@@ -1440,14 +1435,47 @@ async def on_msg_buttons_input(message: Message, state: FSMContext):
                 buttons.append(row)
 
     if not buttons and raw != "-":
-        await message.answer(
+        # Неверный ввод не копим — удаляем его; предупреждение показываем ОДНИМ экраном,
+        # переписывая тот же промпт (не плодим сообщения), с кнопкой «Отмена» для выхода.
+        try:
+            await message.delete()
+        except Exception:
+            pass
+        err_text = (
             "⚠️ <b>Не удалось распознать кнопки.</b>\n\n"
-            "Проверьте формат: <code>Текст — https://ссылка</code>\n"
-            "Несколько кнопок в ряд — через <code>|</code>\n\n"
-            "✏️ Попробуйте ещё раз — введите кнопки в поле ниже.",
-            parse_mode="HTML",
+            "Формат: <code>Текст — https://ссылка</code>\n"
+            "Несколько в ряд — через <code>|</code>\n\n"
+            "✏️ Введите кнопки в поле ниже ещё раз."
         )
+        cancel_cb = data.get("editor_cancel_cb") or (
+            f"welcome_set:{data.get('chat_id')}" if msg_type == "welcome" else f"farewell_set:{data.get('chat_id')}"
+        )
+        err_kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="◀️ Отмена", callback_data=cancel_cb)]])
+        if prompt_mid:
+            try:
+                await message.bot.edit_message_text(
+                    chat_id=message.chat.id, message_id=prompt_mid,
+                    text=err_text, reply_markup=err_kb, parse_mode="HTML",
+                )
+                return
+            except Exception as e:
+                if "not modified" in str(e).lower():
+                    return  # экран уже показывает это предупреждение — ничего не делаем
+                # промпт недоступен (удалён/устарел) — пошлём новое и запомним его
+        m = await message.answer(err_text, reply_markup=err_kb, parse_mode="HTML")
+        await state.update_data(editor_prompt_mid=m.message_id)
         return
+
+    # ── Успех: убираем промпт-приглашение и сам ввод, чтобы не оставалось мусора ──
+    if prompt_mid:
+        try:
+            await message.bot.delete_message(chat_id=message.chat.id, message_id=prompt_mid)
+        except Exception:
+            pass
+    try:
+        await message.delete()
+    except Exception:
+        pass
 
     buttons_json = _json.dumps(buttons, ensure_ascii=False)
     if scope == "ch":

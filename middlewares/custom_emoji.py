@@ -43,28 +43,21 @@ def _parse_uids(raw: str) -> set[int]:
 _TEST_UIDS = _parse_uids(getattr(settings, "custom_emoji_test_uids", "") or "")
 
 
-def _make_wrap(exclude):
-    def _wrap(m: "re.Match") -> str:
-        e = m.group(0)
-        if exclude and e in exclude:   # такой значок есть на кнопке этого экрана → оставляем обычным
-            return e
-        cid = CUSTOM_EMOJI.get(e)
-        if not cid:
-            return e
-        return f'<tg-emoji emoji-id="{cid}">{e}</tg-emoji>'
-    return _wrap
+def _wrap(m: "re.Match") -> str:
+    e = m.group(0)
+    cid = CUSTOM_EMOJI.get(e)
+    if not cid:
+        return e
+    return f'<tg-emoji emoji-id="{cid}">{e}</tg-emoji>'
 
 
-def rewrite(text: str, exclude: "set[str] | None" = None) -> str:
+def rewrite(text: str) -> str:
     """Оборачивает известные эмодзи в <tg-emoji>, НЕ трогая содержимое
-    <code>/<pre>/<tg-emoji> и атрибуты тегов. Значки из `exclude` (те, что уже
-    есть на кнопках этого сообщения) не премиумим — чтобы на одном экране один и
-    тот же значок не оказался в двух стилях. Идемпотентно и безопасно."""
+    <code>/<pre>/<tg-emoji> и атрибуты тегов. Идемпотентно и безопасно."""
     if not text or _EMOJI_RE is None:
         return text
     if not _EMOJI_RE.search(text):
         return text
-    wrap = _make_wrap(exclude)
     parts = _TAG_RE.split(text)
     skip = 0
     out = []
@@ -82,27 +75,8 @@ def rewrite(text: str, exclude: "set[str] | None" = None) -> str:
                     skip += 1
             out.append(part)
         else:
-            out.append(_EMOJI_RE.sub(wrap, part) if skip == 0 else part)
+            out.append(_EMOJI_RE.sub(_wrap, part) if skip == 0 else part)
     return "".join(out)
-
-
-def _button_tokens(reply_markup) -> "set[str]":
-    """Мапленные эмодзи, встречающиеся на кнопках этого сообщения (inline или reply)."""
-    if reply_markup is None or not _TOKENS:
-        return set()
-    rows = getattr(reply_markup, "inline_keyboard", None) or getattr(reply_markup, "keyboard", None)
-    if not rows:
-        return set()
-    found: set[str] = set()
-    for row in rows:
-        for btn in row:
-            t = getattr(btn, "text", "") or ""
-            if not t:
-                continue
-            for tok in _TOKENS:
-                if tok in t:
-                    found.add(tok)
-    return found
 
 
 class CustomEmojiMiddleware(BaseRequestMiddleware):
@@ -141,10 +115,9 @@ class CustomEmojiMiddleware(BaseRequestMiddleware):
             if pm not in (ParseMode.HTML, "HTML"):
                 return await make_request(bot, method)
 
-            # 4) преобразование (не премиумим значки, уже стоящие на кнопках экрана)
+            # 4) преобразование
             original = getattr(method, field)
-            exclude = _button_tokens(getattr(method, "reply_markup", None))
-            transformed = rewrite(original, exclude=exclude)
+            transformed = rewrite(original)
             if transformed == original:
                 return await make_request(bot, method)
             new_method = method.model_copy(update={field: transformed})

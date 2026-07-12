@@ -1044,7 +1044,8 @@ async def _handle_message(bot: Bot, child_bot_id: int, owner_id: int, message):
                 if _canon:
                     welcome_row = dict(_canon)
                     if welcome_row.get("welcome_text") or welcome_row.get("welcome_media"):
-                        await _send_welcome(bot, start_chat_id, user, welcome_row)
+                        # Пользователь сам нажал /start → ЛС-окно открыто → задержку №1 можно применять
+                        await _send_welcome(bot, start_chat_id, user, welcome_row, contact_established=True)
         except Exception as e:
             logger.debug(f"[START] welcome send failed for {user.id}: {e}")
 

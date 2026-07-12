@@ -574,7 +574,7 @@ async def _register_user(owner_id: int, chat_id: int, user,
     )
 
 
-async def _send_welcome(bot: Bot, chat_id: int, user, settings_row: dict) -> bool:
+async def _send_welcome(bot: Bot, chat_id: int, user, settings_row: dict, contact_established: bool = False) -> bool:
     """Отправляет приветствие новому пользователю в личку.
     Возвращает True при успешной доставке (или если приветствие уже отправлено
     другим путём), False — если доставка не удалась.
@@ -598,14 +598,24 @@ async def _send_welcome(bot: Bot, chat_id: int, user, settings_row: dict) -> boo
     media_below = bool(settings_row.get("welcome_media_below", False))
     buttons_raw = settings_row.get("welcome_buttons")
     timer_val = int(settings_row.get("welcome_timer") or 0)
+    welcome_delay = int(settings_row.get("welcome_delay_sec") or 0)
 
     # Базовое приветствие (№1) шлём, только если оно ВКЛЮЧЕНО и ЗАДАНО. Если выключено
     # тумблером или пусто — базу пропускаем, но цепочка (№2+) всё равно уходит по своим
     # задержкам (расцепление: выключение №1 больше не гасит всю цепочку).
     send_base = (settings_row.get("welcome_enabled") is not False) and bool(text_tpl or media_fid)
 
+    # Задержку №1 применяем ТОЛЬКО когда ЛС-окно гарантированно открыто: reply-капча (юзер
+    # сам написал боту) или вход по /start. Иначе (без капчи / inline) первое сообщение шлём
+    # СРАЗУ — иначе Telegram не даст его отправить (Forbidden). Так приветствие не теряется.
+    _captcha_type = settings_row.get("captcha_type") or "off"
+    _captcha_style = settings_row.get("captcha_button_style") or "reply"
+    dm_open = contact_established or (_captcha_type != "off" and _captcha_style == "reply")
+    delay_base = send_base and welcome_delay > 0 and dm_open
+
     sent_msgs = []
-    if send_base:
+    delayed_base_step = None
+    if send_base and not delay_base:
         # Подставляем переменные
         text = (text_tpl
             .replace("{name}", user.first_name or "Пользователь")
@@ -681,9 +691,23 @@ async def _send_welcome(bot: Bot, chat_id: int, user, settings_row: dict) -> boo
             else:
                 logger.warning(f"[WELCOME] Ошибка отправки user={user.id} bot={bot_id} chat={chat_id}: {e}")
             return False
+    elif delay_base:
+        # №1 с задержкой — отправляем как отложенный шаг через проверенный движок цепочки
+        # (_welcome_step_task: переотправка медиа, кнопки, авто-удаление, трекинг для очистки).
+        # self_delete_sec = welcome_timer, чтобы авто-удаление базы сохранилось.
+        delayed_base_step = {
+            "delay_sec": welcome_delay,
+            "action": "message",
+            "text": text_tpl,           # сырой шаблон; переменные подставит _welcome_step_task
+            "media": media_fid,
+            "media_type": media_type,
+            "media_below": media_below,
+            "buttons": buttons_raw,
+            "self_delete_sec": timer_val,
+        }
 
-    # Цепочка №2+ — планируем ВСЕГДА (сама пропустит, если шагов нет). Возвращает число
-    # сообщений-шагов, чтобы понять, ушло ли что-то, когда база пропущена.
+    # Цепочка №2+ — планируем ВСЕГДА (сама пропустит, если шагов нет). Отложенную базу (если
+    # есть) добавляем первым шагом. Возвращает число сообщений-шагов (для проверки «что-то ушло»).
     scheduled_msgs = 0
     try:
         base_ids = [m.message_id for m in sent_msgs if m]
@@ -692,6 +716,7 @@ async def _send_welcome(bot: Bot, chat_id: int, user, settings_row: dict) -> boo
             settings_row.get("owner_id"),
             settings_row.get("chat_title", ""),
             base_ids,
+            extra_steps=[delayed_base_step] if delayed_base_step else None,
         )
     except Exception as _se:
         logger.debug(f"[WSEQ] schedule failed for user {user.id}: {_se}")
@@ -723,29 +748,37 @@ def _fill_msg_vars(text: str, user, chat_title: str) -> str:
     )
 
 
-async def _schedule_welcome_sequence(bot: Bot, chat_id: int, user, owner_id, chat_title: str, base_msg_ids: list[int]) -> int:
+async def _schedule_welcome_sequence(bot: Bot, chat_id: int, user, owner_id, chat_title: str,
+                                     base_msg_ids: list[int], extra_steps: list | None = None) -> int:
     """Планирует отправку дополнительных шагов цепочки приветствий.
+    extra_steps — синтетические шаги (напр. отложенное базовое приветствие №1); идут первыми.
     Возвращает число сообщений-шагов (без шага-очистки) — чтобы вызывающий понял,
     ушло ли что-то, когда базовое приветствие пропущено (выключено/пусто)."""
-    if not owner_id:
-        return 0
-    steps = await db.fetch(
-        "SELECT * FROM welcome_steps WHERE owner_id=$1 AND chat_id=$2::bigint "
-        "ORDER BY step_order ASC, delay_sec ASC, id ASC",
-        owner_id, chat_id,
-    )
-    if not steps:
+    steps = []
+    if owner_id:
+        try:
+            steps = await db.fetch(
+                "SELECT * FROM welcome_steps WHERE owner_id=$1 AND chat_id=$2::bigint "
+                "ORDER BY step_order ASC, delay_sec ASC, id ASC",
+                owner_id, chat_id,
+            )
+        except Exception as _e:
+            logger.debug(f"[WSEQ] fetch steps failed: {_e}")
+            steps = []
+    # Все шаги как dict (extra_steps уже dict; записи из БД конвертируем) — для .get() ниже
+    all_steps = list(extra_steps or []) + [dict(s) for s in steps]
+    if not all_steps:
         return 0
     key = (chat_id, user.id)
     # База (№1) — первые сообщения цепочки, чтобы шаг-удаление мог их снять
     _welcome_seq_msgs[key] = list(base_msg_ids)
     max_delay = 0
-    for step in steps:
-        max_delay = max(max_delay, int(step["delay_sec"] or 0) + int(step["self_delete_sec"] or 0))
-        asyncio.create_task(_welcome_step_task(bot, chat_id, user, chat_title, dict(step)))
+    for step in all_steps:
+        max_delay = max(max_delay, int(step.get("delay_sec") or 0) + int(step.get("self_delete_sec") or 0))
+        asyncio.create_task(_welcome_step_task(bot, chat_id, user, chat_title, step))
     # Гарантированная очистка ключа из памяти после завершения цепочки
     asyncio.create_task(_prune_seq_key(key, max_delay + 300))
-    return sum(1 for s in steps if (s["action"] or "message") != "delete")
+    return sum(1 for s in all_steps if (s.get("action") or "message") != "delete")
 
 
 async def _prune_seq_key(key: tuple[int, int], after_sec: int):

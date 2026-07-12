@@ -42,6 +42,7 @@ class SettingsFSM(StatesGroup):
     waiting_for_msg_buttons   = State()
     waiting_for_msg_media     = State()
     waiting_for_msg_selfdel   = State()   # своё время авто-удаления (как у шагов цепочки)
+    waiting_for_msg_delay     = State()   # своё время задержки отправки приветствия №1
     # ЧС: загрузка файлов (бот-уровень)
     bs_bl_waiting_add_file  = State()
     bs_bl_waiting_del_file  = State()
@@ -791,6 +792,7 @@ _MSG_FIELDS = {
         "timer_col": "welcome_timer",
         "media_below_col": "welcome_media_below",
         "enabled_col": "welcome_enabled",
+        "delay_col": "welcome_delay_sec",   # задержка отправки №1 (только у приветствия)
     },
     "farewell": {
         "label": "🤚 Прощание",
@@ -807,6 +809,8 @@ _MSG_FIELDS = {
 
 # Чипсы авто-удаления — идентичны шагам цепочки (welcome_seq._SELFDEL_CHIPS)
 _MSG_SELFDEL_CHIPS = [(0, "нет"), (15, "15с"), (60, "1 мин"), (300, "5 мин"), (900, "15 мин"), (1800, "30 мин")]
+# Чипсы задержки приветствия №1 — идентичны шагам цепочки (welcome_seq._DELAY_CHIPS)
+_MSG_DELAY_CHIPS = [(0, "сразу"), (15, "15с"), (30, "30с"), (60, "1 мин"), (300, "5 мин"), (900, "15 мин")]
 
 # Приветствие открыто ИЗ «Цепочки сообщений» → «Назад» в редакторе вернёт в менеджер
 # цепочки, а не в меню «Сообщения». Ключ (owner_id, chat_id). In-memory; сбрасывается
@@ -821,6 +825,12 @@ def _selfdel_label(sec) -> str:
     """Подпись авто-удаления — идентична шагам цепочки (welcome_seq._self_del_label)."""
     sec = int(sec or 0)
     return "нет" if sec <= 0 else format_delay_short(sec)
+
+
+def _delay_label(sec) -> str:
+    """Подпись задержки — идентична шагам цепочки (welcome_seq._delay_offset)."""
+    sec = int(sec or 0)
+    return "сразу" if sec <= 0 else f"+{format_delay_short(sec)}"
 
 
 async def _get_chat_by_id(owner_id: int, chat_id: int):
@@ -887,6 +897,13 @@ def _build_editor_kb(chat_id_str: str, msg_type: str, ch: dict, scope: str = "ch
         [InlineKeyboardButton(text="🎛 Кнопки",          callback_data=f"{pfx}_btns:{chat_id_str}:{msg_type}")],
         [InlineKeyboardButton(text=media_label,           callback_data=f"{pfx}_media:{chat_id_str}:{msg_type}")],
         [InlineKeyboardButton(text=preview_label,         callback_data=f"{pfx}_preview:{chat_id_str}:{msg_type}")],
+    ]
+    # ⏱ Задержка отправки — только у приветствия (у прощания нет окна заявки)
+    if f.get("delay_col"):
+        delay_val = int(ch.get(f["delay_col"]) or 0)
+        rows.append([InlineKeyboardButton(text=f"⏱ Задержка: {_delay_label(delay_val)}",
+                                          callback_data=f"{pfx}_delay:{chat_id_str}:{msg_type}")])
+    rows += [
         [InlineKeyboardButton(text=selfdel_label_txt,     callback_data=f"{pfx}_selfdel:{chat_id_str}:{msg_type}")],
         [InlineKeyboardButton(text="🗑 Удалить",          callback_data=f"{pfx}_del:{chat_id_str}:{msg_type}")],
         [InlineKeyboardButton(text="◀️ Назад",            callback_data=back_cb)],
@@ -1447,6 +1464,125 @@ async def on_msg_selfdel_input(message: Message, state: FSMContext):
             pass
     await db.execute(
         f"UPDATE bot_chats SET {f['timer_col']}=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
+        sec, owner_id, int(chat_id),
+    )
+    ch = await _get_chat_by_id(owner_id, int(chat_id))
+    await _show_msg_editor(message, str(chat_id), msg_type, dict(ch) if ch else {}, scope="ch", state=state)
+
+
+# ── Задержка отправки приветствия №1: чипсы + своё (только welcome) ──
+# Экран-калька с «Авто-удаление». Пишет welcome_delay_sec. Движок откладывает №1
+# через тот же механизм, что шаги цепочки (см. join_requests._send_welcome).
+
+@router.callback_query(F.data.startswith("ch_msg_delay:"))
+async def on_ch_msg_delay(callback: CallbackQuery, state: FSMContext, platform_user: dict | None):
+    """Экран задержки отправки приветствия: чипсы + «Своё значение»."""
+    if not platform_user:
+        return
+    _, chat_id_str, msg_type = callback.data.split(":")
+    f = _MSG_FIELDS[msg_type]
+    if not f.get("delay_col"):
+        await callback.answer()
+        return
+    owner_id = await resolve_chat_owner(platform_user["user_id"], int(chat_id_str))
+    ch = await _get_chat_by_id(owner_id, int(chat_id_str))
+    cur = int((ch.get(f["delay_col"]) or 0) if ch else 0)
+
+    await _drop_welcome_echo(callback, state, owner_id, chat_id_str, msg_type)
+    await state.set_state(None)
+
+    chip_rows, row = [], []
+    for sec, label in _MSG_DELAY_CHIPS:
+        mark = " ✅" if sec == cur else ""
+        row.append(InlineKeyboardButton(text=f"{label}{mark}", callback_data=f"ch_msg_delayset:{chat_id_str}:{msg_type}:{sec}"))
+        if len(row) == 3:
+            chip_rows.append(row); row = []
+    if row:
+        chip_rows.append(row)
+    chip_rows.append([InlineKeyboardButton(text="✏️ Своё значение", callback_data=f"ch_msg_delaycustom:{chat_id_str}:{msg_type}")])
+    chip_rows.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"welcome_set:{chat_id_str}")])
+
+    await navigate(
+        callback,
+        "⏱ <b>Задержка отправки приветствия</b>\n\n"
+        "Через сколько после заявки отправить приветствие №1.\n"
+        f"Сейчас: <b>{_delay_label(cur)}</b>\n\n"
+        "ⓘ На каналах без капчи или с inline-капчей приветствие уйдёт сразу "
+        "(правило Telegram про первое сообщение) — задержка работает с reply-капчей и после /start.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=chip_rows),
+    )
+
+
+@router.callback_query(F.data.startswith("ch_msg_delayset:"))
+async def on_ch_msg_delayset(callback: CallbackQuery, state: FSMContext, platform_user: dict | None):
+    if not platform_user:
+        return
+    _, chat_id_str, msg_type, sec_s = callback.data.split(":")
+    f = _MSG_FIELDS[msg_type]
+    if not f.get("delay_col"):
+        await callback.answer()
+        return
+    owner_id = await resolve_chat_owner(platform_user["user_id"], int(chat_id_str))
+    sec = max(0, int(sec_s))
+    await db.execute(
+        f"UPDATE bot_chats SET {f['delay_col']}=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
+        sec, owner_id, int(chat_id_str),
+    )
+    await callback.answer(f"⏱ Задержка: {_delay_label(sec)}")
+    ch = await _get_chat_by_id(owner_id, int(chat_id_str))
+    await _show_msg_editor(callback, chat_id_str, msg_type, dict(ch) if ch else {}, scope="ch", state=state)
+
+
+@router.callback_query(F.data.startswith("ch_msg_delaycustom:"))
+async def on_ch_msg_delaycustom(callback: CallbackQuery, state: FSMContext, platform_user: dict | None):
+    if not platform_user:
+        return
+    _, chat_id_str, msg_type = callback.data.split(":")
+    owner_id = await resolve_chat_owner(platform_user["user_id"], int(chat_id_str))
+    await state.set_state(SettingsFSM.waiting_for_msg_delay)
+    await state.update_data(chat_id=int(chat_id_str), owner_id=owner_id, msg_type=msg_type, scope="ch")
+    prompt = await navigate(
+        callback,
+        "✏️ <b>Своё значение задержки</b>\n\n"
+        "Пришлите число. По умолчанию — <b>секунды</b>.\n"
+        "Примеры: <code>15</code>, <code>90с</code>, <code>5м</code>, <code>1ч</code>. "
+        "<code>0</code> или <code>сразу</code> — без задержки.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="◀️ Отмена", callback_data=f"ch_msg_delay:{chat_id_str}:{msg_type}")],
+        ]),
+    )
+    if prompt:
+        await state.update_data(editor_prompt_mid=prompt.message_id)
+
+
+@router.message(SettingsFSM.waiting_for_msg_delay)
+async def on_msg_delay_input(message: Message, state: FSMContext):
+    data = await state.get_data()
+    owner_id = data.get("owner_id")
+    msg_type = data.get("msg_type", "welcome")
+    chat_id = data.get("chat_id")
+    if not owner_id or not chat_id:
+        await state.clear()
+        return
+    f = _MSG_FIELDS[msg_type]
+    if not f.get("delay_col"):
+        await state.clear()
+        return
+    sec = parse_delay_input(message.text or "")
+    if sec is None:
+        await message.answer(
+            "Не понял значение. Пришлите число, напр. <code>15</code>, <code>90с</code>, <code>5м</code>, или <code>0</code>.",
+            parse_mode="HTML",
+        )
+        return
+    prompt_mid = data.get("editor_prompt_mid")
+    if prompt_mid:
+        try:
+            await message.bot.delete_message(chat_id=message.chat.id, message_id=prompt_mid)
+        except Exception:
+            pass
+    await db.execute(
+        f"UPDATE bot_chats SET {f['delay_col']}=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
         sec, owner_id, int(chat_id),
     )
     ch = await _get_chat_by_id(owner_id, int(chat_id))

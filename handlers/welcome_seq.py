@@ -253,12 +253,13 @@ async def _show_manager(event, chat_id: int, owner_id: int):
         owner_id, chat_id,
     )
     base = await db.fetchrow(
-        "SELECT welcome_text, welcome_media, welcome_enabled FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint",
+        "SELECT welcome_text, welcome_media, welcome_enabled, welcome_delay_sec FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint",
         owner_id, chat_id,
     )
     has_base = bool(base and (base["welcome_text"] or base["welcome_media"]))
     # база «в игре», только если задана И тумблер не выключен (NULL/None = включено)
     base_on = has_base and (base["welcome_enabled"] is not False)
+    base_delay = int(base["welcome_delay_sec"] or 0) if base else 0
 
     # Шаги-сообщения нумеруются; авто-очистка (action='delete') — свойство цепочки
     msg_steps = [s for s in steps if (s["action"] or "message") != "delete"]
@@ -270,7 +271,7 @@ async def _show_manager(event, chat_id: int, owner_id: int):
     if not has_base:
         lines.append("<b>№1</b> · <i>сразу</i> · ⚠️ не задано")
     elif base_on:
-        lines.append("<b>№1</b> · <i>сразу</i> · 👋 приветствие")
+        lines.append(f"<b>№1</b> · <i>{_delay_offset(base_delay)}</i> · 👋 приветствие")
     else:
         lines.append("<b>№1</b> · <s>👋 приветствие</s> · выключено")
 
@@ -291,10 +292,11 @@ async def _show_manager(event, chat_id: int, owner_id: int):
                  else "приветствие выключено, других сообщений нет"
         lines += ["", f"⚠️ <b>Ничего не отправится</b> — {reason}."]
     else:
-        if base_on:
-            first = "№1 · сразу"
-        else:
-            first = f"№2 · {_delay_offset(int(msg_steps[0]['delay_sec'] or 0))}"
+        # Первым уйдёт сообщение с наименьшей задержкой (№1 тоже может быть отложено)
+        candidates = ([("№1", base_delay)] if base_on else [])
+        candidates += [(f"№{i}", int(st["delay_sec"] or 0)) for i, st in enumerate(msg_steps, start=2)]
+        _fl, _fd = min(candidates, key=lambda c: c[1])
+        first = f"{_fl} · {_delay_offset(_fd)}"
         summary = f"Первым уйдёт {first} · всего {sending_total}"
         if autoclear_sec > 0:
             summary += f" · очистка +{format_delay_short(autoclear_sec)}"

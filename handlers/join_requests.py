@@ -783,18 +783,39 @@ async def _welcome_step_task(bot: Bot, chat_id: int, user, chat_title: str, step
                 "parse_mode": "HTML",
                 "reply_markup": kb,
             }
-            try:
+            async def send_step(fid):
                 if media_type == "photo":
-                    m = await bot.send_photo(user.id, media_fid, show_caption_above_media=media_below, **kwargs)
+                    return await bot.send_photo(user.id, fid, show_caption_above_media=media_below, **kwargs)
                 elif media_type == "video":
-                    m = await bot.send_video(user.id, media_fid, show_caption_above_media=media_below, **kwargs)
+                    return await bot.send_video(user.id, fid, show_caption_above_media=media_below, **kwargs)
                 elif media_type == "animation":
-                    m = await bot.send_animation(user.id, media_fid, show_caption_above_media=media_below, **kwargs)
+                    return await bot.send_animation(user.id, fid, show_caption_above_media=media_below, **kwargs)
                 else:
-                    m = await bot.send_document(user.id, media_fid, **kwargs)
-            except Exception:
-                # Фоллбэк на текст, если медиа не отправилось
-                m = await bot.send_message(user.id, text or "—", parse_mode="HTML", reply_markup=kb)
+                    return await bot.send_document(user.id, fid, **kwargs)
+            try:
+                m = await send_step(media_fid)
+            except Exception as e:
+                # file_id медиа шага выдан ГЛАВНЫМ ботом и невалиден для дочернего →
+                # качаем байты главным ботом и переотправляем дочерним. Та же проверенная
+                # логика, что в _send_welcome для базового приветствия.
+                error_msg = str(e).lower()
+                if "wrong file identifier" in error_msg or "file reference" in error_msg or "invalid file" in error_msg:
+                    logger.info(f"[WSEQ REUPLOAD] Re-uploading step media {media_fid} for bot {bot.id}")
+                    try:
+                        from config import settings
+                        from aiogram import Bot as AioBot
+                        from aiogram.types import BufferedInputFile
+                        main_bot = AioBot(token=settings.bot_token)
+                        file_info = await main_bot.get_file(media_fid)
+                        file_bytes = await main_bot.download_file(file_info.file_path)
+                        await main_bot.session.close()
+                        input_file = BufferedInputFile(file_bytes.read(), filename=f"wstep.{media_type}")
+                        m = await send_step(input_file)
+                    except Exception as inner_e:
+                        logger.error(f"[WSEQ REUPLOAD ERR] {inner_e}")
+                        m = await bot.send_message(user.id, text or "—", parse_mode="HTML", reply_markup=kb)
+                else:
+                    m = await bot.send_message(user.id, text or "—", parse_mode="HTML", reply_markup=kb)
         else:
             m = await bot.send_message(user.id, text, parse_mode="HTML", reply_markup=kb)
 

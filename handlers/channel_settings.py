@@ -5377,6 +5377,7 @@ async def _show_bs_team(callback: CallbackQuery, bot: Bot,
         member_lines = "\n\n👥 <b>Участники команды:</b>\n" + "\n".join(lines)
 
     await callback.message.edit_text(
+        "🤝 <b>Команда</b>\n\n"
         "<blockquote>"
         "👥 Вы можете добавить админов для совместного управления ботом.\n\n"
         "🔄 Ссылки необходимо обновлять после использования."

@@ -380,7 +380,7 @@ async def on_ml_mass_scheduled(callback: CallbackQuery, platform_user: dict | No
         preview = (r["text"] or "")[:20]
         buttons.append([InlineKeyboardButton(
             text=f"📅 {dt} [{bot_name}] {preview}…",
-            callback_data=f"ml_view_draft:{r['id']}:",
+            callback_data=f"ml_view_draft:{r['id']}:mass",
         )])
 
     # Навигация по страницам (только если страниц > 1)
@@ -472,8 +472,9 @@ def _kb_draft(m: dict) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(
             text="◄ Назад",
             callback_data=(
-                "menu:mailing" if not m.get('child_bot_id') and m.get('campaign_id')
-                else (f"bs_mailing:{m['child_bot_id']}" if not m.get('chat_id') else f"ch_mailing:{m['chat_id']}")
+                _draft_back_cb.get(mid)
+                or ("menu:mailing" if not m.get('child_bot_id') and m.get('campaign_id')
+                    else (f"bs_mailing:{m['child_bot_id']}" if not m.get('chat_id') else f"ch_mailing:{m['chat_id']}"))
             ),
         )],
     ])
@@ -519,6 +520,11 @@ def _draft_settings_text(m: dict, tz_name: str = "UTC") -> str:
 
 # Кэш echo-сообщений черновика: mailing_id -> (echo_msg_id, tg_chat_id)
 _draft_echo_ids: dict[int, tuple[int, int]] = {}
+
+# Переопределение кнопки «Назад» draft-панели, когда она открыта из МАССОВОГО списка
+# запланированных: mailing_id -> callback_data. Нет записи → «Назад» вычисляется из полей
+# рассылки как раньше. In-memory (как эхо); переживает тогглеры, при рестарте — дефолт.
+_draft_back_cb: dict[int, str] = {}
 
 
 async def _delete_draft_echo(bot, mid: int) -> None:
@@ -1402,6 +1408,13 @@ async def on_ml_view_draft(callback: CallbackQuery, platform_user: dict | None):
         return
     parts = callback.data.split(":")
     mailing_id = int(parts[1])
+    # Контекст «Назад»: из массового списка запланированных → возвращаем в него;
+    # из канала (chat_id) → дефолт (ch_mailing); пустой (возврат из под-экрана) — не меняем.
+    _ctx = parts[2] if len(parts) > 2 else ""
+    if _ctx == "mass":
+        _draft_back_cb[mailing_id] = "ml_mass_scheduled"
+    elif _ctx.isdigit():
+        _draft_back_cb.pop(mailing_id, None)
     m = await db.fetchrow("SELECT * FROM mailings WHERE id=$1 AND owner_id=$2",
                           mailing_id, platform_user["user_id"])
     if not m:

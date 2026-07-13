@@ -533,7 +533,7 @@ async def on_link_detail(callback: CallbackQuery, platform_user: dict | None):
             f"👤 Подписалось: {joined}\n"
             f"🧑 Отписалось: {unsub}\n"
             f"🧍 Осталось: {remained}\n\n"
-            f"🎯 <u>Пол аудитории</u>\n"
+            f"🚹 <u>Пол аудитории</u>\n"
             f"М: {m_pct}% | Ж: {f_pct}%\n\n"
             f"🌍 <u>Страны</u>\n"
             f"{countries_text}\n\n"

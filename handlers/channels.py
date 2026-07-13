@@ -545,11 +545,6 @@ async def on_chat_frozen(callback: CallbackQuery):
         "Улучшите тариф, чтобы бот снова начал работать в этой группе/канале.",
         show_alert=True
     )
-    if msg:
-        await db.execute(
-            "UPDATE platform_users SET last_channels_menu_id=$1 WHERE user_id=$2",
-            msg.message_id, owner_id
-        )
 
 
 # ══════════════════════════════════════════════════════════════

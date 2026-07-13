@@ -113,7 +113,7 @@ async def _show_ch_messages(callback: CallbackQuery, chat_id: int, owner_id: int
 
     captcha_label = {"off": "🔒 Капча: выкл", "simple": "🔒 Капча: простая",
                      "random": "🔒 Капча: рандомная"}.get(captcha_type, "🔒 Капча")
-    typing_label  = f"🖨 Печать: {'вкл' if typing_on else 'выкл'}"
+    typing_label  = f"🤖 Печать: {'вкл' if typing_on else 'выкл'}"
     reaction_label = f"❤️ Реакции: {reaction if reaction else 'выкл'}"
     delete_label  = f"🗑 Удаление сообщений: {_delete_label(delete_min)}"
     welcome_on    = ch.get("welcome_enabled") is not False   # NULL/None → включено по умолчанию
@@ -129,7 +129,7 @@ async def _show_ch_messages(callback: CallbackQuery, chat_id: int, owner_id: int
         "<blockquote>"
         "⛓ <b>Цепочка сообщений</b> — бот сам отправляет новому подписчику несколько сообщений подряд, с паузами между ними, которые вы задаёте.\n\n"
         "​🗑 <b>Удаление сообщений</b> — удаляет сообщение автоответчика через выбранное время.\n\n"  # ​ = маркер: эта 🗑 остаётся обычной (не премиум)
-        "🖨 <b>Печать</b> — бот имитирует написание текста при отправке сообщений.\n\n"
+        "🤖 <b>Печать</b> — бот имитирует написание текста при отправке сообщений.\n\n"
         "❤️ <b>Реакции</b> — бот будет ставить реакции на сообщения пользователей."
         "</blockquote>\n\n"
         "Выберите действие 👇",
@@ -176,7 +176,7 @@ async def on_ch_toggle_typing(callback: CallbackQuery, platform_user: dict | Non
         "UPDATE bot_chats SET typing_action=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
         new_val, owner_id, chat_id,
     )
-    await callback.answer("🖨 Печать: " + ("вкл" if new_val else "выкл"))
+    await callback.answer("🤖 Печать: " + ("вкл" if new_val else "выкл"))
     await _show_ch_messages(callback, chat_id, owner_id)
 
 

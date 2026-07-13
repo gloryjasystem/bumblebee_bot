@@ -681,13 +681,6 @@ async def _send_welcome(bot: Bot, chat_id: int, user, settings_row: dict, contac
             if timer_val > 0:
                 for sent in sent_msgs:
                     asyncio.create_task(_delete_later(bot, user.id, sent.message_id, timer_val))
-            # Общий «срок жизни» (очередь, earliest-wins поверх своего) — если задан
-            _adm = int(settings_row.get("auto_delete_min") or 0)
-            if _adm > 0 and sent_msgs:
-                from services.deletions import enqueue_deletion
-                _cbid = settings_row.get("child_bot_id")
-                for sent in sent_msgs:
-                    await enqueue_deletion(_cbid, user.id, sent.message_id, _adm * 60)
         except Exception as e:
             # База должна была уйти, но упала (напр. ЛС закрыта) — снимаем пометку, чтобы
             # другой бот канала мог доставить. Цепочку тут НЕ планируем (тот же ЛС закрыт).
@@ -877,10 +870,6 @@ async def _welcome_step_task(bot: Bot, chat_id: int, user, chat_title: str, step
         # Авто-удаление самого шага (своё, in-memory)
         if self_del > 0:
             asyncio.create_task(_delete_later(bot, user.id, m.message_id, self_del))
-        # Общий «срок жизни» (очередь, earliest-wins) — если задан
-        if auto_delete_min and auto_delete_min > 0:
-            from services.deletions import enqueue_deletion
-            await enqueue_deletion(child_bot_id, user.id, m.message_id, auto_delete_min * 60)
     except Exception as e:
         logger.debug(f"[WSEQ] step send failed for user {user.id}: {e}")
 
@@ -978,13 +967,6 @@ async def _send_farewell(bot: Bot, chat_id: int, user, settings_row: dict) -> bo
         if farewell_timer > 0:
             for sent in fw_sent:
                 asyncio.create_task(_delete_later(bot, user.id, sent.message_id, farewell_timer))
-        # Общий «срок жизни» (очередь, earliest-wins) — если задан
-        _adm = int(settings_row.get("auto_delete_min") or 0)
-        if _adm > 0 and fw_sent:
-            from services.deletions import enqueue_deletion
-            _cbid = settings_row.get("child_bot_id")
-            for sent in fw_sent:
-                await enqueue_deletion(_cbid, user.id, sent.message_id, _adm * 60)
     except Exception as e:
         # Не помечаем доставленным — пусть другой бот канала попробует. Логируем ЯВНО.
         reason = _dm_blocked_reason(e)

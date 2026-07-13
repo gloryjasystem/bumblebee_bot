@@ -270,11 +270,6 @@ async def send_captcha(bot: Bot, event: ChatJoinRequest, settings_row: dict):
         asyncio.create_task(
             _captcha_timeout(bot, event, settings_row, msg.message_id)
         )
-        # Общий «срок жизни» капчи (страховка; своя логика/таймаут удалят раньше)
-        _adm_cap = int(settings_row.get("auto_delete_min") or 0)
-        if _adm_cap > 0:
-            from services.deletions import enqueue_deletion
-            await enqueue_deletion(settings_row.get("child_bot_id"), user.id, msg.message_id, _adm_cap * 60)
     except Exception as e:
         logger.warning(f"[CAPTCHA] Child bot failed to DM user={user.id}: {e} — trying main bot fallback")
         # Fallback: пробуем отправить через главного бота (работает даже если
@@ -296,10 +291,6 @@ async def send_captcha(bot: Bot, event: ChatJoinRequest, settings_row: dict):
                 asyncio.create_task(
                     _captcha_timeout(_fb_bot, event, settings_row, fb_msg.message_id)
                 )
-                _adm_cap = int(settings_row.get("auto_delete_min") or 0)
-                if _adm_cap > 0:
-                    from services.deletions import enqueue_deletion
-                    await enqueue_deletion(None, user.id, fb_msg.message_id, _adm_cap * 60)
                 logger.info(f"[CAPTCHA] Sent via main bot fallback to user={user.id} ✅")
                 return
         except Exception as fb_e:
@@ -423,11 +414,6 @@ async def send_captcha_group(
         asyncio.create_task(
             _captcha_timeout_group(bot, chat_id, user.id, timer_min, msg.message_id)
         )
-        # Общий «срок жизни» капчи (страховка; своя логика/таймаут удалят раньше)
-        _adm_cap = int(settings_row.get("auto_delete_min") or 0)
-        if _adm_cap > 0:
-            from services.deletions import enqueue_deletion
-            await enqueue_deletion(settings_row.get("child_bot_id"), user.id, msg.message_id, _adm_cap * 60)
         logger.info(f"[GROUP CAPTCHA] Sent to user={user.id} chat={chat_id} type={captcha_type}")
         return True
     except Exception as e:
@@ -839,13 +825,17 @@ async def _approve_user_from_message(
                     parse_mode="HTML",
                     reply_markup=ReplyKeyboardRemove(),
                 )
+                # «Я не робот» — служебный шум, убираем (ссылку оставляем).
+                await _cleanup_handshake(bot, user_id, message.message_id)
             else:
                 try:
-                    await bot.send_message(
+                    _gc_ok = await bot.send_message(
                         user_id,
                         "✅ Капча пройдена!",
                         reply_markup=ReplyKeyboardRemove(),
                     )
+                    # Служебный остаток капчи убираем вскоре после прохождения.
+                    await _cleanup_handshake(bot, user_id, message.message_id, _gc_ok.message_id)
                 except Exception:
                     pass
             logger.info(f"[GROUP CAPTCHA REPLY] Passed: user={user_id} chat={chat_id}")
@@ -859,14 +849,10 @@ async def _approve_user_from_message(
     # Флаг «капча пройдена» — и для авто-, и для ручного принятия (см. _approve_user).
     _passed_captcha_group.add(key)
 
-    # Вариант 2: капча-обмен под «срок жизни» — reply-ответ юзера («Я не робот») и
-    # подтверждения «Капча пройдена!». Удаление НЕ забирает право писать (привязка к
-    # факту контакта, а не к сообщению); чистим только служебку, живые сообщения не трогаем.
-    _cap_adm  = int(settings_row.get("auto_delete_min") or 0) if settings_row else 0
-    _cap_cbid = settings_row.get("child_bot_id") if settings_row else None
-    if _cap_adm > 0:
-        from services.deletions import enqueue_deletion
-        await enqueue_deletion(_cap_cbid, user_id, message.message_id, _cap_adm * 60)
+    # Служебный «остаток» капчи чистим ВСЕГДА, вскоре после прохождения (не зависит от кнопки
+    # «срок жизни»). Ответ юзера «Я не робот» — чистый шум; его удаление НЕ забирает право
+    # писать (привязка к факту контакта, а не к сообщению). Контент (приветствие) не трогаем.
+    await _cleanup_handshake(bot, user_id, message.message_id)
 
     if autoaccept:
         # Автопринятие включено — сразу принимаем
@@ -876,9 +862,8 @@ async def _approve_user_from_message(
                 "✅ Капча пройдена!",
                 reply_markup=ReplyKeyboardRemove(),
             )
-            if _cap_adm > 0 and _cap_ok:
-                from services.deletions import enqueue_deletion
-                await enqueue_deletion(_cap_cbid, user_id, _cap_ok.message_id, _cap_adm * 60)
+            if _cap_ok:
+                await _cleanup_handshake(bot, user_id, _cap_ok.message_id)
         except Exception:
             pass
         # Приветствие — ДО approve (пока открыто окно заявки; после approve окно
@@ -957,16 +942,16 @@ async def _approve_user_from_message(
                 except Exception as e:
                     logger.warning(f"[LINK TRACK REPLY manual] failed: {e}")
 
-        _cap_ok2 = await bot.send_message(
+        # Ручной режим: «…ожидайте подтверждения» — информативный статус, НЕ шум. Оставляем
+        # его до одобрения (тогда придёт приветствие). Чистим только служебный ответ «Я не робот»
+        # (уже поставлен на удаление выше).
+        await bot.send_message(
             user_id,
             "✅ Капча пройдена!\n\n"
             "⏳ Ваша заявка на вступление отправлена администратору.\n"
             "Ожидайте подтверждения.",
             reply_markup=ReplyKeyboardRemove(),
         )
-        if _cap_adm > 0 and _cap_ok2:
-            from services.deletions import enqueue_deletion
-            await enqueue_deletion(_cap_cbid, user_id, _cap_ok2.message_id, _cap_adm * 60)
 
         if delay > 0 and settings_row:
             from scheduler.child_bot_runner import _delayed_approve_join_request
@@ -1079,4 +1064,26 @@ async def _delete_temp_welcome(bot: Bot, chat_id: int, msg_id: int, delay: int):
         await bot.delete_message(chat_id, msg_id)
     except Exception:
         pass
+
+
+# Служебный «остаток» капчи («Я не робот» + «Капча пройдена!») живёт пару секунд после
+# прохождения и убирается — чтобы в личке остался только контент (приветствие). НЕ зависит
+# от кнопки «срок жизни»: чистим ВСЕГДА. Контентные/личные сообщения при этом не трогаем.
+# Безопасность: удаление входящего сообщения в личке НЕ забирает у бота право писать позже —
+# оно привязано к факту контакта (юзер написал боту), а не к конкретному сообщению.
+_HANDSHAKE_TTL_SEC = 5
+
+async def _cleanup_handshake(bot: Bot, chat_id: int, *msg_ids, delay: int = _HANDSHAKE_TTL_SEC):
+    """Удаляет служебные сообщения капчи через короткую задержку (in-memory).
+    Любой сбой (сообщение уже удалено / нет прав) тихо игнорируется — как no-op."""
+    async def _run():
+        await asyncio.sleep(delay)
+        for mid in msg_ids:
+            if not mid:
+                continue
+            try:
+                await bot.delete_message(chat_id, mid)
+            except Exception:
+                pass
+    asyncio.create_task(_run())
 

@@ -950,6 +950,7 @@ async def _show_autoreply(callback: CallbackQuery, chat_id: int, owner_id: int):
     buttons.append([InlineKeyboardButton(text="◄ Назад", callback_data=f"ch_messages:{chat_id}")])
 
     await callback.message.edit_text(
+        "📣 <b>Автоответчик</b>\n\n"
         "<blockquote>Вы можете установить <b>автоматические ответы</b> бота на "
         "любой текст или команду от пользователей.</blockquote>\n\n"
         "Выберите действие 👇",

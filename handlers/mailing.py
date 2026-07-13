@@ -530,6 +530,21 @@ async def _delete_draft_echo(bot, mid: int) -> None:
             pass
 
 
+# Активное echo-превью ОТКРЫТОЙ запланированной рассылки, по чату — чтобы удалить его
+# при «Назад» к списку или при открытии другой задачи (иначе эхо копятся сверху в чате).
+_active_sched_echo: dict[int, int] = {}   # tg_chat_id -> echo_msg_id
+
+
+async def _clear_sched_echo(bot, chat_id: int) -> None:
+    """Удаляет ранее показанное echo-превью запланированной рассылки в этом чате (если было)."""
+    eid = _active_sched_echo.pop(chat_id, None)
+    if eid:
+        try:
+            await bot.delete_message(chat_id, eid)
+        except Exception:
+            pass
+
+
 async def _show_draft(callback: CallbackQuery, m: dict):
     """Показывает Экран 4: эхо сообщения сверху + меню управления снизу.
 
@@ -751,6 +766,8 @@ async def on_mailing_bot_scheduled(callback: CallbackQuery, platform_user: dict 
         return
     child_bot_id = int(callback.data.split(":")[1])
     owner_id = platform_user["user_id"]
+    # Возврат к списку задач — убираем эхо-превью открытой задачи, если оно висит сверху
+    await _clear_sched_echo(callback.bot, callback.message.chat.id)
 
     rows = await db.fetch(
         """SELECT m.id, m.text, m.scheduled_at
@@ -864,6 +881,9 @@ async def on_ml_scheduled_view(callback: CallbackQuery, platform_user: dict | No
         await callback.answer("Рассылка не найдена", show_alert=True)
         return
     md = dict(m)
+    _tg_chat = callback.message.chat.id
+    # Убираем эхо от ранее открытой задачи (если было) — иначе эхо копятся сверху в чате
+    await _clear_sched_echo(callback.bot, _tg_chat)
 
     # Удаляем сообщение-список
     try:
@@ -895,7 +915,8 @@ async def on_ml_scheduled_view(callback: CallbackQuery, platform_user: dict | No
         )
 
     if sent_echo:
-        _draft_echo_ids[mid] = (sent_echo.message_id, callback.message.chat.id)
+        _draft_echo_ids[mid] = (sent_echo.message_id, _tg_chat)
+        _active_sched_echo[_tg_chat] = sent_echo.message_id
 
     # Меню управления
     _tz = await _get_bot_tz(child_bot_id)

@@ -128,6 +128,7 @@ async def _show_mass_mailing(callback: CallbackQuery, state: FSMContext,
 
     await navigate(
         callback,
+        "📦 <b>Массовая рассылка</b>\n\n"
         "<blockquote>"
         "📣 Здесь вы можете запустить или запланировать рассылку "
         "одновременно на несколько ботов."

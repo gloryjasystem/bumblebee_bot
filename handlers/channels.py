@@ -682,7 +682,7 @@ async def on_channel_new(callback: CallbackQuery, state: FSMContext, platform_us
     await state.clear()
     await navigate(
         callback,
-        "🐝 <b>Создай бота</b> — и получи полное управление "
+        "🤖 <b>Создай бота</b> — и получи полное управление "
         "каналом или группой в одном месте.\n\n"
         "Что сможет твой бот:\n\n"
         "<blockquote>"
@@ -700,7 +700,7 @@ async def on_channel_new(callback: CallbackQuery, state: FSMContext, platform_us
         "и настраивать обработку сообщений в боте\n\n"
         "👥 удобно управлять командой и многое другое"
         "</blockquote>\n\n"
-        "🐝 Всё в одном боте — без лишних сервисов.",
+        "Всё в одном боте — без лишних сервисов.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🚀 Создать бота", callback_data="bot_type:welcome")],
             [InlineKeyboardButton(text="🚫 Отменить",         callback_data="menu:channels")],

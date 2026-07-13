@@ -62,6 +62,16 @@ def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
         misfire_grace_time=120,
     )
 
+    # ── Каждые 60 сек: удаление сообщений по «сроку жизни» ────────
+    scheduler.add_job(
+        cleanup_scheduled_deletions,
+        "interval",
+        seconds=60,
+        id="cleanup_scheduled_deletions",
+        replace_existing=True,
+        misfire_grace_time=120,
+    )
+
     return scheduler
 
 
@@ -287,6 +297,81 @@ async def cleanup_pinned_mailing_msgs():
                 pass
 
     logger.info(f"[cleanup_pinned] done, processed {len(rows)} rows")
+
+
+# ── Удаление сообщений по «сроку жизни» (очередь scheduled_deletions) ──
+
+async def cleanup_scheduled_deletions():
+    """
+    Удаляет сообщения бота, у которых наступил срок из очереди scheduled_deletions
+    («срок жизни сообщения»). Запускается каждые 60 секунд.
+    Полностью повторяет паттерн cleanup_pinned_mailing_msgs: удаляем только те
+    (chat_id, message_id), что сами записали; провал удаления — тихий no-op.
+    """
+    import db.pool as db
+    from services.security import decrypt_token
+
+    rows = await db.fetch(
+        """
+        SELECT id, child_bot_id, chat_id, message_id
+        FROM scheduled_deletions
+        WHERE delete_at <= now()
+        ORDER BY delete_at
+        LIMIT 500
+        """
+    )
+
+    if not rows:
+        return
+
+    from collections import defaultdict
+    by_bot: dict[int | None, list] = defaultdict(list)
+    for row in rows:
+        by_bot[row["child_bot_id"]].append(row)
+
+    processed_ids = []
+    for child_bot_id, bot_rows in by_bot.items():
+        send_bot = _bot  # fallback — главный бот
+        child_bot_instance = None
+
+        if child_bot_id:
+            try:
+                bot_row = await db.fetchrow(
+                    "SELECT token_encrypted FROM child_bots WHERE id=$1",
+                    child_bot_id,
+                )
+                if bot_row and bot_row.get("token_encrypted"):
+                    from aiogram import Bot as AioBot
+                    child_bot_instance = AioBot(token=decrypt_token(bot_row["token_encrypted"]))
+                    send_bot = child_bot_instance
+            except Exception as e:
+                logger.warning(f"[sched_del] child bot {child_bot_id} init error: {e}")
+
+        for row in bot_rows:
+            try:
+                await send_bot.delete_message(
+                    chat_id=row["chat_id"],
+                    message_id=row["message_id"],
+                )
+            except Exception:
+                pass  # уже удалено / бот кикнут / нет прав — как сегодня
+            finally:
+                processed_ids.append(row["id"])
+
+        if child_bot_instance:
+            try:
+                await child_bot_instance.session.close()
+            except Exception:
+                pass
+
+    # Строки убираем всегда (успех или нет) — таблица не растёт, повтор безвреден
+    if processed_ids:
+        await db.execute(
+            "DELETE FROM scheduled_deletions WHERE id = ANY($1::bigint[])",
+            processed_ids,
+        )
+
+    logger.info(f"[sched_del] processed {len(processed_ids)} scheduled deletions")
 
 
 # ── Автозапуск запланированных рассылок ──────────────────────

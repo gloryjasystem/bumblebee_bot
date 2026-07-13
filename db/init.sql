@@ -361,6 +361,19 @@ CREATE INDEX IF NOT EXISTS idx_msm_pending
     ON mailing_sent_messages(pin_until, unpinned)
     WHERE pin_until IS NOT NULL AND unpinned = false;
 
+-- Очередь отложенного удаления сообщений бота («срок жизни»): воркер
+-- cleanup_scheduled_deletions удаляет строки, у которых наступил delete_at.
+-- Заполняется через services.deletions.enqueue_deletion в точках отправки.
+CREATE TABLE IF NOT EXISTS scheduled_deletions (
+    id            BIGSERIAL PRIMARY KEY,
+    child_bot_id  INTEGER REFERENCES child_bots(id) ON DELETE CASCADE,  -- NULL = главный бот
+    chat_id       BIGINT      NOT NULL,      -- куда слали (обычно user_id — личка)
+    message_id    INTEGER     NOT NULL,      -- message_id, возвращённый Telegram
+    delete_at     TIMESTAMPTZ NOT NULL,      -- момент, когда сообщение нужно удалить
+    created_at    TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_sched_del_due ON scheduled_deletions(delete_at);
+
 -- Реестр уникальных участников по каждой ссылке для дедупликации статистики
 CREATE TABLE IF NOT EXISTS invite_link_members (
     link_id         INTEGER   NOT NULL REFERENCES invite_links(id) ON DELETE CASCADE,

@@ -110,12 +110,12 @@ def kb_link_detail(link_id: int, chat_id: int, child_bot_id: int,
                    auto_accept: str = "base") -> InlineKeyboardMarkup:
     """Кнопки экрана деталей ссылки."""
     auto_label = {
-        "base":    "♓️ Автопринятие: базовое",
+        "base":    "✳️ Автопринятие: базовое",
         "on":      "⚡ Автопринятие: включено",
         "off":     "❌ Автопринятие: выключено",
-    }.get(auto_accept, "♓️ Автопринятие: базовое")
+    }.get(auto_accept, "✳️ Автопринятие: базовое")
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="↗️ Поделиться",
+        [InlineKeyboardButton(text="↗ Поделиться",
                               callback_data=f"link_share:{link_id}")],
         [InlineKeyboardButton(text=auto_label,
                               callback_data=f"link_auto_accept:{link_id}:{chat_id}:{child_bot_id}")],

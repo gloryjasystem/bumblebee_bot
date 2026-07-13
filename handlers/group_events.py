@@ -53,12 +53,11 @@ async def on_group_message(message: Message, bot: Bot):
             if kw and kw in text.lower():
                 try:
                     reply = await message.reply(rule["reply_text"])
-                    # Авто-удаление ответа бота
+                    # Общий «срок жизни» ответа автоответчика (очередь, надёжно; шлёт главный бот → None)
                     delete_min = int(settings.get("auto_delete_min") or 0)
                     if delete_min > 0:
-                        asyncio.create_task(
-                            _delete_later(bot, chat_id, reply.message_id, delete_min)
-                        )
+                        from services.deletions import enqueue_deletion
+                        await enqueue_deletion(None, chat_id, reply.message_id, delete_min * 60)
                 except Exception as e:
                     logger.debug(f"[AUTOREPLY] failed: {e}")
                 break  # только первое совпадение

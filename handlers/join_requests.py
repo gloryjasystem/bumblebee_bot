@@ -677,10 +677,17 @@ async def _send_welcome(bot: Bot, chat_id: int, user, settings_row: dict, contac
                 m = await bot.send_message(user.id, text, parse_mode="HTML", reply_markup=user_kb)
                 sent_msgs.append(m)
 
-            # Авто-удаление базы
+            # Авто-удаление базы (своё, in-memory)
             if timer_val > 0:
                 for sent in sent_msgs:
                     asyncio.create_task(_delete_later(bot, user.id, sent.message_id, timer_val))
+            # Общий «срок жизни» (очередь, earliest-wins поверх своего) — если задан
+            _adm = int(settings_row.get("auto_delete_min") or 0)
+            if _adm > 0 and sent_msgs:
+                from services.deletions import enqueue_deletion
+                _cbid = settings_row.get("child_bot_id")
+                for sent in sent_msgs:
+                    await enqueue_deletion(_cbid, user.id, sent.message_id, _adm * 60)
         except Exception as e:
             # База должна была уйти, но упала (напр. ЛС закрыта) — снимаем пометку, чтобы
             # другой бот канала мог доставить. Цепочку тут НЕ планируем (тот же ЛС закрыт).
@@ -718,6 +725,8 @@ async def _send_welcome(bot: Bot, chat_id: int, user, settings_row: dict, contac
             settings_row.get("chat_title", ""),
             base_ids,
             extra_steps=[delayed_base_step] if delayed_base_step else None,
+            child_bot_id=settings_row.get("child_bot_id"),
+            auto_delete_min=int(settings_row.get("auto_delete_min") or 0),
         )
     except Exception as _se:
         logger.debug(f"[WSEQ] schedule failed for user {user.id}: {_se}")
@@ -750,7 +759,8 @@ def _fill_msg_vars(text: str, user, chat_title: str) -> str:
 
 
 async def _schedule_welcome_sequence(bot: Bot, chat_id: int, user, owner_id, chat_title: str,
-                                     base_msg_ids: list[int], extra_steps: list | None = None) -> int:
+                                     base_msg_ids: list[int], extra_steps: list | None = None,
+                                     child_bot_id=None, auto_delete_min: int = 0) -> int:
     """Планирует отправку дополнительных шагов цепочки приветствий.
     extra_steps — синтетические шаги (напр. отложенное базовое приветствие №1); идут первыми.
     Возвращает число сообщений-шагов (без шага-очистки) — чтобы вызывающий понял,
@@ -776,7 +786,8 @@ async def _schedule_welcome_sequence(bot: Bot, chat_id: int, user, owner_id, cha
     max_delay = 0
     for step in all_steps:
         max_delay = max(max_delay, int(step.get("delay_sec") or 0) + int(step.get("self_delete_sec") or 0))
-        asyncio.create_task(_welcome_step_task(bot, chat_id, user, chat_title, step))
+        asyncio.create_task(_welcome_step_task(bot, chat_id, user, chat_title, step,
+                                               child_bot_id=child_bot_id, auto_delete_min=auto_delete_min))
     # Гарантированная очистка ключа из памяти после завершения цепочки
     asyncio.create_task(_prune_seq_key(key, max_delay + 300))
     return sum(1 for s in all_steps if (s.get("action") or "message") != "delete")
@@ -787,7 +798,8 @@ async def _prune_seq_key(key: tuple[int, int], after_sec: int):
     _welcome_seq_msgs.pop(key, None)
 
 
-async def _welcome_step_task(bot: Bot, chat_id: int, user, chat_title: str, step: dict):
+async def _welcome_step_task(bot: Bot, chat_id: int, user, chat_title: str, step: dict,
+                             child_bot_id=None, auto_delete_min: int = 0):
     """Выполняет один шаг цепочки: сообщение или удаление ранее отправленных."""
     delay = int(step.get("delay_sec") or 0)
     if delay > 0:
@@ -862,9 +874,13 @@ async def _welcome_step_task(bot: Bot, chat_id: int, user, chat_title: str, step
 
         # Трекинг для будущего шага-удаления
         _welcome_seq_msgs.setdefault(key, []).append(m.message_id)
-        # Авто-удаление самого шага
+        # Авто-удаление самого шага (своё, in-memory)
         if self_del > 0:
             asyncio.create_task(_delete_later(bot, user.id, m.message_id, self_del))
+        # Общий «срок жизни» (очередь, earliest-wins) — если задан
+        if auto_delete_min and auto_delete_min > 0:
+            from services.deletions import enqueue_deletion
+            await enqueue_deletion(child_bot_id, user.id, m.message_id, auto_delete_min * 60)
     except Exception as e:
         logger.debug(f"[WSEQ] step send failed for user {user.id}: {e}")
 
@@ -962,6 +978,13 @@ async def _send_farewell(bot: Bot, chat_id: int, user, settings_row: dict) -> bo
         if farewell_timer > 0:
             for sent in fw_sent:
                 asyncio.create_task(_delete_later(bot, user.id, sent.message_id, farewell_timer))
+        # Общий «срок жизни» (очередь, earliest-wins) — если задан
+        _adm = int(settings_row.get("auto_delete_min") or 0)
+        if _adm > 0 and fw_sent:
+            from services.deletions import enqueue_deletion
+            _cbid = settings_row.get("child_bot_id")
+            for sent in fw_sent:
+                await enqueue_deletion(_cbid, user.id, sent.message_id, _adm * 60)
     except Exception as e:
         # Не помечаем доставленным — пусть другой бот канала попробует. Логируем ЯВНО.
         reason = _dm_blocked_reason(e)

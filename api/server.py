@@ -144,6 +144,34 @@ def create_app(bot: Bot, dp: Dispatcher) -> FastAPI:
                     logger.info("Migration captcha_button_style: already reply-default, skipping")
             except Exception as _e:
                 logger.warning(f"Migration captcha reply-default failed: {_e}")
+
+            # ── ОДНОРАЗОВО: сброс auto_delete_min → 0 при вводе «срока жизни» ──────
+            # Кнопка «Удаление сообщений» меняет смысл (было: только автоответы →
+            # станет: все сообщения бота через заданное время). Чтобы никто не получил
+            # неожиданных удалений — обнуляем настройку у всех ОДИН РАЗ; владельцы
+            # включают заново осознанно. Маркер «уже сделано» — ключ в platform_settings.
+            try:
+                _adm_flag = await conn.fetchval(
+                    "SELECT value FROM platform_settings WHERE key='auto_delete_reset_v2'"
+                )
+                if not _adm_flag:
+                    async with conn.transaction():
+                        _n = await conn.fetchval(
+                            "SELECT count(*) FROM bot_chats WHERE COALESCE(auto_delete_min,0) <> 0"
+                        )
+                        await conn.execute(
+                            "UPDATE bot_chats SET auto_delete_min=0 WHERE COALESCE(auto_delete_min,0) <> 0"
+                        )
+                        await conn.execute(
+                            "INSERT INTO platform_settings(key, value) VALUES ('auto_delete_reset_v2','done') "
+                            "ON CONFLICT (key) DO NOTHING"
+                        )
+                    logger.info(f"Migration auto_delete_reset_v2: reset {_n} rows to 0 (one-time) ✅")
+                else:
+                    logger.info("Migration auto_delete_reset_v2: already done, skipping")
+            except Exception as _e:
+                logger.warning(f"Migration auto_delete_reset_v2 failed: {_e}")
+
             # Таблица автоответчика
             await conn.execute("""
                 CREATE TABLE IF NOT EXISTS autoreplies (

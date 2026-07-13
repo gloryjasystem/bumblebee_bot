@@ -266,10 +266,15 @@ async def send_captcha(bot: Bot, event: ChatJoinRequest, settings_row: dict):
                 )
                 
         _captcha_msg_ids[key] = msg.message_id
-        
+
         asyncio.create_task(
             _captcha_timeout(bot, event, settings_row, msg.message_id)
         )
+        # Общий «срок жизни» капчи (страховка; своя логика/таймаут удалят раньше)
+        _adm_cap = int(settings_row.get("auto_delete_min") or 0)
+        if _adm_cap > 0:
+            from services.deletions import enqueue_deletion
+            await enqueue_deletion(settings_row.get("child_bot_id"), user.id, msg.message_id, _adm_cap * 60)
     except Exception as e:
         logger.warning(f"[CAPTCHA] Child bot failed to DM user={user.id}: {e} — trying main bot fallback")
         # Fallback: пробуем отправить через главного бота (работает даже если
@@ -291,6 +296,10 @@ async def send_captcha(bot: Bot, event: ChatJoinRequest, settings_row: dict):
                 asyncio.create_task(
                     _captcha_timeout(_fb_bot, event, settings_row, fb_msg.message_id)
                 )
+                _adm_cap = int(settings_row.get("auto_delete_min") or 0)
+                if _adm_cap > 0:
+                    from services.deletions import enqueue_deletion
+                    await enqueue_deletion(None, user.id, fb_msg.message_id, _adm_cap * 60)
                 logger.info(f"[CAPTCHA] Sent via main bot fallback to user={user.id} ✅")
                 return
         except Exception as fb_e:
@@ -414,6 +423,11 @@ async def send_captcha_group(
         asyncio.create_task(
             _captcha_timeout_group(bot, chat_id, user.id, timer_min, msg.message_id)
         )
+        # Общий «срок жизни» капчи (страховка; своя логика/таймаут удалят раньше)
+        _adm_cap = int(settings_row.get("auto_delete_min") or 0)
+        if _adm_cap > 0:
+            from services.deletions import enqueue_deletion
+            await enqueue_deletion(settings_row.get("child_bot_id"), user.id, msg.message_id, _adm_cap * 60)
         logger.info(f"[GROUP CAPTCHA] Sent to user={user.id} chat={chat_id} type={captcha_type}")
         return True
     except Exception as e:

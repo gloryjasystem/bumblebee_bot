@@ -1235,13 +1235,11 @@ async def _handle_message(bot: Bot, child_bot_id: int, owner_id: int, message):
                         r_btns  = rule["reply_buttons"]
                         await _typing_before_send()
                         reply = await _send_ar(r_text, r_mid, r_mtype, r_mtop, r_prev, r_btns)
-                        # Авто-удаление ответа бота в личке
+                        # Общий «срок жизни» ответа автоответчика (очередь, переживает рестарт)
                         delete_min = int(rule.get("auto_delete_min") or 0)
                         if delete_min > 0 and reply and hasattr(reply, 'message_id'):
-                            import asyncio as _asyncio
-                            _asyncio.create_task(
-                                _delete_later(bot, user.id, reply.message_id, delete_min)
-                            )
+                            from services.deletions import enqueue_deletion
+                            await enqueue_deletion(child_bot_id, user.id, reply.message_id, delete_min * 60)
                         logger.info(f"[AUTOREPLY PM] keyword='{kw}' matched via bot {child_bot_id}")
                     except Exception as e:
                         logger.warning(f"[AUTOREPLY PM] failed via bot {child_bot_id}: {e}")
@@ -1272,10 +1270,8 @@ async def _handle_message(bot: Bot, child_bot_id: int, owner_id: int, message):
                             reply = await _send_ar(general_text, general_media, g_mtype, g_mtop, g_prev, g_btns)
                             delete_min = int(general_chat.get("auto_delete_min") or 0)
                             if delete_min > 0 and reply and hasattr(reply, 'message_id'):
-                                import asyncio as _asyncio
-                                _asyncio.create_task(
-                                    _delete_later(bot, user.id, reply.message_id, delete_min)
-                                )
+                                from services.deletions import enqueue_deletion
+                                await enqueue_deletion(child_bot_id, user.id, reply.message_id, delete_min * 60)
                             logger.info(f"[AUTOREPLY PM] general reply sent via bot {child_bot_id}")
                         except Exception as e:
                             logger.warning(f"[AUTOREPLY PM] general reply failed via bot {child_bot_id}: {e}")

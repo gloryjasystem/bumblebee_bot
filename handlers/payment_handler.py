@@ -90,7 +90,7 @@ TARIFF_INFO = {
 }
 
 TARIFF_LABELS = {
-    "free":     "🆓 Free",
+    "free":     "🆓",
     "start":    "🌱 Старт",
     "pro":      "⭐ Про",
     "business": "💼 Бизнес",

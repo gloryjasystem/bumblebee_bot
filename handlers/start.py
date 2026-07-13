@@ -223,12 +223,12 @@ async def on_main_menu(callback: CallbackQuery, platform_user: dict | None):
     await callback.answer()
     tariff = platform_user["tariff"] if platform_user else "free"
     tariff_labels = {
-        "free":     "🆓 Free",
+        "free":     "🆓",
         "start":    "🌱 Старт",
         "pro":      "⭐ Про",
         "business": "💼 Бизнес",
     }
-    label = tariff_labels.get(tariff, "🆓 Free")
+    label = tariff_labels.get(tariff, "🆓")
     until = ""
     if platform_user and platform_user.get("tariff_until"):
         until = f" · до {platform_user['tariff_until'].strftime('%d.%m.%Y')}"
@@ -245,12 +245,12 @@ async def on_main_menu(callback: CallbackQuery, platform_user: dict | None):
 async def _show_main_menu(message: Message, platform_user: dict | None, extra: str = ""):
     tariff = platform_user["tariff"] if platform_user else "free"
     tariff_labels = {
-        "free":     "🆓 Free",
+        "free":     "🆓",
         "start":    "🌱 Старт",
         "pro":      "⭐ Про",
         "business": "💼 Бизнес",
     }
-    label = tariff_labels.get(tariff, "🆓 Free")
+    label = tariff_labels.get(tariff, "🆓")
     until = ""
     if platform_user and platform_user.get("tariff_until"):
         until = f" · до {platform_user['tariff_until'].strftime('%d.%m.%Y')}"
@@ -274,10 +274,10 @@ async def on_settings_menu(callback: CallbackQuery, platform_user: dict | None):
 
     tariff = platform_user["tariff"]
     tariff_labels = {
-        "free": "🆓 Free", "start": "🌱 Старт",
+        "free": "🆓", "start": "🌱 Старт",
         "pro": "⭐ Про", "business": "💼 Бизнес",
     }
-    label = tariff_labels.get(tariff, "🆓 Free")
+    label = tariff_labels.get(tariff, "🆓")
     
     # Расчет периода действия тарифа
     until_str = ""

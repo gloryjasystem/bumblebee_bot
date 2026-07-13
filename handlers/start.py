@@ -229,9 +229,12 @@ async def on_main_menu(callback: CallbackQuery, platform_user: dict | None):
         "business": "💼 Бизнес",
     }
     label = tariff_labels.get(tariff, "🆓")
-    until = ""
-    if platform_user and platform_user.get("tariff_until"):
+    if tariff == "free":
+        until = " · Бессрочно"          # free бессрочный — даты нет
+    elif platform_user and platform_user.get("tariff_until"):
         until = f" · до {platform_user['tariff_until'].strftime('%d.%m.%Y')}"
+    else:
+        until = ""
 
     await navigate(
         callback,
@@ -251,9 +254,12 @@ async def _show_main_menu(message: Message, platform_user: dict | None, extra: s
         "business": "💼 Бизнес",
     }
     label = tariff_labels.get(tariff, "🆓")
-    until = ""
-    if platform_user and platform_user.get("tariff_until"):
+    if tariff == "free":
+        until = " · Бессрочно"          # free бессрочный — даты нет
+    elif platform_user and platform_user.get("tariff_until"):
         until = f" · до {platform_user['tariff_until'].strftime('%d.%m.%Y')}"
+    else:
+        until = ""
 
     sent = await message.answer(
         f"⚡ <b>Bumblebee Bot</b> — ваш главный помощник для работы с трафиком.\n\n"

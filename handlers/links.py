@@ -529,7 +529,7 @@ async def on_link_detail(callback: CallbackQuery, platform_user: dict | None):
             f"📊 Статистика по {safe_name}\n\n"
             f"🔗 Ссылка: <code>{safe_link}</code>\n"
             f"🔒 Вид: {link_type}\n\n"
-            f"👤 <u>Подписчики</u>\n"
+            f"🫂 <u>Подписчики</u>\n"
             f"👤 Подписалось: {joined}\n"
             f"🧑 Отписалось: {unsub}\n"
             f"🧍 Осталось: {remained}\n\n"

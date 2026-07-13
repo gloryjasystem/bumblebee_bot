@@ -537,10 +537,10 @@ async def on_link_detail(callback: CallbackQuery, platform_user: dict | None):
             f"♂ М: {m_pct}% | ♀ Ж: {f_pct}%\n\n"
             f"🌐 <u>Страны</u>\n"
             f"{countries_text}\n\n"
-            f"📋 <u>Аккаунты</u>\n"
+            f"🪪 <u>Аккаунты</u>\n"
             f"🌙 RTL-символы в имени: {rtl} | {rtl_pct}%\n"
-            f"🈶 Иероглифы в имени: {hieroglyph} | {hier_pct}%\n"
-            f"⭐ Telegram Premium: {premium} | {prem_pct}%\n"
+            f"☯ Иероглифы в имени: {hieroglyph} | {hier_pct}%\n"
+            f"🌟 Telegram Premium: {premium} | {prem_pct}%\n"
             f"{cost_text}"
             f"📅 Дата создания: {created_at}"
         )

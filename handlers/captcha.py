@@ -859,14 +859,26 @@ async def _approve_user_from_message(
     # Флаг «капча пройдена» — и для авто-, и для ручного принятия (см. _approve_user).
     _passed_captcha_group.add(key)
 
+    # Вариант 2: капча-обмен под «срок жизни» — reply-ответ юзера («Я не робот») и
+    # подтверждения «Капча пройдена!». Удаление НЕ забирает право писать (привязка к
+    # факту контакта, а не к сообщению); чистим только служебку, живые сообщения не трогаем.
+    _cap_adm  = int(settings_row.get("auto_delete_min") or 0) if settings_row else 0
+    _cap_cbid = settings_row.get("child_bot_id") if settings_row else None
+    if _cap_adm > 0:
+        from services.deletions import enqueue_deletion
+        await enqueue_deletion(_cap_cbid, user_id, message.message_id, _cap_adm * 60)
+
     if autoaccept:
         # Автопринятие включено — сразу принимаем
         try:
-            await bot.send_message(
+            _cap_ok = await bot.send_message(
                 user_id,
                 "✅ Капча пройдена!",
                 reply_markup=ReplyKeyboardRemove(),
             )
+            if _cap_adm > 0 and _cap_ok:
+                from services.deletions import enqueue_deletion
+                await enqueue_deletion(_cap_cbid, user_id, _cap_ok.message_id, _cap_adm * 60)
         except Exception:
             pass
         # Приветствие — ДО approve (пока открыто окно заявки; после approve окно
@@ -945,14 +957,17 @@ async def _approve_user_from_message(
                 except Exception as e:
                     logger.warning(f"[LINK TRACK REPLY manual] failed: {e}")
 
-        await bot.send_message(
+        _cap_ok2 = await bot.send_message(
             user_id,
             "✅ Капча пройдена!\n\n"
             "⏳ Ваша заявка на вступление отправлена администратору.\n"
             "Ожидайте подтверждения.",
             reply_markup=ReplyKeyboardRemove(),
         )
-        
+        if _cap_adm > 0 and _cap_ok2:
+            from services.deletions import enqueue_deletion
+            await enqueue_deletion(_cap_cbid, user_id, _cap_ok2.message_id, _cap_adm * 60)
+
         if delay > 0 and settings_row:
             from scheduler.child_bot_runner import _delayed_approve_join_request
             asyncio.create_task(

@@ -2845,7 +2845,10 @@ async def _show_bs_protection(callback: CallbackQuery, platform_user: dict, chil
     hiero    = "🔵" if ch.get("filter_hieroglyph")  else "⚪"
     no_photo = "🔵" if ch.get("filter_no_photo")    else "⚪"
     await callback.message.edit_text(
-        "🛡 <b>Защита</b> (все площадки)\n\nФильтры применяются ко всем каналам бота.",
+        "🛡 <b>Защита</b> (все площадки)\n\n"
+        "🔵 — Отклонять заявки\n"
+        "⚪️ — Принимать заявки\n\n"
+        "Выберите действие 👇",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🚫 Лимиты",                    callback_data=f"bs_limits:{child_bot_id}")],

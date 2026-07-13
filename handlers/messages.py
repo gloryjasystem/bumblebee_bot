@@ -128,7 +128,7 @@ async def _show_ch_messages(callback: CallbackQuery, chat_id: int, owner_id: int
         "💬 <b>Сообщения</b>\n\n"
         "<blockquote>"
         "⛓ <b>Цепочка сообщений</b> — бот сам отправляет новому подписчику несколько сообщений подряд, с паузами между ними, которые вы задаёте.\n\n"
-        "​🗑 <b>Удаление сообщений</b> — удаляет автоответы бота через выбранное время.\n\n"  # ​ = маркер: эта 🗑 остаётся обычной (не премиум)
+        "​🗑 <b>Удаление сообщений</b> — удаляет сообщение автоответчика через выбранное время.\n\n"  # ​ = маркер: эта 🗑 остаётся обычной (не премиум)
         "🖨 <b>Печать</b> — бот имитирует написание текста при отправке сообщений.\n\n"
         "❤️ <b>Реакции</b> — бот будет ставить реакции на сообщения пользователей."
         "</blockquote>\n\n"
@@ -351,7 +351,7 @@ async def _show_captcha(callback: CallbackQuery, chat_id: int, owner_id: int):
                     text=f"🎛 Кнопки: {btn_label}",
                     callback_data=f"ch_cap_toggle:{chat_id}:btn_type",
                 ),
-                InlineKeyboardButton(text=f"⏱ Таймер: {timer} мин", callback_data=f"ch_cap_toggle:{chat_id}:timer"),
+                InlineKeyboardButton(text=f"⏱ На прохождение: {timer} мин", callback_data=f"ch_cap_toggle:{chat_id}:timer"),
             ],
             [InlineKeyboardButton(
                 text=f"{greet_icon} Приветствовать: {'вкл' if greet_on else 'выкл'}",
@@ -455,7 +455,7 @@ async def on_ch_cap_toggle(callback: CallbackQuery, platform_user: dict | None):
         new_val = _TIMER_CYCLE[(idx + 1) % len(_TIMER_CYCLE)]
         await db.execute("UPDATE bot_chats SET captcha_timer_min=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
                          new_val, owner_id, chat_id)
-        await callback.answer(f"Таймер: {new_val} мин")
+        await callback.answer(f"На прохождение: {new_val} мин")
 
     elif setting == "accept_now":
         new_val = not bool(ch.get("captcha_accept_now", False))

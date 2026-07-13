@@ -310,7 +310,7 @@ async def on_link_limit(event, state: FSMContext, bot: Bot):
         f"☑ Лимит: <b>{limit if limit else 'без лимита'}</b>\n\n"
         "💡 Укажите бюджет этой ссылки (сколько потрачено на рекламу):\n\n"
         "👩‍🎨 Пример: 1000₽ или 50$\n\n"
-        "✚ Бот посчитает стоимость подписчика автоматически."
+        "🧮 Бот посчитает стоимость подписчика автоматически."
     )
     budget_kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="→ Пропустить", callback_data="link_skip_budget")]

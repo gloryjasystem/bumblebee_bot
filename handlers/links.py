@@ -527,7 +527,7 @@ async def on_link_detail(callback: CallbackQuery, platform_user: dict | None):
 
         text = (
             f"🍑 Статистика по {safe_name}\n\n"
-            f"🔗 Ссылка: <code>{safe_link}</code>\n"
+            f"🔗 Ссылка: <code>{safe_link}</code>\n\n"
             f"🔒 Вид: {link_type}\n\n"
             f"🫂 <u>Подписчики</u>\n"
             f"👤 Подписалось: {joined}\n"
@@ -542,7 +542,7 @@ async def on_link_detail(callback: CallbackQuery, platform_user: dict | None):
             f"☯ Иероглифы в имени: {hieroglyph} | {hier_pct}%\n"
             f"🌟 Telegram Premium: {premium} | {prem_pct}%\n"
             f"{cost_text}"
-            f"📅 Дата создания: {created_at}"
+            f"\n📅 Дата создания: {created_at}"
         )
 
         await navigate(

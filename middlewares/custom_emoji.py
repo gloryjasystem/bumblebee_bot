@@ -30,6 +30,25 @@ _EMOJI_RE = re.compile("|".join(re.escape(t) for t in _TOKENS)) if _TOKENS else 
 _TAG_RE = re.compile(r"(<[^>]+>)")
 _SKIP_TAGS = ("code", "pre", "tg-emoji")  # внутри них кастом не вставляем
 
+# Служебные панели (админ / владелец / менеджеры) — премиум НЕ применяем: их видят
+# только свои, не клиенты. Опознаём по префиксу callback_data кнопок (эти префиксы
+# используются исключительно в админ-хендлерах: global_admin / audience / api).
+_ADMIN_CB_PREFIXES = ("ga_", "aa_", "rapidapi_")
+
+
+def _is_admin_screen(method) -> bool:
+    """True, если у исходящего сообщения есть inline-кнопка служебной панели."""
+    markup = getattr(method, "reply_markup", None)
+    rows = getattr(markup, "inline_keyboard", None)
+    if not rows:
+        return False
+    for row in rows:
+        for btn in row:
+            cb = getattr(btn, "callback_data", None)
+            if cb and cb.startswith(_ADMIN_CB_PREFIXES):
+                return True
+    return False
+
 
 def _parse_uids(raw: str) -> set[int]:
     out: set[int] = set()
@@ -101,6 +120,10 @@ class CustomEmojiMiddleware(BaseRequestMiddleware):
             if SKIP_IF_CONTAINS and isinstance(value, str) and any(
                 sig in value for sig in SKIP_IF_CONTAINS
             ):
+                return await make_request(bot, method)
+
+            # 1c) служебные панели (админ/владелец/менеджеры) — без премиум-иконок
+            if _is_admin_screen(method):
                 return await make_request(bot, method)
 
             # 2) тест-гейт по получателю (иконки только для указанных чатов)

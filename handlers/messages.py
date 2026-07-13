@@ -325,13 +325,13 @@ async def _show_captcha(callback: CallbackQuery, chat_id: int, owner_id: int):
 
         if ctype == "simple":
             buttons.append([
-                InlineKeyboardButton(text="✏️ Текст капчи",  callback_data=f"ch_captcha_text:{chat_id}"),
-                InlineKeyboardButton(text="✏️ Текст кнопок", callback_data=f"ch_captcha_btns:{chat_id}"),
+                InlineKeyboardButton(text="✎ Текст капчи",  callback_data=f"ch_captcha_text:{chat_id}"),
+                InlineKeyboardButton(text="✎ Текст кнопок", callback_data=f"ch_captcha_btns:{chat_id}"),
             ])
         else:
             # Для рандомной капчи скрываем кнопку настройки текста кнопок
             buttons.append([
-                InlineKeyboardButton(text="✏️ Текст капчи", callback_data=f"ch_captcha_text:{chat_id}"),
+                InlineKeyboardButton(text="✎ Текст капчи", callback_data=f"ch_captcha_text:{chat_id}"),
             ])
 
         buttons.extend([
@@ -1071,7 +1071,7 @@ async def _show_global_mgmt(message, chat_id: int, owner_id: int):
     preview_label = "нет" if not preview_on else "есть"
 
     mgmt_kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✏️ Редактировать",    callback_data=f"ch_ar_edit_global:{chat_id}")],
+        [InlineKeyboardButton(text="✎ Редактировать",    callback_data=f"ch_ar_edit_global:{chat_id}")],
         [InlineKeyboardButton(text="🎛 Кнопки",           callback_data=f"ch_ar_btns_global:{chat_id}")],
         [InlineKeyboardButton(text=f"🎬 Медиа: {media_icon}", callback_data=f"ch_ar_media_global:{chat_id}")],
         [InlineKeyboardButton(text=f"👁 Превью: {preview_label}", callback_data=f"ch_ar_preview_global:{chat_id}")],
@@ -1228,7 +1228,7 @@ async def on_ch_ar_edit_global(
     await state.set_state(MessagesFSM.waiting_for_general_reply_text)
     await state.update_data(chat_id=chat_id, owner_id=owner_id, prompt_mid=callback.message.message_id)
     await callback.message.edit_text(
-        "✏️ <b>Редактирование общего ответа</b>\n\n"
+        "✎ <b>Редактирование общего ответа</b>\n\n"
         "<blockquote>⟲ Пришлите сообщение, которое будет "
         "использоваться для автоматического ответа.</blockquote>\n\n"
         "<b>Переменные:</b>\n"
@@ -1676,7 +1676,7 @@ async def _show_keyword_mgmt(message, chat_id: int, owner_id: int, ar_id: int):
     preview_on   = bool(row["reply_preview"]) if row else False
     preview_label = "есть" if preview_on else "нет"
     mgmt_kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✏️ Редактировать",       callback_data=f"ch_ar_kw_edit:{chat_id}:{ar_id}")],
+        [InlineKeyboardButton(text="✎ Редактировать",       callback_data=f"ch_ar_kw_edit:{chat_id}:{ar_id}")],
         [InlineKeyboardButton(text="🎛 Кнопки",              callback_data=f"ch_ar_kw_btns:{chat_id}:{ar_id}")],
         [InlineKeyboardButton(text=f"🎬 Медиа: {media_icon}", callback_data=f"ch_ar_kw_media:{chat_id}:{ar_id}")],
         [InlineKeyboardButton(text=f"👁 Превью: {preview_label}", callback_data=f"ch_ar_kw_preview:{chat_id}:{ar_id}")],
@@ -1756,7 +1756,7 @@ async def on_ch_ar_kw_edit(
     await state.set_state(MessagesFSM.waiting_for_autoreply_text)
     await state.update_data(chat_id=chat_id, owner_id=owner_id, keyword=keyword, ar_id=ar_id, prompt_mid=callback.message.message_id)
     await callback.message.edit_text(
-        f"✏️ <b>Редактирование ответа</b>\n\nТриггер: <code>{keyword}</code>\n\n"
+        f"✎ <b>Редактирование ответа</b>\n\nТриггер: <code>{keyword}</code>\n\n"
         "<blockquote>⟲ Пришлите новое сообщение для автоматического ответа.</blockquote>\n\n"
         "<b>Переменные:</b>\n"
         "├ Имя: <code>{name}</code>\n"
@@ -1844,7 +1844,7 @@ async def on_ch_ar_kw_media(
     preview_on    = bool(row["reply_preview"]) if row else False
     preview_label = "есть" if preview_on else "нет"
     new_kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✏️ Редактировать",       callback_data=f"ch_ar_kw_edit:{chat_id}:{ar_id}")],
+        [InlineKeyboardButton(text="✎ Редактировать",       callback_data=f"ch_ar_kw_edit:{chat_id}:{ar_id}")],
         [InlineKeyboardButton(text="🎛 Кнопки",              callback_data=f"ch_ar_kw_btns:{chat_id}:{ar_id}")],
         [InlineKeyboardButton(text=f"🎬 Медиа: {media_icon}", callback_data=f"ch_ar_kw_media:{chat_id}:{ar_id}")],
         [InlineKeyboardButton(text=f"👁 Превью: {preview_label}", callback_data=f"ch_ar_kw_preview:{chat_id}:{ar_id}")],

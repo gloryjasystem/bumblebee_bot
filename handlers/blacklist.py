@@ -32,7 +32,7 @@ class BlacklistFSM(StatesGroup):
 def kb_blacklist_main(chat_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="➕ Загрузить базу (TXT/CSV)", callback_data=f"bl_upload:{chat_id}")],
-        [InlineKeyboardButton(text="✏️ Добавить вручную",          callback_data=f"bl_manual:{chat_id}")],
+        [InlineKeyboardButton(text="✎ Добавить вручную",          callback_data=f"bl_manual:{chat_id}")],
         [InlineKeyboardButton(text="🔎 Найти в базе",               callback_data=f"bl_search:{chat_id}")],
         [InlineKeyboardButton(text="📤 Экспорт базы",               callback_data=f"bl_export:{chat_id}")],
         [InlineKeyboardButton(text="🗑 Очистить базу",              callback_data=f"bl_clear_confirm:{chat_id}")],
@@ -74,7 +74,7 @@ async def on_bl_manual(callback: CallbackQuery, state: FSMContext, platform_user
     await state.set_state(BlacklistFSM.waiting_for_manual_input)
     await navigate(
         callback,
-        "✏️ <b>Добавить в базу</b>\n\n"
+        "✎ <b>Добавить в базу</b>\n\n"
         "Отправьте @username или Telegram ID.\n"
         "Можно несколько через пробел или с новой строки.\n\n"
         "Пример:\n<code>@baduser1 @baduser2\n123456789</code>",

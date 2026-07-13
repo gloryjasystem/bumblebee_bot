@@ -243,15 +243,15 @@ async def _save_delay(scope: str, target_id: int, owner_id: int, sec: int):
 
 # Пресеты задержки (подпись кнопки, значение в секундах). Секунды нужны заказчику
 # для интервалов < 1 мин. Раскладка: [🚫 Выкл][30 сек][1 мин] / [5 мин][15 мин][30 мин]
-# / [1 час][3 часа][✏️ Своё] / [◀️ Назад].
+# / [1 час][3 часа][✎ Своё] / [◀️ Назад].
 _DELAY_PRESET_ROWS = [
     [("🚫 Выкл", 0), ("30 сек", 30), ("1 мин", 60)],
     [("5 мин", 300), ("15 мин", 900), ("30 мин", 1800)],
-    [("1 час", 3600), ("3 часа", 10800)],  # к этой строке добавляется «✏️ Своё»
+    [("1 час", 3600), ("3 часа", 10800)],  # к этой строке добавляется «✎ Своё»
 ]
 
 _DELAY_PROMPT_TEXT = (
-    "✏️ <b>Своё значение</b>\n\n"
+    "✎ <b>Своё значение</b>\n\n"
     "Пришлите значение сообщением:\n"
     "• <code>45</code> — секунды\n"
     "• <code>5м</code> — минуты · <code>1ч</code> — час · <code>2д</code> — дня\n"
@@ -266,7 +266,7 @@ _DELAY_ERROR_TEXT = (
 
 
 def _delay_menu_kb(scope: str, target_id: int) -> InlineKeyboardMarkup:
-    """Сетка пресетов + «✏️ Своё» (ввод с единицей) + «◀️ Назад»."""
+    """Сетка пресетов + «✎ Своё» (ввод с единицей) + «◀️ Назад»."""
     setp = f"req_delay_set:{scope}:{target_id}:"
     back_cb = f"bs_requests:{target_id}" if scope == "bs" else f"ch_requests:{target_id}"
     rows = [
@@ -274,7 +274,7 @@ def _delay_menu_kb(scope: str, target_id: int) -> InlineKeyboardMarkup:
         for row in _DELAY_PRESET_ROWS
     ]
     rows[-1].append(InlineKeyboardButton(
-        text="✏️ Своё", callback_data=f"req_delay_custom:{scope}:{target_id}"))
+        text="✎ Своё", callback_data=f"req_delay_custom:{scope}:{target_id}"))
     rows.append([InlineKeyboardButton(text="◄ Назад", callback_data=back_cb)])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -345,7 +345,7 @@ async def on_req_delay_set(callback: CallbackQuery, state: FSMContext, platform_
 
 @router.callback_query(F.data.startswith("req_delay_custom:"))
 async def on_req_delay_custom(callback: CallbackQuery, state: FSMContext, platform_user: dict | None):
-    """«✏️ Своё» — то же окно превращается в приглашение к вводу (без нового пузыря)."""
+    """«✎ Своё» — то же окно превращается в приглашение к вводу (без нового пузыря)."""
     if not platform_user:
         return
     _, scope, target_id_s = callback.data.split(":")
@@ -656,7 +656,7 @@ def kb_captcha_settings(ch: dict) -> InlineKeyboardMarkup:
     delete_label = "✅ Авто-удаление сообщ" if ch.get("captcha_delete") else "☐ Авто-удаление сообщ"
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=f"⏱ Таймер: {ch.get('captcha_timer',60)} сек", callback_data=f"captcha_timer:{chat_id}")],
-        [InlineKeyboardButton(text="✏️ Изменить текст капчи", callback_data=f"captcha_text:{chat_id}")],
+        [InlineKeyboardButton(text="✎ Изменить текст капчи", callback_data=f"captcha_text:{chat_id}")],
         [InlineKeyboardButton(text=delete_label,              callback_data=f"captcha_delete:{chat_id}")],
         [InlineKeyboardButton(text="◄ Назад",                callback_data=f"ch_requests:{chat_id}")],
     ])
@@ -752,7 +752,7 @@ async def on_captcha_text(callback: CallbackQuery, state: FSMContext, platform_u
     await state.update_data(chat_id=int(chat_id), owner_id=platform_user["user_id"])
     await navigate(
         callback,
-        "✏️ <b>Текст капчи</b>\n\n"
+        "✎ <b>Текст капчи</b>\n\n"
         "Отправьте новый текст. Можно использовать переменные:\n"
         "• <code>{name}</code> — имя пользователя\n"
         "• <code>{channel}</code> — название канала",
@@ -893,7 +893,7 @@ def _build_editor_kb(chat_id_str: str, msg_type: str, ch: dict, scope: str = "ch
             callback_data=f"{pfx}_toggle:{chat_id_str}:{msg_type}",
         )])
     rows += [
-        [InlineKeyboardButton(text="✏️ Редактировать",  callback_data=f"{pfx}_edit:{chat_id_str}:{msg_type}")],
+        [InlineKeyboardButton(text="✎ Редактировать",  callback_data=f"{pfx}_edit:{chat_id_str}:{msg_type}")],
         [InlineKeyboardButton(text="🎛 Кнопки",          callback_data=f"{pfx}_btns:{chat_id_str}:{msg_type}")],
         [InlineKeyboardButton(text=media_label,           callback_data=f"{pfx}_media:{chat_id_str}:{msg_type}")],
         [InlineKeyboardButton(text=preview_label,         callback_data=f"{pfx}_preview:{chat_id_str}:{msg_type}")],
@@ -1386,7 +1386,7 @@ async def on_ch_msg_selfdel(callback: CallbackQuery, state: FSMContext, platform
             chip_rows.append(row); row = []
     if row:
         chip_rows.append(row)
-    chip_rows.append([InlineKeyboardButton(text="✏️ Своё значение", callback_data=f"ch_msg_selfdelcustom:{chat_id_str}:{msg_type}")])
+    chip_rows.append([InlineKeyboardButton(text="✎ Своё значение", callback_data=f"ch_msg_selfdelcustom:{chat_id_str}:{msg_type}")])
     back_cb = f"welcome_set:{chat_id_str}" if msg_type == "welcome" else f"farewell_set:{chat_id_str}"
     chip_rows.append([InlineKeyboardButton(text="◄ Назад", callback_data=back_cb)])
 
@@ -1426,7 +1426,7 @@ async def on_ch_msg_selfdelcustom(callback: CallbackQuery, state: FSMContext, pl
     await state.update_data(chat_id=int(chat_id_str), owner_id=owner_id, msg_type=msg_type, scope="ch")
     prompt = await navigate(
         callback,
-        "✏️ <b>Своё время авто-удаления</b>\n\n"
+        "✎ <b>Своё время авто-удаления</b>\n\n"
         "Пришлите число. По умолчанию — <b>секунды</b>.\n"
         "Примеры: <code>45</code>, <code>10м</code>, <code>1ч</code>. "
         "<code>0</code> или <code>нет</code> — выключить.",
@@ -1499,7 +1499,7 @@ async def on_ch_msg_delay(callback: CallbackQuery, state: FSMContext, platform_u
             chip_rows.append(row); row = []
     if row:
         chip_rows.append(row)
-    chip_rows.append([InlineKeyboardButton(text="✏️ Своё значение", callback_data=f"ch_msg_delaycustom:{chat_id_str}:{msg_type}")])
+    chip_rows.append([InlineKeyboardButton(text="✎ Своё значение", callback_data=f"ch_msg_delaycustom:{chat_id_str}:{msg_type}")])
     chip_rows.append([InlineKeyboardButton(text="◄ Назад", callback_data=f"welcome_set:{chat_id_str}")])
 
     await navigate(
@@ -1543,7 +1543,7 @@ async def on_ch_msg_delaycustom(callback: CallbackQuery, state: FSMContext, plat
     await state.update_data(chat_id=int(chat_id_str), owner_id=owner_id, msg_type=msg_type, scope="ch")
     prompt = await navigate(
         callback,
-        "✏️ <b>Своё значение задержки</b>\n\n"
+        "✎ <b>Своё значение задержки</b>\n\n"
         "Пришлите число. По умолчанию — <b>секунды</b>.\n"
         "Примеры: <code>15</code>, <code>90с</code>, <code>5м</code>, <code>1ч</code>. "
         "<code>0</code> или <code>сразу</code> — без задержки.",
@@ -1739,7 +1739,7 @@ async def on_msg_buttons_input(message: Message, state: FSMContext):
             "⚠️ <b>Не удалось распознать кнопки.</b>\n\n"
             "Формат: <code>Текст — https://ссылка</code>\n"
             "Несколько в ряд — через <code>|</code>\n\n"
-            "✏️ Введите кнопки в поле ниже ещё раз."
+            "✎ Введите кнопки в поле ниже ещё раз."
         )
         cancel_cb = data.get("editor_cancel_cb") or (
             f"welcome_set:{data.get('chat_id')}" if msg_type == "welcome" else f"farewell_set:{data.get('chat_id')}"
@@ -5163,7 +5163,7 @@ async def on_bs_timezone(callback: CallbackQuery, platform_user: dict | None,
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(
-                text="✏️ Изменить часовой пояс",
+                text="✎ Изменить часовой пояс",
                 callback_data=f"bs_tz_change:{child_bot_id}",
             )],
             [InlineKeyboardButton(

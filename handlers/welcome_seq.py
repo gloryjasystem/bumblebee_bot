@@ -2,7 +2,7 @@
 handlers/welcome_seq.py — Цепочка сообщений (приветствие №1 + доп. шаги с интервалами).
 
 Модель (Подход 1): базовое приветствие (welcome_*) — это шаг №1 (сразу), он же
-редактируется прямо из менеджера цепочки кнопкой «✏️ №1 Приветствие» (тот же
+редактируется прямо из менеджера цепочки кнопкой «✎ №1 Приветствие» (тот же
 редактор приветствия). Здесь настраиваются ДОПОЛНИТЕЛЬНЫЕ шаги, каждый со своей
 задержкой от вступления:
   • шаг-«сообщение» — текст/медиа/кнопки + опц. авто-удаление;
@@ -306,14 +306,14 @@ async def _show_manager(event, chat_id: int, owner_id: int):
 
     # ── Клавиатура ──
     kb_rows = [[InlineKeyboardButton(
-        text=("✏️ №1 Приветствие" if has_base else "✏️ Задать приветствие №1"),
+        text=("✎ №1 Приветствие" if has_base else "✎ Задать приветствие №1"),
         callback_data=f"welcome_set_chain:{chat_id}",
     )]]
     for i, st in enumerate(msg_steps, start=2):
         delay = int(st["delay_sec"] or 0)
         icon, _prev = _step_preview(st, 18)
         kb_rows.append([InlineKeyboardButton(
-            text=f"✏️ №{i} · {_delay_offset(delay)} · {icon}",
+            text=f"✎ №{i} · {_delay_offset(delay)} · {icon}",
             callback_data=f"wstep:{st['id']}",
         )])
 
@@ -536,7 +536,7 @@ async def _show_step_editor(event, step_id: int, owner_id: int, state: FSMContex
         preview_label = f"👁 Превью: {'да' if st['preview'] else 'нет'}"
         body = f"⚙️ <b>Шаг{num_label}</b>"
         kb_rows = [
-            [InlineKeyboardButton(text="✏️ Редактировать", callback_data=f"wstep_edit:{step_id}")],
+            [InlineKeyboardButton(text="✎ Редактировать", callback_data=f"wstep_edit:{step_id}")],
             [InlineKeyboardButton(text="🎛 Кнопки", callback_data=f"wstep_btns:{step_id}")],
             [InlineKeyboardButton(text=media_label, callback_data=f"wstep_media:{step_id}")],
             [InlineKeyboardButton(text=preview_label, callback_data=f"wstep_preview:{step_id}")],
@@ -607,7 +607,7 @@ async def on_wstep_delay(callback: CallbackQuery, state: FSMContext, platform_us
             chip_rows.append(row); row = []
     if row:
         chip_rows.append(row)
-    chip_rows.append([InlineKeyboardButton(text="✏️ Своё значение", callback_data=f"wstep_delaycustom:{step_id}")])
+    chip_rows.append([InlineKeyboardButton(text="✎ Своё значение", callback_data=f"wstep_delaycustom:{step_id}")])
     chip_rows.append([InlineKeyboardButton(text="◄ Назад", callback_data=f"wstep:{step_id}")])
 
     await navigate(
@@ -651,7 +651,7 @@ async def on_wstep_delaycustom(callback: CallbackQuery, state: FSMContext, platf
     await state.update_data(wstep_id=step_id)
     prompt = await navigate(
         callback,
-        "✏️ <b>Своё значение задержки</b>\n\n"
+        "✎ <b>Своё значение задержки</b>\n\n"
         "Пришлите число. По умолчанию — <b>секунды</b>.\n"
         "Примеры: <code>15</code>, <code>90с</code>, <code>5м</code>, <code>1ч</code>.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
@@ -700,7 +700,7 @@ async def on_wstep_edit(callback: CallbackQuery, state: FSMContext, platform_use
     await state.update_data(wstep_id=step_id)
     prompt = await navigate(
         callback,
-        "✏️ <b>Редактировать шаг</b>\n\n"
+        "✎ <b>Редактировать шаг</b>\n\n"
         "Пришлите сообщение целиком — текст и, при необходимости, медиа. "
         "Оно полностью заменит предыдущее.\n\n"
         "Переменные: <code>{name}</code>, <code>{allname}</code>, <code>{username}</code>, <code>{chat}</code>, <code>{day}</code>.\n"
@@ -735,7 +735,7 @@ async def on_wstep_content_input(message: Message, state: FSMContext, platform_u
 
 
 # ── Медиа шага: позиция ⬆️/⬇️ (как в приветствии) ────────────────
-# Само медиа добавляется/меняется через «✏️ Редактировать» (комбинированный ввод).
+# Само медиа добавляется/меняется через «✎ Редактировать» (комбинированный ввод).
 # Эта кнопка, как у приветствия (on_ch_msg_media), только двигает подпись над/под медиа.
 
 @router.callback_query(F.data.startswith("wstep_media:"))
@@ -846,7 +846,7 @@ async def on_wstep_btns_input(message: Message, state: FSMContext, platform_user
                 "⚠️ <b>Не удалось распознать кнопки.</b>\n\n"
                 "Формат: <code>Текст — https://ссылка</code>\n"
                 "Несколько в ряд — через <code>|</code>\n\n"
-                "✏️ Введите кнопки в поле ниже ещё раз."
+                "✎ Введите кнопки в поле ниже ещё раз."
             )
             err_kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="◄ Отмена", callback_data=f"wstep:{step_id}")]])
             if prompt_mid:
@@ -894,7 +894,7 @@ async def on_wstep_selfdel(callback: CallbackQuery, state: FSMContext, platform_
             chip_rows.append(row); row = []
     if row:
         chip_rows.append(row)
-    chip_rows.append([InlineKeyboardButton(text="✏️ Своё значение", callback_data=f"wstep_selfdelcustom:{step_id}")])
+    chip_rows.append([InlineKeyboardButton(text="✎ Своё значение", callback_data=f"wstep_selfdelcustom:{step_id}")])
     chip_rows.append([InlineKeyboardButton(text="◄ Назад", callback_data=f"wstep:{step_id}")])
 
     await navigate(
@@ -936,7 +936,7 @@ async def on_wstep_selfdelcustom(callback: CallbackQuery, state: FSMContext, pla
     await state.update_data(wstep_id=step_id)
     prompt = await navigate(
         callback,
-        "✏️ <b>Своё время авто-удаления</b>\n\n"
+        "✎ <b>Своё время авто-удаления</b>\n\n"
         "Пришлите число. По умолчанию — <b>секунды</b>.\n"
         "Примеры: <code>45</code>, <code>10м</code>, <code>1ч</code>. "
         "<code>0</code> или <code>нет</code> — выключить.",
@@ -1074,7 +1074,7 @@ async def on_wseq_autoclear(callback: CallbackQuery, state: FSMContext, platform
             chip_rows.append(row); row = []
     if row:
         chip_rows.append(row)
-    chip_rows.append([InlineKeyboardButton(text="✏️ Своё значение", callback_data=f"wseq_autoclearcustom:{chat_id}")])
+    chip_rows.append([InlineKeyboardButton(text="✎ Своё значение", callback_data=f"wseq_autoclearcustom:{chat_id}")])
     chip_rows.append([InlineKeyboardButton(text="◄ Назад", callback_data=f"wseq:{chat_id}")])
 
     await navigate(
@@ -1116,7 +1116,7 @@ async def on_wseq_autoclearcustom(callback: CallbackQuery, state: FSMContext, pl
     await state.update_data(wseq_ac_chat_id=chat_id)
     await navigate(
         callback,
-        "✏️ <b>Своё время авто-очистки</b>\n\n"
+        "✎ <b>Своё время авто-очистки</b>\n\n"
         "Пришлите число. По умолчанию — <b>секунды</b>.\n"
         "Примеры: <code>90</code>, <code>5м</code>, <code>1ч</code>. <code>0</code> или <code>выкл</code> — выключить.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[

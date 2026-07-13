@@ -50,7 +50,7 @@ def _kb_api_settings(owner_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(text="🔑 Изменить Key",  callback_data="api_set_key"),
-            InlineKeyboardButton(text="✏️ Изменить Host", callback_data="api_set_host"),
+            InlineKeyboardButton(text="✎ Изменить Host", callback_data="api_set_host"),
         ],
         [InlineKeyboardButton(text="◄ Назад", callback_data=f"ga_bl:{owner_id}")],
     ])
@@ -177,7 +177,7 @@ async def on_api_set_host(call: CallbackQuery, state: FSMContext, platform_user:
 
     await state.set_state(AdminApiSettingsFSM.waiting_host)
     prompt_msg = await call.message.edit_text(
-        "✏️ <b>Введите новый API Host</b>\n\n"
+        "✎ <b>Введите новый API Host</b>\n\n"
         "Пример: <code>telegram124.p.rapidapi.com</code>\n\n"
         "<i>Вводите только хост, без https:// и слешей.</i>",
         parse_mode="HTML",

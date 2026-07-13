@@ -441,7 +441,7 @@ def _kb_draft(m: dict) -> InlineKeyboardMarkup:
     delete_icon  = f"🗑 Удалить: {'24ч' if m.get('delete_after_send', False) else 'нет'}"
 
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✏️ URL-кнопки", callback_data=f"ml_url_buttons:{mid}")],
+        [InlineKeyboardButton(text="✎ URL-кнопки", callback_data=f"ml_url_buttons:{mid}")],
         [
             InlineKeyboardButton(text=media_icon,   callback_data=f"ml_toggle:{mid}:media"),
             InlineKeyboardButton(text=preview_icon, callback_data=f"ml_toggle:{mid}:preview"),
@@ -805,7 +805,7 @@ def _kb_scheduled(m: dict, child_bot_id: int) -> InlineKeyboardMarkup:
     delete_icon  = f"🗑 Удалить: {'24\u0447' if m.get('delete_after_send') else '\u043d\u0435\u0442'}"
 
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✏️ Редактировать",       callback_data=f"ml_sched_edit:{mid}:{child_bot_id}")],
+        [InlineKeyboardButton(text="✎ Редактировать",       callback_data=f"ml_sched_edit:{mid}:{child_bot_id}")],
         [InlineKeyboardButton(text="🔗 URL-кнопки",              callback_data=f"ml_url_buttons:{mid}")],
         [
             InlineKeyboardButton(text=media_icon,   callback_data=f"ml_stoggle:{mid}:{child_bot_id}:media"),
@@ -1065,7 +1065,7 @@ async def on_ml_sched_edit(callback: CallbackQuery, state: FSMContext,
         pass
 
     await callback.message.answer(
-        "✏️ <b>Редактирование рассылки</b>\n\n"
+        "✎ <b>Редактирование рассылки</b>\n\n"
         "Отправьте новое сообщение для рассылки.\n"
         "Можно прикрепить медиа.",
         parse_mode="HTML",

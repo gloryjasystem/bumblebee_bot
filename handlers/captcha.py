@@ -141,7 +141,7 @@ async def send_captcha(bot: Bot, event: ChatJoinRequest, settings_row: dict):
             settings_row.get("captcha_text")
             or f"👋 Привет, <b>{{name}}</b>!\n\n"
                f"Прежде чем войти в <b>{{chat}}</b>,\n"
-               f"докажи что ты не робот — нажми кнопку ниже ✅\n\n"
+               f"докажи что ты не робот — нажми кнопку ниже ☑\n\n"
                f"⏱ У тебя {timer_min} мин."
         )
         caption = _fill_captcha_text(raw_caption, user, event.chat.title)
@@ -155,7 +155,7 @@ async def send_captcha(bot: Bot, event: ChatJoinRequest, settings_row: dict):
         if custom_btns:
             btn_texts = [label for label, _ in custom_btns]
         else:
-            btn_texts = ["✅ Я не робот"]
+            btn_texts = ["☑ Я не робот"]
         kb = ReplyKeyboardMarkup(
             keyboard=[[KeyboardButton(text=t)] for t in btn_texts],
             resize_keyboard=(btn_style_placement == "compact"),
@@ -345,7 +345,7 @@ async def send_captcha_group(
             settings_row.get("captcha_text")
             or f"👋 Привет, <b>{{name}}</b>!\n\n"
                f"Прежде чем войти в <b>{{chat}}</b>,\n"
-               f"докажи что ты не робот — нажми кнопку ниже ✅\n\n"
+               f"докажи что ты не робот — нажми кнопку ниже ☑\n\n"
                f"⏱ У тебя {timer_min} мин."
         )
         text = _fill_captcha_text(raw_text, user, chat_title)
@@ -357,7 +357,7 @@ async def send_captcha_group(
         if custom_btns:
             btn_texts = [label for label, _ in custom_btns]
         else:
-            btn_texts = ["✅ Я не робот"]
+            btn_texts = ["☑ Я не робот"]
         kb = ReplyKeyboardMarkup(
             keyboard=[[KeyboardButton(text=t)] for t in btn_texts],
             resize_keyboard=(btn_style_placement == "compact"),
@@ -596,7 +596,7 @@ async def _approve_user(
                 if one_time_link:
                     await _edit_captcha_message(
                         callback.message,
-                        "✅ Капча пройдена! Нажмите кнопку ниже, чтобы войти:"
+                        "☑ Капча пройдена! Нажмите кнопку ниже, чтобы войти:"
                     )
                     await bot.send_message(
                         user_id,
@@ -606,11 +606,11 @@ async def _approve_user(
                 else:
                     await _edit_captcha_message(
                         callback.message,
-                        "✅ Капча пройдена!\n\n"
+                        "☑ Капча пройдена!\n\n"
                         "⏳ Ваша заявка на вступление отправлена администратору.\n"
                         "Ожидайте подтверждения."
                     )
-                await callback.answer("✅ Отлично!")
+                await callback.answer("☑ Отлично!")
                 logger.info(f"[GROUP CAPTCHA] Passed: user={user_id} chat={chat_id} — welcome deferred to on-join event")
             else:
                 if owner_id:
@@ -694,15 +694,15 @@ async def _approve_user(
                     await callback.message.delete()
                 except Exception:
                     pass
-                await callback.answer("✅ Отлично!")
+                await callback.answer("☑ Отлично!")
                 return
 
             await _edit_captcha_message(
                 callback.message,
-                "✅ Капча пройдена!\n\n"
+                "☑ Капча пройдена!\n\n"
                 "🎉 Вы приняты в канал!"
             )
-            await callback.answer("✅ Отлично!")
+            await callback.answer("☑ Отлично!")
 
         else:
             from utils.timing import effective_delay_sec
@@ -758,16 +758,16 @@ async def _approve_user(
                     await callback.message.delete()
                 except Exception:
                     pass
-                await callback.answer("✅ Капча пройдена!")
+                await callback.answer("☑ Капча пройдена!")
             else:
                 await _edit_captcha_message(
                     callback.message,
-                    "✅ Капча пройдена!\n\n"
+                    "☑ Капча пройдена!\n\n"
                     "⏳ Ваша заявка на вступление отправлена администратору.\n"
                     "Ожидайте подтверждения."
                 )
                 _captcha_msg_ids[key] = callback.message.message_id
-                await callback.answer("✅ Готово!")
+                await callback.answer("☑ Готово!")
 
     else:
         try:
@@ -831,7 +831,7 @@ async def _approve_user_from_message(
                 try:
                     _gc_ok = await bot.send_message(
                         user_id,
-                        "✅ Капча пройдена!",
+                        "☑ Капча пройдена!",
                         reply_markup=ReplyKeyboardRemove(),
                     )
                     # Служебный остаток капчи убираем вскоре после прохождения.
@@ -859,7 +859,7 @@ async def _approve_user_from_message(
         try:
             _cap_ok = await bot.send_message(
                 user_id,
-                "✅ Капча пройдена!",
+                "☑ Капча пройдена!",
                 reply_markup=ReplyKeyboardRemove(),
             )
             if _cap_ok:
@@ -947,7 +947,7 @@ async def _approve_user_from_message(
         # (уже поставлен на удаление выше).
         await bot.send_message(
             user_id,
-            "✅ Капча пройдена!\n\n"
+            "☑ Капча пройдена!\n\n"
             "⏳ Ваша заявка на вступление отправлена администратору.\n"
             "Ожидайте подтверждения.",
             reply_markup=ReplyKeyboardRemove(),

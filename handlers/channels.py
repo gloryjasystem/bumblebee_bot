@@ -377,7 +377,7 @@ async def on_bot_settings(callback: CallbackQuery, state: FSMContext, platform_u
     )
 
     # Кнопки с учетом тарифа (Paywall)
-    btn_mailing    = InlineKeyboardButton(text=("🔒 Рассылка" if is_free else "📨 Рассылка"), callback_data="paywall:mailing" if is_free else f"bs_mailing:{child_bot_id}")
+    btn_mailing    = InlineKeyboardButton(text=("🔒 Рассылка" if is_free else "📤 Рассылка"), callback_data="paywall:mailing" if is_free else f"bs_mailing:{child_bot_id}")
     btn_links      = InlineKeyboardButton(text=("🔒 Ссылки" if is_free else "🔗 Ссылки"),   callback_data="paywall:links" if is_free else f"bs_links:{child_bot_id}")
     btn_protection = InlineKeyboardButton(text=("🔒 Защита" if is_free else "🛡 Защита"),   callback_data="paywall:protection" if is_free else f"bs_protection:{child_bot_id}")
 
@@ -397,7 +397,7 @@ async def on_bot_settings(callback: CallbackQuery, state: FSMContext, platform_u
                 btn_protection,
                 InlineKeyboardButton(text="⚙️ Управление",     callback_data=f"bs_settings:{child_bot_id}"),
             ],
-            [InlineKeyboardButton(text="📣 Обратная связь",    callback_data=f"bs_feedback:{child_bot_id}")],
+            [InlineKeyboardButton(text="🔂 Обратная связь",    callback_data=f"bs_feedback:{child_bot_id}")],
         ]
         # Опасную кнопку показываем только если администратор НЕ в режиме управления
         if not is_god_mode:
@@ -417,7 +417,7 @@ async def on_bot_settings(callback: CallbackQuery, state: FSMContext, platform_u
                 InlineKeyboardButton(text="📍 Площадки",       callback_data=f"bot_chats_list:{child_bot_id}"),
             ],
             [btn_protection],
-            [InlineKeyboardButton(text="📣 Обратная связь",    callback_data=f"bs_feedback:{child_bot_id}")],
+            [InlineKeyboardButton(text="🔂 Обратная связь",    callback_data=f"bs_feedback:{child_bot_id}")],
             [InlineKeyboardButton(text="◄ Назад",             callback_data="menu:channels")],
         ]
     msg = await navigate(
@@ -500,7 +500,7 @@ async def on_bot_chats_list(callback: CallbackQuery, platform_user: dict | None)
                 callback_data=f"channel_in_bot:{ch['id']}:{child_bot_id}",
             )])
 
-    verify_label = "✅ Проверка: вкл" if bot["verify_only"] else "❌ Проверка: выкл"
+    verify_label = "☑ Проверка: вкл" if bot["verify_only"] else "❌ Проверка: выкл"
     buttons.append([InlineKeyboardButton(
         text="➕ Подключение",
         callback_data=f"bot_connect:{child_bot_id}",
@@ -616,7 +616,7 @@ async def on_bot_verify_toggle(callback: CallbackQuery, platform_user: dict | No
         "UPDATE child_bots SET verify_only=$1 WHERE id=$2 AND owner_id=$3",
         new_val, child_bot_id, owner_id,
     )
-    label = "включена ✅" if new_val else "выключена ❌"
+    label = "включена ☑" if new_val else "выключена ❌"
     await callback.answer(f"Проверка {label}")
     # Обновляем экран (не мутируем frozen объект, а создаём копию с нужным data)
     fake_cb = callback.model_copy(update={"data": f"bot_chats_list:{child_bot_id}"})
@@ -636,7 +636,7 @@ async def on_bot_delete(callback: CallbackQuery, platform_user: dict | None):
         "⚠️ <b>Удалить бота?</b>\n\n"
         "Все площадки, пользователи и настройки этого бота будут удалены.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="✅ Да, удалить", callback_data=f"bot_delete_confirm:{child_bot_id}")],
+            [InlineKeyboardButton(text="☑ Да, удалить", callback_data=f"bot_delete_confirm:{child_bot_id}")],
             [InlineKeyboardButton(text="🚫 Отмена",     callback_data=f"bot_settings:{child_bot_id}")],
         ]),
     )
@@ -673,7 +673,7 @@ async def on_bot_delete_final(callback: CallbackQuery, platform_user: dict | Non
         "DELETE FROM child_bots WHERE id=$1 AND owner_id=$2",
         child_bot_id, platform_user["user_id"],
     )
-    await callback.answer("✅ Бот удалён")
+    await callback.answer("☑ Бот удалён")
     await on_channels_menu(callback, platform_user)
 
 
@@ -832,7 +832,7 @@ async def on_token_received(message: Message, state: FSMContext, platform_user: 
     invite_msg_id = msg.message_id
     
     await msg.edit_text(
-        f"✅ Бот: @{username} создан\n\n"
+        f"☑ Бот: @{username} создан\n\n"
         f"➕ Чтобы начать настраивать созданного вами бота, добавьте сначала его "
         f"в <b>канал или группу</b> в качестве администратора "
         f"с правами на «Добавление участников» (ios) → «Пригласительные ссылки» (android).\n\n"
@@ -927,7 +927,7 @@ async def on_retoken_received(message: Message, state: FSMContext, platform_user
     # Направляем пользователя в настройки бота через inline-кнопку (безопасно, без фейковых CallbackQuery)
     bot_username = me.username or "bot"
     await message.answer(
-        f"✅ <b>Токен успешно обновлён!</b>\n\n"
+        f"☑ <b>Токен успешно обновлён!</b>\n\n"
         f"🤖 Бот @{bot_username} снова активен и готов к работе.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="⚙️ Открыть настройки", callback_data=f"bot_settings:{child_bot_id}")],
@@ -1202,7 +1202,7 @@ async def _show_channel_detail(callback: CallbackQuery, platform_user: dict, ch_
         [InlineKeyboardButton(text="☑ Обработка заявок",    callback_data=f"ch_requests:{chat_id}")],
         [
             InlineKeyboardButton(text="💬 Сообщения",        callback_data=f"ch_messages:{chat_id}"),
-            InlineKeyboardButton(text="📨 Рассылка",         callback_data=f"ch_mailing:{chat_id}"),
+            InlineKeyboardButton(text="📤 Рассылка",         callback_data=f"ch_mailing:{chat_id}"),
         ],
         [
             InlineKeyboardButton(text="🔗 Ссылки",           callback_data=f"ch_links:{chat_id}"),
@@ -1212,7 +1212,7 @@ async def _show_channel_detail(callback: CallbackQuery, platform_user: dict, ch_
             InlineKeyboardButton(text="🛡 Защита",           callback_data=f"ch_protection:{chat_id}"),
             InlineKeyboardButton(text="⚙️ Управление",       callback_data=f"ch_settings:{ch_id_b}"),
         ],
-        [InlineKeyboardButton(text="📣 Обратная связь",      callback_data=f"ch_feedback:{chat_id}")],
+        [InlineKeyboardButton(text="🔂 Обратная связь",      callback_data=f"ch_feedback:{chat_id}")],
     ]
     if not is_god_mode:
         keyboard.append([InlineKeyboardButton(text=f"🗑 Удалить площадку",  callback_data=f"ch_delete:{ch_id_b}:{cbot_id}:c:{chat_id}")])
@@ -1416,7 +1416,7 @@ async def on_ch_delete(callback: CallbackQuery, platform_user: dict | None):
         callback,
         "⚠️ <b>Удалить площадку?</b>\n\nВся история, настройки и ЧС для этой площадки будут удалены.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="✅ Да, удалить", callback_data=f"ch_delete_confirm:{ch_id}:{cbot_id or ''}")],
+            [InlineKeyboardButton(text="☑ Да, удалить", callback_data=f"ch_delete_confirm:{ch_id}:{cbot_id or ''}")],
             [InlineKeyboardButton(text="🚫 Отмена",      callback_data=cancel_cb)],
         ]),
     )
@@ -1434,7 +1434,7 @@ async def on_ch_delete_confirm(callback: CallbackQuery, platform_user: dict | No
         "DELETE FROM bot_chats WHERE id=$1 AND owner_id=$2",
         ch_id, platform_user["user_id"],
     )
-    await callback.answer("✅ Площадка удалена")
+    await callback.answer("☑ Площадка удалена")
     if cbot_id:
         fake_cb = callback.model_copy(update={"data": f"bot_chats_list:{cbot_id}"})
         await on_bot_chats_list(fake_cb, platform_user)

@@ -100,11 +100,11 @@ async def _show_requests_menu(callback: CallbackQuery, platform_user: dict, chat
         owner_id, chat_id,
     ) or 0
 
-    auto_label  = "✅ Автопринятие: ВКЛ 🟢"  if auto else "☑️ Автопринятие: ВЫКЛ 🔴"
+    auto_label  = "☑ Автопринятие: ВКЛ 🟢"  if auto else "☑️ Автопринятие: ВЫКЛ 🔴"
     delay_label = f"⏰ Отложенное: {format_delay(delay)}"
 
     text = (
-        "✅ <b>Обработка заявок</b>\n\n"
+        "☑ <b>Обработка заявок</b>\n\n"
         f"🔍 Заявок в очереди: <b>{pending}</b>\n\n"
         "💡 <i>Автопринятие</i> — заявки одобряются автоматически.\n"
         "   Бот проверяет каждого по чёрному списку.\n\n"
@@ -158,7 +158,7 @@ async def on_req_auto_toggle(callback: CallbackQuery, platform_user: dict | None
             "UPDATE bot_chats SET autoaccept=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
             new_auto, platform_user["user_id"], chat_id,
         )
-    await callback.answer("✅ ВКЛ" if new_auto else "🔴 ВЫКЛ")
+    await callback.answer("☑ ВКЛ" if new_auto else "🔴 ВЫКЛ")
     await _show_requests_menu(callback, platform_user, chat_id)
 
 
@@ -288,7 +288,7 @@ def _delay_prompt_kb(scope: str, target_id: int) -> InlineKeyboardMarkup:
 
 def _delay_menu_text(current_sec: int, saved: bool = False) -> str:
     from utils.timing import format_delay
-    mark = " ✅" if saved else ""
+    mark = " ☑" if saved else ""
     return (
         "⏰ <b>Отложенное принятие</b>\n"
         f"Текущее: <b>{format_delay(current_sec)}</b>{mark}\n\n"
@@ -451,7 +451,7 @@ async def on_req_decide(callback: CallbackQuery, state: FSMContext, platform_use
 async def _show_req_percent_menu(callback: CallbackQuery, max_count: int, sel_count: int, action: str, scope: str, target_id: int, sel_pct: int = 0):
     title = "заявок для принятия" if action == "accept" else "заявок для отклонения"
     action_verb = "Принять" if action == "accept" else "Отклонить"
-    action_icon = "✅" if action == "accept" else "❌"
+    action_icon = "☑" if action == "accept" else "❌"
     
     text = (
         f"🔍 <b>{title.capitalize()}</b>\n\n"
@@ -653,7 +653,7 @@ async def on_req_confirm(callback: CallbackQuery, bot: Bot, state: FSMContext, p
 # ══════════════════════════════════════════════════════════════
 def kb_captcha_settings(ch: dict) -> InlineKeyboardMarkup:
     chat_id = ch["chat_id"]
-    delete_label = "✅ Авто-удаление сообщ" if ch.get("captcha_delete") else "☐ Авто-удаление сообщ"
+    delete_label = "☑ Авто-удаление сообщ" if ch.get("captcha_delete") else "☐ Авто-удаление сообщ"
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=f"⏱ Таймер: {ch.get('captcha_timer',60)} сек", callback_data=f"captcha_timer:{chat_id}")],
         [InlineKeyboardButton(text="✎ Изменить текст капчи", callback_data=f"captcha_text:{chat_id}")],
@@ -701,7 +701,7 @@ async def on_captcha_delete_toggle(callback: CallbackQuery, platform_user: dict 
         "UPDATE bot_chats SET captcha_delete=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
         new_val, platform_user["user_id"], chat_id,
     )
-    await callback.answer("✅ Изменено")
+    await callback.answer("☑ Изменено")
     # Обновляем экран
     fake_cb = callback.model_copy(update={"data": f"captcha_settings:{chat_id}"})
     await on_captcha_settings(fake_cb, platform_user)
@@ -737,7 +737,7 @@ async def on_timer_preset(callback: CallbackQuery, state: FSMContext):
         secs, data["owner_id"], data["chat_id"],
     )
     await state.clear()
-    await callback.answer(f"✅ Таймер: {secs} сек")
+    await callback.answer(f"☑ Таймер: {secs} сек")
     fake_cb = callback.model_copy(update={"data": f"captcha_settings:{data['chat_id']}"})
     fake_pu = {"user_id": data["owner_id"], "tariff": "pro"}
     await on_captcha_settings(fake_cb, fake_pu)
@@ -771,7 +771,7 @@ async def on_captcha_text_input(message: Message, state: FSMContext):
         text, data["owner_id"], data["chat_id"],
     )
     await state.clear()
-    await message.answer("✅ Текст капчи сохранён")
+    await message.answer("☑ Текст капчи сохранён")
 
 
 
@@ -1380,7 +1380,7 @@ async def on_ch_msg_selfdel(callback: CallbackQuery, state: FSMContext, platform
 
     chip_rows, row = [], []
     for sec, label in _MSG_SELFDEL_CHIPS:
-        mark = " ✅" if sec == cur else ""
+        mark = " ☑" if sec == cur else ""
         row.append(InlineKeyboardButton(text=f"{label}{mark}", callback_data=f"ch_msg_selfdelset:{chat_id_str}:{msg_type}:{sec}"))
         if len(row) == 3:
             chip_rows.append(row); row = []
@@ -1493,7 +1493,7 @@ async def on_ch_msg_delay(callback: CallbackQuery, state: FSMContext, platform_u
 
     chip_rows, row = [], []
     for sec, label in _MSG_DELAY_CHIPS:
-        mark = " ✅" if sec == cur else ""
+        mark = " ☑" if sec == cur else ""
         row.append(InlineKeyboardButton(text=f"{label}{mark}", callback_data=f"ch_msg_delayset:{chat_id_str}:{msg_type}:{sec}"))
         if len(row) == 3:
             chip_rows.append(row); row = []
@@ -1880,7 +1880,7 @@ def kb_reactions(current: list, chat_id: int, tariff: str) -> InlineKeyboardMark
     buttons = []
     row = []
     for emoji in REACTIONS_POOL:
-        mark = "✅" if emoji in current else ""
+        mark = "☑" if emoji in current else ""
         row.append(InlineKeyboardButton(
             text=f"{mark}{emoji}", callback_data=f"reaction_toggle:{chat_id}:{emoji}",
         ))
@@ -2003,7 +2003,7 @@ async def on_filter_rtl(callback: CallbackQuery, platform_user: dict | None):
         "UPDATE bot_chats SET filter_rtl=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
         new_val, platform_user["user_id"], chat_id,
     )
-    await callback.answer("RTL-фильтр: " + ("✅ Вкл" if new_val else "☐ Выкл"))
+    await callback.answer("RTL-фильтр: " + ("☑ Вкл" if new_val else "☐ Выкл"))
 
 
 @router.callback_query(F.data.startswith("filter_hier:"))
@@ -2020,7 +2020,7 @@ async def on_filter_hier(callback: CallbackQuery, platform_user: dict | None):
         "UPDATE bot_chats SET filter_hieroglyph=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
         new_val, platform_user["user_id"], chat_id,
     )
-    await callback.answer("Иероглифы: " + ("✅ Вкл" if new_val else "☐ Выкл"))
+    await callback.answer("Иероглифы: " + ("☑ Вкл" if new_val else "☐ Выкл"))
 
 
 @router.callback_query(F.data.startswith("filter_photo:"))
@@ -2257,7 +2257,7 @@ async def on_lang_toggle(callback: CallbackQuery, platform_user: dict | None):
             "DELETE FROM language_filters WHERE owner_id=$1 AND chat_id=$2::bigint AND language_code=$3",
             platform_user["user_id"], chat_id, code,
         )
-        await callback.answer(f"✅ {LANGUAGE_OPTIONS.get(code,'?')} разрешён")
+        await callback.answer(f"☑ {LANGUAGE_OPTIONS.get(code,'?')} разрешён")
     else:
         await db.execute(
             "INSERT INTO language_filters (owner_id, chat_id, language_code) VALUES ($1,$2,$3) "
@@ -2427,11 +2427,11 @@ async def on_ch_tz_set(callback: CallbackQuery, platform_user: dict | None):
         "UPDATE bot_chats SET timezone=$1 WHERE id=$2 AND owner_id=$3",
         tz, ch_id, platform_user["user_id"],
     )
-    await callback.answer(f"✅ Часовой пояс: {tz}")
+    await callback.answer(f"☑ Часовой пояс: {tz}")
     # Вернуться в управление
     fake_cb_data = f"ch_settings:{ch_id}"
     await callback.message.edit_text(
-        "✅ Часовой пояс обновлён.",
+        "☑ Часовой пояс обновлён.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="◄ Назад", callback_data=f"ch_settings:{ch_id}")],
         ]),
@@ -2527,10 +2527,10 @@ async def _show_bs_requests(callback: CallbackQuery, platform_user: dict, child_
            WHERE bc.child_bot_id=$1 AND bc.owner_id=$2 AND jr.status IN ('pending','captcha_verified')""",
         child_bot_id, owner_id,
     ) or 0
-    auto_label  = "✅ Автопринятие: ВКЛ 🟢" if auto else "☑️ Автопринятие: ВЫКЛ 🔴"
+    auto_label  = "☑ Автопринятие: ВКЛ 🟢" if auto else "☑️ Автопринятие: ВЫКЛ 🔴"
     delay_label = f"⏰ Отложенное: {format_delay(delay)}"
     await callback.message.edit_text(
-        "✅ <b>Обработка заявок</b> (все площадки)\n\n"
+        "☑ <b>Обработка заявок</b> (все площадки)\n\n"
         f"🔍 Заявок в очереди: <b>{pending}</b>\n\n"
         "💡 <i>Настройки применяются ко всем каналам бота.</i>",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
@@ -2579,7 +2579,7 @@ async def on_bs_req_auto(callback: CallbackQuery, platform_user: dict | None):
             new_val, child_bot_id, owner_id,
         )
 
-    await callback.answer("✅ ВКЛ" if new_val else "🔴 ВЫКЛ")
+    await callback.answer("☑ ВКЛ" if new_val else "🔴 ВЫКЛ")
     await _show_bs_requests(callback, platform_user, child_bot_id)
 
 
@@ -2787,7 +2787,7 @@ async def on_bs_welcome_del(callback: CallbackQuery, platform_user: dict | None)
     await db.execute(
         "UPDATE bot_chats SET welcome_text=NULL WHERE child_bot_id=$1 AND owner_id=$2",
         child_bot_id, owner_id)
-    await callback.answer("✅ Приветствие удалено")
+    await callback.answer("☑ Приветствие удалено")
     fake_cb = callback.model_copy(update={"data": f"bs_messages:{child_bot_id}"})
     await on_bs_messages(fake_cb, platform_user)
 
@@ -2826,7 +2826,7 @@ async def on_bs_farewell_del(callback: CallbackQuery, platform_user: dict | None
     await db.execute(
         "UPDATE bot_chats SET farewell_text=NULL WHERE child_bot_id=$1 AND owner_id=$2",
         child_bot_id, owner_id)
-    await callback.answer("✅ Прощание удалено")
+    await callback.answer("☑ Прощание удалено")
     fake_cb = callback.model_copy(update={"data": f"bs_messages:{child_bot_id}"})
     await on_bs_messages(fake_cb, platform_user)
 
@@ -3014,7 +3014,7 @@ async def on_bs_filter_rtl(callback: CallbackQuery, platform_user: dict | None):
     new_val = not (ch["filter_rtl"] if ch else False)
     await db.execute("UPDATE bot_chats SET filter_rtl=$1 WHERE child_bot_id=$2 AND owner_id=$3",
                      new_val, child_bot_id, owner_id)
-    await callback.answer("RTL: " + ("✅ Вкл" if new_val else "☐ Выкл"))
+    await callback.answer("RTL: " + ("☑ Вкл" if new_val else "☐ Выкл"))
     await _show_bs_protection(callback, platform_user, child_bot_id)
 
 
@@ -3031,7 +3031,7 @@ async def on_bs_filter_hier(callback: CallbackQuery, platform_user: dict | None)
     new_val = not (ch["filter_hieroglyph"] if ch else False)
     await db.execute("UPDATE bot_chats SET filter_hieroglyph=$1 WHERE child_bot_id=$2 AND owner_id=$3",
                      new_val, child_bot_id, owner_id)
-    await callback.answer("Иероглифы: " + ("✅ Вкл" if new_val else "☐ Выкл"))
+    await callback.answer("Иероглифы: " + ("☑ Вкл" if new_val else "☐ Выкл"))
     await _show_bs_protection(callback, platform_user, child_bot_id)
 
 
@@ -3048,7 +3048,7 @@ async def on_bs_filter_photo(callback: CallbackQuery, platform_user: dict | None
     new_val = not (ch["filter_no_photo"] if ch else False)
     await db.execute("UPDATE bot_chats SET filter_no_photo=$1 WHERE child_bot_id=$2 AND owner_id=$3",
                      new_val, child_bot_id, owner_id)
-    await callback.answer("Без фото: " + ("✅ Вкл" if new_val else "☐ Выкл"))
+    await callback.answer("Без фото: " + ("☑ Вкл" if new_val else "☐ Выкл"))
     await _show_bs_protection(callback, platform_user, child_bot_id)
 
 
@@ -3359,7 +3359,7 @@ async def _process_base_add(owner_id: int, child_bot_id: int,
                 owner_id, chat_id, username,
             )
             added += 1
-            details.append(f"• {token} ✅")
+            details.append(f"• {token} ☑")
         else:
             try:
                 uid = int(token)
@@ -3481,7 +3481,7 @@ async def on_bs_base_user_search(message: Message, state: FSMContext,
         await state.clear()
         await message.answer(
             f"🗑 <b>Удаление завершено!</b>\n\n"
-            f"✅ Удалено: <b>{res['removed']}</b>\n"
+            f"☑ Удалено: <b>{res['removed']}</b>\n"
             f"🔍 Не найдено: <b>{res['not_found']}</b>\n"
             f"❌ Неверный формат: <b>{res['invalid']}</b>\n\n"
             f"{detail_text}\n\n"
@@ -3547,7 +3547,7 @@ async def _show_user_card(message: Message | CallbackQuery, state: FSMContext, c
     name = user_row['first_name'] or "Аноним"
     joined = user_row['joined_at'].strftime("%d.%m.%Y %H:%M") if user_row['joined_at'] else "Неизвестно"
     chat_titles = user_row['chat_titles'] or "Личные сообщения"
-    is_active = "✅ Активен" if user_row['is_active'] else "❌ Вышел / Заблокировал"
+    is_active = "☑ Активен" if user_row['is_active'] else "❌ Вышел / Заблокировал"
 
     # Идем в Telegram узнавать реальный статус пользователя
     bot_row = await db.fetchrow("SELECT token_encrypted, owner_id FROM child_bots WHERE id=$1", child_bot_id)
@@ -3661,7 +3661,7 @@ async def on_bs_um_pm_input(message: Message, state: FSMContext, platform_user: 
     child_bot = Bot(token=decrypt_token(bot_row["token_encrypted"]))
     try:
         await child_bot.send_message(chat_id=target_uid, text=message.text, parse_mode="HTML")
-        await message.answer("✅ <b>Сообщение успешно отправлено!</b>")
+        await message.answer("☑ <b>Сообщение успешно отправлено!</b>")
 
         # Удаляем предыдущее сообщение-заглушку с кнопкой Отмена
         prompt_msg_id = data.get("pm_prompt_msg_id")
@@ -3866,11 +3866,11 @@ async def on_bs_um_prom_chat(callback: CallbackQuery, state: FSMContext, platfor
 
 async def _render_admin_menu(callback: CallbackQuery, perms: dict, child_bot_id: int, uid: int, chat_title: str):
     buttons = [
-        [InlineKeyboardButton(text=f"{'✅' if perms['delete'] else '❌'} Удаление сообщений", callback_data="bs_adm_tgl:delete")],
-        [InlineKeyboardButton(text=f"{'✅' if perms['restrict'] else '❌'} Блокировка/Мут", callback_data="bs_adm_tgl:restrict")],
-        [InlineKeyboardButton(text=f"{'✅' if perms['pin'] else '❌'} Закреп сообщений", callback_data="bs_adm_tgl:pin")],
-        [InlineKeyboardButton(text=f"{'✅' if perms['invite'] else '❌'} Приглашение по ссылкам", callback_data="bs_adm_tgl:invite")],
-        [InlineKeyboardButton(text=f"{'✅' if perms['promote'] else '❌'} Добавление админов", callback_data="bs_adm_tgl:promote")],
+        [InlineKeyboardButton(text=f"{'☑' if perms['delete'] else '❌'} Удаление сообщений", callback_data="bs_adm_tgl:delete")],
+        [InlineKeyboardButton(text=f"{'☑' if perms['restrict'] else '❌'} Блокировка/Мут", callback_data="bs_adm_tgl:restrict")],
+        [InlineKeyboardButton(text=f"{'☑' if perms['pin'] else '❌'} Закреп сообщений", callback_data="bs_adm_tgl:pin")],
+        [InlineKeyboardButton(text=f"{'☑' if perms['invite'] else '❌'} Приглашение по ссылкам", callback_data="bs_adm_tgl:invite")],
+        [InlineKeyboardButton(text=f"{'☑' if perms['promote'] else '❌'} Добавление админов", callback_data="bs_adm_tgl:promote")],
         [InlineKeyboardButton(text="Применить и Выдать права 🛡", callback_data="bs_adm_apply")],
         [InlineKeyboardButton(text="◄ Назад", callback_data=f"bs_um_card:{child_bot_id}:{uid}")]
     ]
@@ -4241,7 +4241,7 @@ async def on_bs_sync(callback: CallbackQuery, bot: Bot,
 
     detail = "\n".join(chat_results) if chat_results else "Нет площадок"
     await callback.message.edit_text(
-        "✅ <b>Синхронизация завершена!</b>\n\n"
+        "☑ <b>Синхронизация завершена!</b>\n\n"
         f"{detail}\n\n"
         f"📊 Итого: +{added_total} добавлено, "
         f"{updated_total} обновлено, {left_total} помечено как покинувшие\n"
@@ -4381,7 +4381,7 @@ async def on_bs_bl_export_csv(callback: CallbackQuery, bot: Bot, platform_user: 
     try:
         await callback.message.edit_text(
             "🛡 <b>Экспорт базы ЧС</b>\n\n"
-            f"✅ Файл <code>{filename}</code> отправлен.\n"
+            f"☑ Файл <code>{filename}</code> отправлен.\n"
             f"Записей: <b>{len(rows):,}</b>",
             reply_markup=None,
         )
@@ -4454,7 +4454,7 @@ async def on_bs_bl_export_txt(callback: CallbackQuery, bot: Bot, platform_user: 
     try:
         await callback.message.edit_text(
             "🛡 <b>Экспорт базы ЧС</b>\n\n"
-            f"✅ Файл <code>{filename}</code> отправлен.\n"
+            f"☑ Файл <code>{filename}</code> отправлен.\n"
             f"Записей: <b>{len(lines):,}</b>",
             reply_markup=None,
         )
@@ -4577,7 +4577,7 @@ async def on_bs_bl_ban_all(callback: CallbackQuery, bot: Bot,
         )
 
     await callback.message.edit_text(
-        "✅ <b>Готово!</b>\n\n"
+        "☑ <b>Готово!</b>\n\n"
         f"🚫 Забанено: <b>{banned}</b> из {len(violators)}",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="◄ Назад", callback_data=f"bs_blacklist:{child_bot_id}")],
@@ -4625,7 +4625,7 @@ async def on_bs_bl_full_list(callback: CallbackQuery, bot: Bot,
         document=file,
         caption=f"👁 Полный список нарушителей: {len(violators):,} чел.",
     )
-    await callback.answer("✅ Список отправлен в чат")
+    await callback.answer("☑ Список отправлен в чат")
 
 
 # ── Управление базой ЧС ───────────────────────────────────────
@@ -4645,7 +4645,7 @@ async def _show_bs_bl_manage(callback: CallbackQuery, platform_user: dict,
         "SELECT COUNT(*) FROM blacklist WHERE owner_id=$1 AND child_bot_id=$2", owner_id, child_bot_id,
     ) or 0
 
-    toggle_text = "✅ ЧС: Включён 🟢" if enabled else "☑️ ЧС: Выключен 🔴"
+    toggle_text = "☑ ЧС: Включён 🟢" if enabled else "☑️ ЧС: Выключен 🔴"
     await callback.message.edit_text(
         "⚙️ <b>Управление базой ЧС</b>\n\n"
         f"📊 Записей в базе: {count:,}\n\n"
@@ -4692,7 +4692,7 @@ async def on_bs_bl_toggle(callback: CallbackQuery, platform_user: dict | None):
             "UPDATE child_bots SET blacklist_enabled=$1 WHERE id=$2 AND owner_id=$3",
             new_val, child_bot_id, owner_id,
         )
-        await callback.answer("✅ ВКЛ" if new_val else "🔴 ВЫКЛ")
+        await callback.answer("☑ ВКЛ" if new_val else "🔴 ВЫКЛ")
         
         # Trigger background sweep (ban-only, Lazy Pass architecture)
         from services.blacklist import sweep_after_import
@@ -4777,7 +4777,7 @@ async def on_bs_bl_clear(callback: CallbackQuery, platform_user: dict | None):
         f"подключенных группах и каналах вашего бота, куда им ранее был закрыт доступ.</blockquote>\n\n"
         f"Это действие необратимо. Вы уверены?",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="✅ Да, очистить и разблокировать",
+            [InlineKeyboardButton(text="☑ Да, очистить и разблокировать",
                                   callback_data=f"bs_bl_clear_do:{child_bot_id}")],
             [InlineKeyboardButton(text="🚫 Нет, отменить",
                                   callback_data=f"bs_bl_manage:{child_bot_id}")],
@@ -4990,7 +4990,7 @@ async def on_bs_base_export(callback: CallbackQuery, bot: Bot, platform_user: di
     try:
         await callback.message.edit_text(
             "🗄 <b>База пользователей</b>\n\n"
-            f"✅ Файл <code>{filename}</code> отправлен.\n"
+            f"☑ Файл <code>{filename}</code> отправлен.\n"
             f"Записей: <b>{len(rows):,}</b>",
             reply_markup=None,
         )
@@ -5228,7 +5228,7 @@ async def on_bs_tz_pick(callback: CallbackQuery, platform_user: dict | None):
         "UPDATE bot_chats SET timezone=$1 WHERE child_bot_id=$2 AND owner_id=$3",
         tz, child_bot_id, owner_id,
     )
-    await callback.answer(f"✅ Часовой пояс: {tz}")
+    await callback.answer(f"☑ Часовой пояс: {tz}")
     # Не мутируем callback.data (модель заморожена), передаём child_bot_id напрямую
     await on_bs_timezone(callback, platform_user, _selected_time=selected_time, _child_bot_id=child_bot_id)
 
@@ -5485,7 +5485,7 @@ async def on_bs_team_remove(callback: CallbackQuery, platform_user: dict | None)
         "UPDATE team_members SET is_active=false WHERE id=$1 AND owner_id=$2",
         member_db_id, owner_id,
     )
-    await callback.answer("✅ Участник удалён из команды")
+    await callback.answer("☑ Участник удалён из команды")
     # Перерендер списка
     fake_cb = callback.model_copy(update={"data": f"bs_team_members:{child_bot_id}"})
     await on_bs_team_members(fake_cb, platform_user)

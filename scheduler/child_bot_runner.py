@@ -992,7 +992,7 @@ async def _handle_message(bot: Bot, child_bot_id: int, owner_id: int, message):
                     pass
             await bot.send_message(
                 user.id,
-                f"✅ <b>Ответ отправлен</b>\n\nПользователь <b>{name_display}</b> получил ваш ответ.",
+                f"☑ <b>Ответ отправлен</b>\n\nПользователь <b>{name_display}</b> получил ваш ответ.",
                 parse_mode="HTML",
                 reply_markup=more_kb,
             )
@@ -1885,13 +1885,13 @@ async def _handle_my_chat_member(
         if is_returning and existing_chat and not existing_chat["is_active"]:
             # Права возвращены — чат снова в работе
             msg_text = (
-                f"✅ Права обновлены! {type_icon} <b>{chat_title}</b> снова в работе.\n\n"
+                f"☑ Права обновлены! {type_icon} <b>{chat_title}</b> снова в работе.\n\n"
                 f"Бот @{bot_username} восстановил защиту автоматически."
             )
         else:
             # Первичное подключение
             msg_text = (
-                f"✅ {type_icon} <b>{chat_title}</b> успешно подключён!\n\n"
+                f"☑ {type_icon} <b>{chat_title}</b> успешно подключён!\n\n"
                 f"Бот @{bot_username} готов к работе."
             )
             

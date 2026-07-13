@@ -601,7 +601,7 @@ async def on_wstep_delay(callback: CallbackQuery, state: FSMContext, platform_us
     cur = int(st["delay_sec"] or 0)
     chip_rows, row = [], []
     for sec, label in _DELAY_CHIPS:
-        mark = " ✅" if sec == cur else ""
+        mark = " ☑" if sec == cur else ""
         row.append(InlineKeyboardButton(text=f"{label}{mark}", callback_data=f"wstep_delayset:{step_id}:{sec}"))
         if len(row) == 3:
             chip_rows.append(row); row = []
@@ -888,7 +888,7 @@ async def on_wstep_selfdel(callback: CallbackQuery, state: FSMContext, platform_
     cur = int(st["self_delete_sec"] or 0)
     chip_rows, row = [], []
     for sec, label in _SELFDEL_CHIPS:
-        mark = " ✅" if sec == cur else ""
+        mark = " ☑" if sec == cur else ""
         row.append(InlineKeyboardButton(text=f"{label}{mark}", callback_data=f"wstep_selfdelset:{step_id}:{sec}"))
         if len(row) == 3:
             chip_rows.append(row); row = []
@@ -1068,7 +1068,7 @@ async def on_wseq_autoclear(callback: CallbackQuery, state: FSMContext, platform
 
     chip_rows, row = [], []
     for sec, label in _AUTOCLEAR_CHIPS:
-        mark = " ✅" if sec == cur else ""
+        mark = " ☑" if sec == cur else ""
         row.append(InlineKeyboardButton(text=f"{label}{mark}", callback_data=f"wseq_autoclearset:{chat_id}:{sec}"))
         if len(row) == 3:
             chip_rows.append(row); row = []

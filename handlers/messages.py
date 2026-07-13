@@ -184,13 +184,13 @@ async def on_ch_toggle_typing(callback: CallbackQuery, platform_user: dict | Non
 
 def _build_reaction_keyboard(chat_id: int, current: str) -> InlineKeyboardMarkup:
     """Строит клавиатуру выбора реакции с галочкой рядом с текущей."""
-    no_check = " ✅" if current == "" else ""
+    no_check = " ☑" if current == "" else ""
     buttons = [[InlineKeyboardButton(
         text=f"Выкл{no_check}",
         callback_data=f"ch_set_reaction:{chat_id}:none",
     )]]
     buttons += [[InlineKeyboardButton(
-        text=e + (" ✅" if e == current else ""),
+        text=e + (" ☑" if e == current else ""),
         callback_data=f"ch_set_reaction:{chat_id}:{e}",
     )] for e in _REACTION_OPTIONS]
     buttons.append([InlineKeyboardButton(text="◄ Назад", callback_data=f"ch_messages:{chat_id}")])
@@ -297,7 +297,7 @@ async def _show_captcha(callback: CallbackQuery, chat_id: int, owner_id: int):
     anim_icon     = "🎞" if anim_on else "🎞" # Используем одну и ту же строгую иконку для обоих состояний
     greet_icon    = "📩" if greet_on else "✉️"
     accept_icon   = "🔋" if accept_now else "🪫"
-    accept_a_icon = "✅" if accept_all else "❎"
+    accept_a_icon = "☑" if accept_all else "❎"
     btn_label     = "▫️" if btn_size == "compact" else "⬜"
 
     info = (
@@ -307,7 +307,7 @@ async def _show_captcha(callback: CallbackQuery, chat_id: int, owner_id: int):
         "📩 <b>Приветствовать:</b> позволяет отправлять пользователю приветствие "
         "сразу после решения капчи.\n\n"
         "🔋 <b>Принимать сразу:</b> позволяет принимать заявки сразу после решения капчи.\n\n"
-        "✅ <b>Принимать всех:</b> если данная опция включена, то даже если пользователь "
+        "☑ <b>Принимать всех:</b> если данная опция включена, то даже если пользователь "
         "проигнорировал капчу, его заявка будет обработана."
         "</blockquote>\n\n"
         "ⓘ Капча отправляется перед приветственным сообщением."
@@ -487,7 +487,7 @@ async def on_ch_cap_reset(callback: CallbackQuery, platform_user: dict | None):
         "Настройки (тип, таймер, переключатели) <b>не изменятся</b>.\n\n"
         "Подтвердить сброс?",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="✅ Подтвердить", callback_data=f"ch_cap_reset_ok:{chat_id}")],
+            [InlineKeyboardButton(text="☑ Подтвердить", callback_data=f"ch_cap_reset_ok:{chat_id}")],
             [InlineKeyboardButton(text="◄ Отмена",     callback_data=f"ch_captcha:{chat_id}")],
         ]),
     )
@@ -506,7 +506,7 @@ async def on_ch_cap_reset_ok(callback: CallbackQuery, platform_user: dict | None
            WHERE owner_id=$1 AND chat_id=$2::bigint""",
         owner_id, chat_id,
     )
-    await callback.answer("✅ Капча сброшена")
+    await callback.answer("☑ Капча сброшена")
     fake_cb = callback.model_copy(update={"data": f"ch_captcha:{chat_id}"})
     await on_ch_captcha(fake_cb, platform_user)
 
@@ -526,7 +526,7 @@ async def on_ch_captcha_emoji(callback: CallbackQuery, platform_user: dict | Non
     current = (ch["captcha_emoji_set"] if ch else None) or _EMOJI_SETS[0]
 
     buttons = [[InlineKeyboardButton(
-        text=es + (" ✅" if es == current else ""),
+        text=es + (" ☑" if es == current else ""),
         callback_data=f"ch_cap_set_emoji:{chat_id}:{i}",
     )] for i, es in enumerate(_EMOJI_SETS)]
     buttons.append([InlineKeyboardButton(text="◄ Назад", callback_data=f"ch_captcha:{chat_id}")])
@@ -775,7 +775,7 @@ async def on_captcha_anim_upload(message: Message, state: FSMContext):
 
     await state.clear()
     await message.answer(
-        "✅ Анимация успешно установлена!",
+        "☑ Анимация успешно установлена!",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="◄ Назад", callback_data=f"ch_cap_anim_menu:{chat_id}")],
         ]),

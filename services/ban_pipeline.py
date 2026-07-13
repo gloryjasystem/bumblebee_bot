@@ -388,14 +388,14 @@ async def start_ban_pipeline(
         text = (
             f"⚠️ <b>Процесс прерван</b> вручную.\n"
             f"Успело обработаться: <b>{done}/{total}</b>\n\n"
-            f"✅ {'Забанено' if action=='ban' else 'Разбанено'}: <b>{results['ok']}</b>\n"
+            f"☑ {'Забанено' if action=='ban' else 'Разбанено'}: <b>{results['ok']}</b>\n"
             f"🔄 {'Уже в базе' if action=='ban' else 'Уже удалены'}: <b>{results['already_in_bl']}</b>\n"
             f"❓ Не найдено: <b>{results['not_found']}</b>\n"
             f"⚠️ Ошибки: <b>{results['error']}</b>"
         )
     else:
         text = (
-            f"✅ <b>Готово!</b>\n\n"
+            f"☑ <b>Готово!</b>\n\n"
             f"├ {'Забанено' if action=='ban' else 'Разбанено'}: <b>{results['ok']}</b>\n"
             f"├ {'Уже в базе' if action=='ban' else 'Уже удалены'}: <b>{results['already_in_bl']}</b>\n"
             f"├ Не найдено: <b>{results['not_found']}</b>\n"
@@ -924,7 +924,7 @@ def _report_progress(
     asyncio.create_task(_edit_status(
         bot, notify_chat_id, status_msg_id,
         f"⏳ Обработано <b>{done}/{results['total']}</b>\n"
-        f"✅ Забанено: {results['ok']} | "
+        f"☑ Забанено: {results['ok']} | "
         f"🔄 Уже в ЧС: {results['already_in_bl']}\n"
         f"❓ Не найдено: {results['not_found']} | "
         f"⚠️ Ошибки: {results['error']}",

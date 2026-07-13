@@ -999,7 +999,7 @@ async def on_ml_sched_cancel(callback: CallbackQuery, platform_user: dict | None
     await _delete_draft_echo(callback.bot, mid)
 
     await callback.message.edit_text(
-        "✅ <b>Запланированная рассылка отменена.</b>",
+        "☑ <b>Запланированная рассылка отменена.</b>",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="◄ К списку",
@@ -1492,7 +1492,7 @@ async def on_ml_url_buttons(callback: CallbackQuery, state: FSMContext, platform
         return
 
     existing = m.get("url_buttons_raw") or ""
-    now_text = f"\n\n✅ <b>Текущие кнопки:</b>\n<code>{existing}</code>" if existing else ""
+    now_text = f"\n\n☑ <b>Текущие кнопки:</b>\n<code>{existing}</code>" if existing else ""
 
     # Удаляем эхо + текущее меню черновика
     await _delete_draft_echo(callback.bot, mid)
@@ -1997,7 +1997,7 @@ async def on_schedule_input(message: Message, state: FSMContext):
             )
     else:
         await state.clear()
-        await message.answer(f"✅ Запланировано: {dt.strftime('%d.%m.%Y %H:%M')}")
+        await message.answer(f"☑ Запланировано: {dt.strftime('%d.%m.%Y %H:%M')}")
 
 
 async def callback_answer_noop(message: Message) -> None:
@@ -2057,14 +2057,14 @@ async def on_mailing_save(callback: CallbackQuery, platform_user: dict | None):
     dt_str = scheduled_at.strftime("%d.%m.%Y %H:%M") if scheduled_at else "—"
 
     await callback.message.edit_text(
-        f"✅ <b>Рассылка успешно сохранена.</b>\n\n"
+        f"☑ <b>Рассылка успешно сохранена.</b>\n\n"
         f"📅 Дата отправки: <b>{dt_str}</b> (UTC)",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="➡ В меню рассылки", callback_data=back_cb)],
         ]),
     )
-    await callback.answer("✅ Рассылка сохранена")
+    await callback.answer("☑ Рассылка сохранена")
 
 
 # ══════════════════════════════════════════════════════════════
@@ -2102,7 +2102,7 @@ def _mailing_progress_text(mailing_id: int, sent: int, total: int,
 
     status_map = {
         "running":   "🟢 В процессе",
-        "done":      "✅ Завершено",
+        "done":      "☑ Завершено",
         "cancelled": "⏹ Остановлено",
     }
     status_str = status_map.get(status, "🟢 В процессе")
@@ -2123,7 +2123,7 @@ def _mailing_progress_text(mailing_id: int, sent: int, total: int,
         f"<code>{bar}</code> {pct:.1f}%\n\n"
         f"{'ϙ' if status == 'running' else '📊'} Статус: {status_str}\n"
         f"↗️ Отправлено: <b>{attempted}</b> из <b>{total}</b>\n"
-        f"✅ Получили: <b>{sent}</b>\n"
+        f"☑ Получили: <b>{sent}</b>\n"
         f"🚫 Блокировали: <b>{errors}</b>\n\n"
         f"⚡ Скорость: Минимальная (~10/сек)"
         f"{dt_str}"

@@ -171,7 +171,7 @@ async def notify_user_paid(bot, user_id: int, tariff: str, period: str):
     try:
         await bot.send_message(
             user_id,
-            f"✅ <b>Тариф {tariff_labels.get(tariff, tariff)} активирован!</b>\n\n"
+            f"☑ <b>Тариф {tariff_labels.get(tariff, tariff)} активирован!</b>\n\n"
             f"📅 Активен до: <b>{until}</b>\n"
             f"🤖 Ботов: до <b>{t_info['max_bots']}</b>\n"
             f"📍 Площадок на 1 бота: до <b>{t_info['max_chats_per_bot']}</b>\n"
@@ -207,7 +207,7 @@ async def notify_owner_payment(bot, user_id: int, np_data: dict):
             f"💎 Тариф: {tariff}\n"
             f"💵 Сумма: ${amount} {currency}\n"
             f"🔑 NP ID: {np_data.get('payment_id', '?')}\n"
-            f"✅ Тариф активирован автоматически\n"
+            f"☑ Тариф активирован автоматически\n"
             f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
         )
     except Exception:

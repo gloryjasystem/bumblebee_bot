@@ -90,7 +90,7 @@ async def _show_analyzer_panel(message_or_cb, owner_id: int, state: FSMContext, 
     text = (
         "📊 <b>Анализ пересечения аудиторий</b>\n\n"
         "<i>Выберите площадки, чтобы найти общих пользователей в их базах.</i>\n\n"
-        f"📁 Площадок в системе: <b>{total_channels}</b>  |  ✅ Выбрано: <b>{sel_count}</b>"
+        f"📁 Площадок в системе: <b>{total_channels}</b>  |  ☑ Выбрано: <b>{sel_count}</b>"
     )
 
     if search_query:
@@ -109,7 +109,7 @@ async def _show_analyzer_panel(message_or_cb, owner_id: int, state: FSMContext, 
         kb.append([InlineKeyboardButton(text="✖️ Сбросить поиск", callback_data=f"aa_reset_search:{owner_id}")])
 
     for c in page_channels:
-        mark = "✅" if c['chat_id'] in selected_channels else "☑️"
+        mark = "☑" if c['chat_id'] in selected_channels else "☑️"
         subs_text = _fmt_num(c['stats_count'])
 
         chat_raw = c['chat_title'] or "Без назв."

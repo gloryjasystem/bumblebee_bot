@@ -114,7 +114,7 @@ async def on_bsf_toggle(callback: CallbackQuery, platform_user: dict | None):
         "UPDATE child_bots SET feedback_enabled=$1 WHERE id=$2 AND owner_id=$3",
         new_val, bot_id, real_owner,
     )
-    await callback.answer("✅ Включена" if new_val else "❌ Выключена")
+    await callback.answer("☑ Включена" if new_val else "❌ Выключена")
     await show_bot_feedback(callback, platform_user, bot_id)
 
 
@@ -250,7 +250,7 @@ async def on_feedback_toggle(callback: CallbackQuery, platform_user: dict | None
         "UPDATE bot_chats SET feedback_enabled=$1 WHERE owner_id=$2 AND chat_id=$3",
         new_val, platform_user["user_id"], chat_id,
     )
-    await callback.answer("✅ Включена" if new_val else "❌ Выключена")
+    await callback.answer("☑ Включена" if new_val else "❌ Выключена")
     await _show_feedback(callback, platform_user, chat_id)
 
 
@@ -771,7 +771,7 @@ async def on_feedback_reply_text(message: Message, state: FSMContext):
             except Exception:
                 pass
         await message.answer(
-            f"✅ <b>Ответ отправлен</b>\n\nПользователь <b>{name_display}</b> получил ваш ответ.",
+            f"☑ <b>Ответ отправлен</b>\n\nПользователь <b>{name_display}</b> получил ваш ответ.",
             parse_mode="HTML",
             reply_markup=more_kb,
         )
@@ -856,7 +856,7 @@ async def on_fbr_cancel(callback: CallbackQuery, state: FSMContext):
     ]])
     try:
         await callback.message.edit_text(
-            f"✅ Ответ успешно отправлен пользователю <b>{ndisplay}</b>.",
+            f"☑ Ответ успешно отправлен пользователю <b>{ndisplay}</b>.",
             parse_mode="HTML",
             reply_markup=more_kb,
         )

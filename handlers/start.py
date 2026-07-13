@@ -24,7 +24,7 @@ def kb_main_menu() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(text="🤖 Список ботов", callback_data="menu:channels"),
-            InlineKeyboardButton(text="📨 Рассылка",         callback_data="menu:mailing"),
+            InlineKeyboardButton(text="📤 Рассылка",         callback_data="menu:mailing"),
         ],
         [
             InlineKeyboardButton(text="💎 Тарифы",           callback_data="menu:tariffs"),
@@ -92,7 +92,7 @@ async def cmd_start(message: Message, platform_user: dict | None):
             # Удаляем токен (одноразовый)
             await db.execute("DELETE FROM team_invites WHERE token=$1", token)
             await message.answer(
-                f"✅ <b>Вы добавлены как администратор</b>\n\n"
+                f"☑ <b>Вы добавлены как администратор</b>\n\n"
                 f"Бот @{bot_username} появился в вашем списке ботов.\n"
                 f"Вы можете управлять им через главное меню.",
                 reply_markup=InlineKeyboardMarkup(inline_keyboard=[

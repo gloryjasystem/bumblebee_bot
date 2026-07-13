@@ -232,7 +232,7 @@ async def on_save_key(msg: Message, state: FSMContext, platform_user: dict | Non
     owner_id = platform_user["user_id"]
     text = await _render_settings_text()
     await msg.answer(
-        f"✅ <b>API Key сохранён</b>\n"
+        f"☑ <b>API Key сохранён</b>\n"
         f"<i>Сообщение с ключом удалено из чата.</i>\n\n"
         + text,
         parse_mode="HTML",
@@ -276,7 +276,7 @@ async def on_save_host(msg: Message, state: FSMContext, platform_user: dict | No
         # Известный провайдер — берём готовые значения из реестра
         new_url   = provider.url
         new_param = provider.param
-        provider_note = f"✅ Провайдер распознан автоматически (параметр: <code>{new_param}</code>)"
+        provider_note = f"☑ Провайдер распознан автоматически (параметр: <code>{new_param}</code>)"
     else:
         # Неизвестный провайдер — подменяем хост в URL, сохраняем путь
         old_url = await get_setting("rapidapi_url", f"https://{new_host}/")
@@ -319,7 +319,7 @@ async def on_save_host(msg: Message, state: FSMContext, platform_user: dict | No
     owner_id = platform_user["user_id"]
     text = await _render_settings_text()
     await msg.answer(
-        f"✅ <b>API Host сохранён:</b> <code>{new_host}</code>\n"
+        f"☑ <b>API Host сохранён:</b> <code>{new_host}</code>\n"
         f"{provider_note}\n\n" + text,
         parse_mode="HTML",
         reply_markup=_kb_api_settings(owner_id),

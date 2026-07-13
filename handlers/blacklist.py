@@ -134,7 +134,7 @@ async def on_bl_manual_input(message: Message, state: FSMContext, platform_user:
             if ok:
                 added += 1
                 suffix = f" (ID: <code>{uid}</code>)" if uid and not parsed["user_id"] else ""
-                results.append(f"• {token} ✅{suffix}")
+                results.append(f"• {token} ☑{suffix}")
                 newly_added.append((uid, uname))
             else:
                 results.append(f"• {token} (уже был)")
@@ -149,7 +149,7 @@ async def on_bl_manual_input(message: Message, state: FSMContext, platform_user:
         result_text += f"\n... и ещё {len(results)-10}"
 
     await message.answer(
-        f"✅ <b>Добавлено: {added}</b> | ❌ Ошибок: {errors}\n\n"
+        f"☑ <b>Добавлено: {added}</b> | ❌ Ошибок: {errors}\n\n"
         f"{result_text}\n\n"
         f"Итого в базе: {total:,}\n"
         f"⚡ Запускаю зачистку из каналов...",
@@ -241,8 +241,8 @@ async def on_bl_file_upload(message: Message, bot: Bot, state: FSMContext, platf
     await wait_msg.delete()
 
     await message.answer(
-        f"✅ <b>Файл обработан</b>\n\n"
-        f"✅ Добавлено: {stats['added']:,}\n"
+        f"☑ <b>Файл обработан</b>\n\n"
+        f"☑ Добавлено: {stats['added']:,}\n"
         f"⚠️ Неверный формат: {stats['invalid']:,}\n"
         f"📊 Итого в базе: {stats['total']:,}\n\n"
         f"⚙️ Запускаю авто-зачистку в фоне..."
@@ -357,7 +357,7 @@ async def on_bs_bl_text(message: Message, state: FSMContext, platform_user: dict
             if ok:
                 added += 1
                 suffix = f" (ID: <code>{uid}</code>)" if uid and not parsed["user_id"] else ""
-                results.append(f"• {token} ✅{suffix}")
+                results.append(f"• {token} ☑{suffix}")
                 newly_added.append((uid, uname))
             else:
                 exists += 1
@@ -396,7 +396,7 @@ async def on_bs_bl_text(message: Message, state: FSMContext, platform_user: dict
 
     if mode == "add":
         await message.answer(
-            f"✅ <b>Добавлено: {added}</b> | Ошибок: {invalid}\n\n"
+            f"☑ <b>Добавлено: {added}</b> | Ошибок: {invalid}\n\n"
             f"{result_text}\n\n"
             f"Итого в ЧС: {total:,}\n"
             f"⚡ Запускаю зачистку из каналов...",
@@ -423,7 +423,7 @@ async def on_bs_bl_text(message: Message, state: FSMContext, platform_user: dict
         asyncio.create_task(_kick_bs())
     else:
         await message.answer(
-            f"✅ <b>Удалено: {removed}</b> | Ошибок: {invalid}\n\n"
+            f"☑ <b>Удалено: {removed}</b> | Ошибок: {invalid}\n\n"
             f"{result_text}\n\n"
             f"Итого в ЧС: {total:,}",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
@@ -509,7 +509,7 @@ async def on_bs_bl_file(message: Message, bot: Bot, state: FSMContext,
                 stats = await import_file(owner_id, content_bytes, file_name, child_bot_id=child_bot_id)
                 try:
                     await wait_msg.edit_text(
-                        "✅ <b>Файл обработан</b>\n\n"
+                        "☑ <b>Файл обработан</b>\n\n"
                         f"➕ Добавлено: {stats['added']:,}\n"
                         f"⚠️ Неверный формат: {stats['invalid']:,}\n"
                         f"📊 Итого в базе: {stats['total']:,}",
@@ -581,7 +581,7 @@ async def on_bs_bl_file(message: Message, bot: Bot, state: FSMContext,
         await wait_msg.delete()
         await state.clear()
         await message.answer(
-            "✅ <b>Файл обработан</b>\n\n"
+            "☑ <b>Файл обработан</b>\n\n"
             f"➖ Удалено из ЧС: {removed:,}\n"
             f"⚠️ Неверный формат: {invalid:,}\n"
             f"📊 Итого в базе: {total:,}",

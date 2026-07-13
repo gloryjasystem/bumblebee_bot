@@ -72,7 +72,7 @@ def kb_links_list(links: list, chat_id: int, child_bot_id: int,
     AUTO_LABEL = {"on": " (включено)", "off": " (выключено)"}
     for link in chunk:
         lk_d = dict(link)
-        type_icon = {"request": "✅", "regular": "🔗", "onetime": "🔢"}.get(
+        type_icon = {"request": "☑", "regular": "🔗", "onetime": "🔢"}.get(
             lk_d.get("link_type", ""), "🔗")
         auto = lk_d.get("auto_accept") or "base"
         auto_suffix = AUTO_LABEL.get(auto, "")  # пусто если base
@@ -97,7 +97,7 @@ def kb_links_list(links: list, chat_id: int, child_bot_id: int,
 def kb_link_types(chat_id: int, child_bot_id: int) -> InlineKeyboardMarkup:
     """Экран 2: выбор типа ссылки. Back → Экран 1."""
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ Ссылка с заявкой",
+        [InlineKeyboardButton(text="☑ Ссылка с заявкой",
                               callback_data=f"link_type:{chat_id}:{child_bot_id}:request")],
         [InlineKeyboardButton(text="🔗 Обычная ссылка",
                               callback_data=f"link_type:{chat_id}:{child_bot_id}:regular")],
@@ -259,7 +259,7 @@ async def on_link_name(message: Message, state: FSMContext, bot: Bot):
     ])
     limit_text = (
         "🔗 <b>Создание ссылки</b>\n\n"
-        f"✅ Название: <b>{name}</b>\n\n"
+        f"☑ Название: <b>{name}</b>\n\n"
         "💡 Укажите лимит переходов (или пропустите):\n"
         "Например: 100 — ссылка сработает только для 100 человек."
     )
@@ -306,8 +306,8 @@ async def on_link_limit(event, state: FSMContext, bot: Bot):
 
     budget_text = (
         "🔗 <b>Создание ссылки</b>\n\n"
-        f"✅ Название: <b>{data.get('name', '—')}</b>\n"
-        f"✅ Лимит: <b>{limit if limit else 'без лимита'}</b>\n\n"
+        f"☑ Название: <b>{data.get('name', '—')}</b>\n"
+        f"☑ Лимит: <b>{limit if limit else 'без лимита'}</b>\n\n"
         "💡 Укажите бюджет этой ссылки (сколько потрачено на рекламу):\n"
         "Пример: 1000₽ или 50$\n\n"
         "🎯 Бот посчитает стоимость подписчика автоматически."
@@ -440,7 +440,7 @@ async def on_link_budget(event, state: FSMContext, bot: Bot):
     )
 
     await _edit_final(
-        f"✅ <b>Ссылка создана!</b>\n\n"
+        f"☑ <b>Ссылка создана!</b>\n\n"
         f"<code>{tg_link.invite_link}</code>",
         kb=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="📊 Детали ссылки",
@@ -644,7 +644,7 @@ async def on_link_delete_ask(callback: CallbackQuery, platform_user: dict | None
         "🗑 <b>Удалить ссылку?</b>",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(
-                text="✅ Удалить",
+                text="☑ Удалить",
                 callback_data=f"link_delete:{link_id}:{chat_id}:{child_bot_id}",
             )],
             [InlineKeyboardButton(
@@ -672,7 +672,7 @@ async def on_link_delete(callback: CallbackQuery, platform_user: dict | None):
     )
     await navigate(
         callback,
-        "✅ <b>Ссылка удалена</b>",
+        "☑ <b>Ссылка удалена</b>",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(
                 text="➡ Перейти к ссылкам",

@@ -339,7 +339,7 @@ async def on_settings_menu(callback: CallbackQuery, platform_user: dict | None):
         f"├ 📍 Площадки: <b>{chats_display}</b>\n"
         f"└ ⛔️ Всего в ЧС: <b>{bl_str}</b> из {max_bl_str}\n",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="📜 История покупок", callback_data="settings:history")],
+            [InlineKeyboardButton(text="📝 История покупок", callback_data="settings:history")],
             [
                 InlineKeyboardButton(text="📖 Инструкция",  callback_data="menu:help"),
                 InlineKeyboardButton(text="💬 Поддержка",   url=support_url),
@@ -360,9 +360,9 @@ async def on_settings_history(callback: CallbackQuery, platform_user: dict | Non
     )
     
     if not payments:
-        text = "📜 <b>История покупок</b>\n\nУ вас еще нет завершенных платежей."
+        text = "📝 <b>История покупок</b>\n\nУ вас еще нет завершенных платежей."
     else:
-        text = "📜 <b>История покупок</b>\n\n"
+        text = "📝 <b>История покупок</b>\n\n"
         tariff_labels = {"start": "🌱 Старт", "pro": "⭐ Про", "business": "💼 Бизнес"}
         period_labels = {"month": "1 мес", "year": "1 год"}
         

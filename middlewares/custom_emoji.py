@@ -26,7 +26,13 @@ logger = logging.getLogger(__name__)
 
 # ── подготовка (один раз при импорте) ────────────────────────────────────────
 _TOKENS = sorted(CUSTOM_EMOJI.keys(), key=len, reverse=True)  # длинные (с VS16) раньше
-_EMOJI_RE = re.compile("|".join(re.escape(t) for t in _TOKENS)) if _TOKENS else None
+# Маркер-исключение: невидимый ZWSP ПЕРЕД эмодзи в исходнике → эту конкретную эмодзи
+# НЕ оборачиваем (оставляем обычной) и маркер убираем. Точечный отказ от премиума в
+# одном месте, БЕЗ изменения словаря и без влияния на другие экраны.
+_NOWRAP = "​"
+_EMOJI_RE = re.compile(
+    "(" + re.escape(_NOWRAP) + ")?(" + "|".join(re.escape(t) for t in _TOKENS) + ")"
+) if _TOKENS else None
 _TAG_RE = re.compile(r"(<[^>]+>)")
 _SKIP_TAGS = ("code", "pre", "tg-emoji")  # внутри них кастом не вставляем
 

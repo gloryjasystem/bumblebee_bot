@@ -526,7 +526,7 @@ async def on_link_detail(callback: CallbackQuery, platform_user: dict | None):
         created_at  = lk["created_at"].strftime('%d.%m.%Y') if lk.get("created_at") else "—"
 
         text = (
-            f"📊 Статистика по {safe_name}\n\n"
+            f"🍑 Статистика по {safe_name}\n\n"
             f"🔗 Ссылка: <code>{safe_link}</code>\n"
             f"🔒 Вид: {link_type}\n\n"
             f"🫂 <u>Подписчики</u>\n"

@@ -3003,7 +3003,10 @@ async def on_bs_filter_rtl(callback: CallbackQuery, platform_user: dict | None):
     if not platform_user:
         return
     child_bot_id = int(callback.data.split(":")[1])
-    owner_id = platform_user["user_id"]
+    owner_id = await resolve_owner_id(platform_user["user_id"], child_bot_id)
+    if owner_id is None:
+        await callback.answer("Нет доступа", show_alert=True)
+        return
     ch = await _get_bot_first_chat(owner_id, child_bot_id)
     new_val = not (ch["filter_rtl"] if ch else False)
     await db.execute("UPDATE bot_chats SET filter_rtl=$1 WHERE child_bot_id=$2 AND owner_id=$3",
@@ -3017,7 +3020,10 @@ async def on_bs_filter_hier(callback: CallbackQuery, platform_user: dict | None)
     if not platform_user:
         return
     child_bot_id = int(callback.data.split(":")[1])
-    owner_id = platform_user["user_id"]
+    owner_id = await resolve_owner_id(platform_user["user_id"], child_bot_id)
+    if owner_id is None:
+        await callback.answer("Нет доступа", show_alert=True)
+        return
     ch = await _get_bot_first_chat(owner_id, child_bot_id)
     new_val = not (ch["filter_hieroglyph"] if ch else False)
     await db.execute("UPDATE bot_chats SET filter_hieroglyph=$1 WHERE child_bot_id=$2 AND owner_id=$3",
@@ -3031,7 +3037,10 @@ async def on_bs_filter_photo(callback: CallbackQuery, platform_user: dict | None
     if not platform_user:
         return
     child_bot_id = int(callback.data.split(":")[1])
-    owner_id = platform_user["user_id"]
+    owner_id = await resolve_owner_id(platform_user["user_id"], child_bot_id)
+    if owner_id is None:
+        await callback.answer("Нет доступа", show_alert=True)
+        return
     ch = await _get_bot_first_chat(owner_id, child_bot_id)
     new_val = not (ch["filter_no_photo"] if ch else False)
     await db.execute("UPDATE bot_chats SET filter_no_photo=$1 WHERE child_bot_id=$2 AND owner_id=$3",

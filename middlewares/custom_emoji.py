@@ -153,7 +153,8 @@ class CustomEmojiMiddleware(BaseRequestMiddleware):
             return await make_request(bot, new_method)
         except TelegramBadRequest as e:
             msg = str(e).lower()
-            if any(k in msg for k in ("emoji", "entit", "parse", "tag", "unsupported")):
+            if any(k in msg for k in ("emoji", "entit", "parse", "tag",
+                                       "unsupported", "document", "invalid")):
                 logger.warning(f"custom_emoji fallback to plain: {e}")
                 return await make_request(bot, method)  # исходный, без иконок
             raise

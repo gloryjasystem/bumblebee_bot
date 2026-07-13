@@ -6,6 +6,8 @@ dockerfilePath = "Dockerfile"
 [deploy]
 startCommand = "python bot.py"
 healthcheckPath = "/health"
-healthcheckTimeout = 30
+# 30с не хватало в окне пересменки при деплое (новый инстанс конфликтует со старым
+# за опрос дочерних ботов) → healthcheck иногда не успевал. Даём запас.
+healthcheckTimeout = 180
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 3

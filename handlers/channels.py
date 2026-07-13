@@ -384,7 +384,7 @@ async def on_bot_settings(callback: CallbackQuery, state: FSMContext, platform_u
     if is_owner:
         # Владелец: Защита + Управление в одной строке
         keyboard = [
-            [InlineKeyboardButton(text="✅ Обработка заявок",  callback_data=f"bs_requests:{child_bot_id}")],
+            [InlineKeyboardButton(text="☑ Обработка заявок",  callback_data=f"bs_requests:{child_bot_id}")],
             [
                 InlineKeyboardButton(text="💬 Сообщения",      callback_data=f"bs_messages:{child_bot_id}"),
                 btn_mailing,
@@ -407,7 +407,7 @@ async def on_bot_settings(callback: CallbackQuery, state: FSMContext, platform_u
     else:
         # Admin: без Управления и Удалить бот, Защита — отдельной строкой
         keyboard = [
-            [InlineKeyboardButton(text="✅ Обработка заявок",  callback_data=f"bs_requests:{child_bot_id}")],
+            [InlineKeyboardButton(text="☑ Обработка заявок",  callback_data=f"bs_requests:{child_bot_id}")],
             [
                 InlineKeyboardButton(text="💬 Сообщения",      callback_data=f"bs_messages:{child_bot_id}"),
                 btn_mailing,
@@ -1199,7 +1199,7 @@ async def _show_channel_detail(callback: CallbackQuery, platform_user: dict, ch_
     is_god_mode = bool(_god_get(callback.from_user.id))
 
     keyboard = [
-        [InlineKeyboardButton(text="✅ Обработка заявок",    callback_data=f"ch_requests:{chat_id}")],
+        [InlineKeyboardButton(text="☑ Обработка заявок",    callback_data=f"ch_requests:{chat_id}")],
         [
             InlineKeyboardButton(text="💬 Сообщения",        callback_data=f"ch_messages:{chat_id}"),
             InlineKeyboardButton(text="📨 Рассылка",         callback_data=f"ch_mailing:{chat_id}"),

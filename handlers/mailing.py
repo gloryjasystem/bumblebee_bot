@@ -330,6 +330,8 @@ async def on_ml_mass_scheduled(callback: CallbackQuery, platform_user: dict | No
     if not platform_user:
         return
     owner_id = platform_user["user_id"]
+    # Возврат к списку — убираем эхо-превью открытой задачи, если оно висит сверху
+    await _clear_sched_echo(callback.bot, callback.message.chat.id)
 
     # Парсим страницу: "ml_mass_scheduled" → 0, "ml_mass_scheduled:2" → 2
     parts = callback.data.split(":")
@@ -657,6 +659,9 @@ async def _show_draft(callback: CallbackQuery, m: dict):
     # Сохраняем echo message_id для будущего редактирования/удаления
     if sent_echo:
         _draft_echo_ids[mid] = (sent_echo.message_id, tg_chat_id)
+        # Трекинг активного эха по чату — чтобы «Назад» к списку или открытие другой
+        # задачи его убрали (иначе эхо копятся сверху в чате).
+        _active_sched_echo[tg_chat_id] = sent_echo.message_id
 
     # ── Меню управления (настройки + кнопки) ───────────
     await callback.message.answer(
@@ -1428,6 +1433,8 @@ async def on_ml_view_draft(callback: CallbackQuery, platform_user: dict | None):
     # Удаляем старое эхо из чата и сбрасываем кэш — иначе _show_draft попытается
     # отредактировать уже удалённое сообщение и покажет пустой экран
     await _delete_draft_echo(callback.bot, mailing_id)
+    # Плюс убираем эхо от ПРЕДЫДУЩЕЙ открытой задачи (другой mid), если осталось
+    await _clear_sched_echo(callback.bot, callback.message.chat.id)
     await _show_draft(callback, dict(m))
 
 

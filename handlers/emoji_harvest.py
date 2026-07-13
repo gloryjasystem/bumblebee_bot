@@ -15,12 +15,20 @@ from aiogram import Router
 from aiogram.types import Message
 from aiogram.filters import Command
 
+from config import settings
+
 logger = logging.getLogger(__name__)
 router = Router()
 
 
 @router.message(Command("emojiid"))
 async def cmd_emojiid(message: Message):
+    # Только владелец/совладелец: у владельца есть Premium — им и добирать id.
+    uid = message.from_user.id if message.from_user else None
+    if uid != settings.owner_telegram_id and not (
+        settings.co_owner_telegram_id is not None and uid == settings.co_owner_telegram_id
+    ):
+        return
     text = message.text or ""
     found = []
     for e in (message.entities or []):

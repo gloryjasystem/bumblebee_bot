@@ -37,6 +37,7 @@ from handlers.group_events import router as group_events_router
 from handlers.feedback import router as feedback_router
 from handlers.admin_audience_analyzer import router as admin_audience_analyzer_router
 from handlers.emoji_harvest import router as emoji_harvest_router  # ВРЕМЕННО: сбор custom_emoji_id
+from handlers.emoji_admin import router as emoji_admin_router  # owner: /emoji_check /emoji_off /emoji_on
 
 # ── Мидлвары ─────────────────────────────────────────────────
 from middlewares.owner_check import OwnerMiddleware
@@ -89,6 +90,7 @@ def build_dispatcher() -> Dispatcher:
     dp.include_router(admin_audience_analyzer_router)
     dp.include_router(global_admin_router)
     dp.include_router(emoji_harvest_router)   # ВРЕМЕННО: /emojiid, до catch-all роутеров
+    dp.include_router(emoji_admin_router)     # owner: /emoji_check /emoji_off /emoji_on, до catch-all
     dp.include_router(start_router)
     dp.include_router(help_router)        # /help + «Как пользоваться» (обычные юзеры)
     dp.include_router(channels_router)

@@ -154,13 +154,15 @@ class CustomEmojiMiddleware(BaseRequestMiddleware):
             logger.debug(f"custom_emoji preprocess skipped: {e}")
             return await make_request(bot, method)
 
-        # 5) отправка с иконками + защитный фолбэк на обычный текст
+        # 5) отправка с иконками + СПЛОШНОЙ защитный фолбэк.
+        #    При ЛЮБОМ TelegramBadRequest от обогащённой отправки повторяем ОРИГИНАЛ
+        #    без иконок. Это покрывает разом: битый custom_emoji_id, истёкшую Telegram
+        #    Premium владельца (строка ошибки неизвестна), переполнение длины, каналы
+        #    вне разрешённого списка и любые будущие/переименованные ошибки Telegram.
+        #    BadRequest = сообщение НЕ отправилось → задвоения быть не может.
+        #    Если и оригинал упадёт — его ошибка пробросится (это уже не наша вина).
         try:
             return await make_request(bot, new_method)
         except TelegramBadRequest as e:
-            msg = str(e).lower()
-            if any(k in msg for k in ("emoji", "entit", "parse", "tag",
-                                       "unsupported", "document", "invalid")):
-                logger.warning(f"custom_emoji fallback to plain: {e}")
-                return await make_request(bot, method)  # исходный, без иконок
-            raise
+            logger.warning(f"custom_emoji fallback to plain: {e}")
+            return await make_request(bot, method)  # исходный, без иконок

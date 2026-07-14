@@ -1544,7 +1544,8 @@ async def on_ch_msg_delay(callback: CallbackQuery, state: FSMContext, platform_u
         "<b>Сразу</b> — по заявке, ещё до входа в канал.\n"
         "<b>После входа</b> — когда человек принят в канал.\n\n"
         f"Выбрано: <b>{_moment_selected(cur)}</b>\n\n"
-        "ⓘ С задержкой дойдёт только тем, кто уже писал боту.",
+        "ⓘ С задержкой по времени приветствие дойдёт только тем, кто прошёл "
+        "капчу или писал боту (например, нажал /start).",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=chip_rows),
     )
 

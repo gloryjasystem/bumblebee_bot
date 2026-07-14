@@ -420,7 +420,7 @@ async def on_adding_content(message: Message, state: FSMContext, platform_user: 
         return
     owner_id = await resolve_chat_owner(platform_user["user_id"], chat_id)
 
-    text = sanitize(message.text or message.caption or "", max_len=1024)
+    text = message.html_text or ""  # сохраняем форматирование (см. приветствие)
     media_fid, media_type = _extract_media(message)
     if not text and not media_fid:
         await message.answer("Пришлите текст или медиа для сообщения.")
@@ -725,7 +725,7 @@ async def on_wstep_content_input(message: Message, state: FSMContext, platform_u
     owner_id = await _step_owner(platform_user["user_id"], step_id)
     # Комбинированный ввод как в приветствии (_handle_msg_input): текст И медиа из
     # одного сообщения ПОЛНОСТЬЮ заменяют оба поля (нет медиа во вводе → media стирается).
-    text = sanitize(message.text or message.caption or "", max_len=1024)
+    text = message.html_text or ""  # сохраняем форматирование (см. приветствие)
     media_fid, media_type = _extract_media(message)
     await db.execute(
         "UPDATE welcome_steps SET text=$1, media=$2, media_type=$3 WHERE id=$4 AND owner_id=$5",

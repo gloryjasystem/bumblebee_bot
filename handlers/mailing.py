@@ -279,10 +279,8 @@ async def on_mass_mailing_text(message: Message, state: FSMContext, bot: Bot):
     media_file_id = None
     media_type = None
 
-    if message.text:
-        text = sanitize(message.text, max_len=4096)
-    elif message.caption:
-        text = sanitize(message.caption, max_len=1024)
+    # html_text сохраняет форматирование (текст И подпись к медиа); доставка/превью — parse_mode="HTML"
+    text = message.html_text or ""
 
     if message.photo:
         media_file_id = message.photo[-1].file_id
@@ -339,9 +337,9 @@ async def on_mass_mailing_text(message: Message, state: FSMContext, bot: Bot):
             "video": message.answer_video,
             "document": message.answer_document,
         }.get(media_type, message.answer_photo)
-        await send_fn(media_file_id, caption=text[:1000] or None, parse_mode="HTML")
+        await send_fn(media_file_id, caption=text or None, parse_mode="HTML")
     elif text:
-        await message.answer(text[:1200], parse_mode="HTML")
+        await message.answer(text, parse_mode="HTML")
 
     # ── Меню управления
     _tz = await _get_bot_tz(dict(m).get("child_bot_id"))
@@ -960,11 +958,11 @@ async def on_ml_scheduled_view(callback: CallbackQuery, platform_user: dict | No
             "video": callback.message.answer_video,
             "document": callback.message.answer_document,
         }.get(media_type, callback.message.answer_photo)
-        sent_echo = await send_fn(media, caption=text[:1000] or None,
+        sent_echo = await send_fn(media, caption=text or None,
                                    parse_mode="HTML", reply_markup=kb_echo)
     elif text:
         sent_echo = await callback.message.answer(
-            text[:1200], parse_mode="HTML",
+            text, parse_mode="HTML",
             link_preview_options=lpo, reply_markup=kb_echo,
         )
 
@@ -1174,10 +1172,8 @@ async def on_scheduled_edit_input(message: Message, state: FSMContext):
     media_file_id = None
     media_type = None
 
-    if message.text:
-        text = sanitize(message.text, max_len=4096)
-    elif message.caption:
-        text = sanitize(message.caption, max_len=1024)
+    # html_text сохраняет форматирование (текст И подпись к медиа); доставка/превью — parse_mode="HTML"
+    text = message.html_text or ""
 
     if message.photo:
         media_file_id = message.photo[-1].file_id
@@ -1221,10 +1217,10 @@ async def on_scheduled_edit_input(message: Message, state: FSMContext):
             "video": message.answer_video,
             "document": message.answer_document,
         }.get(media_type, message.answer_photo)
-        sent_echo = await send_fn(media_file_id, caption=text[:1000] or None,
+        sent_echo = await send_fn(media_file_id, caption=text or None,
                                    parse_mode="HTML", reply_markup=kb_echo)
     elif text:
-        sent_echo = await message.answer(text[:1200], parse_mode="HTML",
+        sent_echo = await message.answer(text, parse_mode="HTML",
                                           link_preview_options=lpo, reply_markup=kb_echo)
     if sent_echo:
         _draft_echo_ids[mailing_id] = (sent_echo.message_id, message.chat.id)
@@ -1352,10 +1348,8 @@ async def on_mailing_text(message: Message, state: FSMContext, bot: Bot):
     media_file_id = None
     media_type = None
 
-    if message.text:
-        text = sanitize(message.text, max_len=4096)
-    elif message.caption:
-        text = sanitize(message.caption, max_len=1024)
+    # html_text сохраняет форматирование (текст И подпись к медиа); доставка/превью — parse_mode="HTML"
+    text = message.html_text or ""
 
     if message.photo:
         media_file_id = message.photo[-1].file_id
@@ -1426,10 +1420,10 @@ async def on_mailing_text(message: Message, state: FSMContext, bot: Bot):
                 "video": message.answer_video,
                 "document": message.answer_document,
             }.get(media_type, message.answer_photo)
-            sent_echo = await send_fn(media_file_id, caption=text[:1000] or None, parse_mode="HTML")
+            sent_echo = await send_fn(media_file_id, caption=text or None, parse_mode="HTML")
         elif text:
             sent_echo = await message.answer(
-                text[:1200], parse_mode="HTML",
+                text, parse_mode="HTML",
                 link_preview_options=_echo_lpo,
             )
         logger.info(f"[mailing_text] echo sent: msg_id={sent_echo.message_id if sent_echo else None}")
@@ -2089,10 +2083,10 @@ async def on_schedule_input(message: Message, state: FSMContext):
                     "video": message.answer_video,
                     "document": message.answer_document,
                 }.get(media_type, message.answer_photo)
-                sent_echo = await send_fn(media, caption=text[:1000] or None,
+                sent_echo = await send_fn(media, caption=text or None,
                                           parse_mode="HTML", reply_markup=kb_echo)
             elif text:
-                sent_echo = await message.answer(text[:1200], parse_mode="HTML",
+                sent_echo = await message.answer(text, parse_mode="HTML",
                                                   link_preview_options=lpo)
             if sent_echo:
                 _draft_echo_ids[int(mailing_id)] = (sent_echo.message_id, message.chat.id)

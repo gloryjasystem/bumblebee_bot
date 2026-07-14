@@ -1134,8 +1134,10 @@ async def _handle_msg_input(message: Message, state: FSMContext):
     scope = data.get("scope", "ch")
     f = _MSG_FIELDS[msg_type]
 
-    text = sanitize(message.text or message.caption or "", max_len=1024)
-    
+    # html_text сохраняет форматирование (жирный/курсив/цитата/моно/ссылки/премиум-эмодзи).
+    # Покрывает и текст, и подпись к медиа; доставка и эхо шлются с parse_mode="HTML".
+    text = message.html_text or ""
+
     # Удаляем сообщение-приглашение, если оно было сохранено в FSM
     prompt_mid = data.get("editor_prompt_mid")
     if prompt_mid:

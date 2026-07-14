@@ -5171,6 +5171,21 @@ def _tz_grid_buttons(child_bot_id: int) -> list[list[InlineKeyboardButton]]:
     return rows
 
 
+def _tz_grid_markup(child_bot_id: int) -> InlineKeyboardMarkup:
+    """Полная клавиатура экрана выбора часового пояса: сетка времён + «Обновить»
+    (обновляет ТОЛЬКО кнопки, callback bs_tz_refresh) + «Назад»."""
+    grid = _tz_grid_buttons(child_bot_id)
+    grid.append([InlineKeyboardButton(
+        text="⏳ Обновить время",
+        callback_data=f"bs_tz_refresh:{child_bot_id}",
+    )])
+    grid.append([InlineKeyboardButton(
+        text="◄ Назад",
+        callback_data=f"bs_timezone:{child_bot_id}",
+    )])
+    return InlineKeyboardMarkup(inline_keyboard=grid)
+
+
 @router.callback_query(F.data.startswith("bs_timezone:"))
 async def on_bs_timezone(callback: CallbackQuery, platform_user: dict | None,
                          _selected_time: str | None = None,
@@ -5229,25 +5244,31 @@ async def on_bs_tz_change(callback: CallbackQuery, platform_user: dict | None):
     ch = await _get_bot_first_chat(owner_id, child_bot_id)
     current_tz = ch["timezone"] if ch and ch.get("timezone") else "Europe/Moscow"
 
-    grid = _tz_grid_buttons(child_bot_id)
-    grid.append([InlineKeyboardButton(
-        text="⏳ Обновить время",
-        callback_data=f"bs_tz_change:{child_bot_id}",
-    )])
-    grid.append([InlineKeyboardButton(
-        text="◄ Назад",
-        callback_data=f"bs_timezone:{child_bot_id}",
-    )])
-
     await callback.message.edit_text(
         f"🌙 <b>Часовой пояс:</b> {current_tz}\n\n"
-        "<blockquote>ℹ Для смены часового пояса выберите текущее время "
+        "<blockquote>ℹ️ Для смены часового пояса выберите текущее время "
         "для вашего региона.</blockquote>\n\n"
         "Выберите действие 👇",
         parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=grid),
+        reply_markup=_tz_grid_markup(child_bot_id),
     )
     await callback.answer()
+
+
+@router.callback_query(F.data.startswith("bs_tz_refresh:"))
+async def on_bs_tz_refresh(callback: CallbackQuery, platform_user: dict | None):
+    """«Обновить время» — обновляем ТОЛЬКО сетку кнопок (reply_markup), НЕ трогая
+    текст сообщения. Иначе повторная отправка текста прогоняет его через премиум-
+    перехватчик и иконки сбрасываются на обычные."""
+    if not platform_user:
+        return
+    child_bot_id = int(callback.data.split(":")[1])
+    from aiogram.exceptions import TelegramBadRequest
+    try:
+        await callback.message.edit_reply_markup(reply_markup=_tz_grid_markup(child_bot_id))
+    except TelegramBadRequest:
+        pass  # то же время в пределах минуты → «message is not modified», это ок
+    await callback.answer("🔄 Время обновлено")
 
 
 @router.callback_query(F.data.startswith("bs_tz_pick:"))

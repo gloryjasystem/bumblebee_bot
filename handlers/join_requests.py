@@ -235,7 +235,7 @@ async def on_join_request(event: ChatJoinRequest, bot: Bot):
     #    редакторе приветствия (welcome_delay_sec = -1); всем остальным (>=0) — как раньше.
     if int(settings_row.get("welcome_delay_sec") or 0) < 0:
         try:
-            await _send_welcome(bot, event.chat.id, user, settings_row, contact_established=True)
+            await _send_welcome(bot, event.chat.id, user, settings_row, contact_established=True, from_join_request=True)
         except Exception as _we:
             logger.warning(f"[WELCOME] «по заявке» не ушло user={user.id}: {_we}")
 
@@ -585,7 +585,7 @@ async def _register_user(owner_id: int, chat_id: int, user,
     )
 
 
-async def _send_welcome(bot: Bot, chat_id: int, user, settings_row: dict, contact_established: bool = False) -> bool:
+async def _send_welcome(bot: Bot, chat_id: int, user, settings_row: dict, contact_established: bool = False, from_join_request: bool = False) -> bool:
     """Отправляет приветствие новому пользователю в личку.
     Возвращает True при успешной доставке (или если приветствие уже отправлено
     другим путём), False — если доставка не удалась.
@@ -593,6 +593,12 @@ async def _send_welcome(bot: Bot, chat_id: int, user, settings_row: dict, contac
     короткого окна игнорируется — так гарантируется РОВНО ОДНО приветствие,
     даже если сработали оба пути (одобрение заявки и событие вступления).
     При неудаче пометка снимается — чтобы другой бот канала мог доставить."""
+    # «Сразу» (welcome_delay_sec < 0): базовое приветствие уходит ТОЛЬКО в момент заявки
+    # (from_join_request=True из on_join_request). Все прочие вызовы (авто-принятие/вход/
+    # капча/отложенное/ручное) для такого канала — no-op: иначе при отложенном или ручном
+    # принятии позже 180-сек дедапа пользователь получил бы ДУБЛЬ приветствия.
+    if not from_join_request and int(settings_row.get("welcome_delay_sec") or 0) < 0:
+        return True
     if _welcome_already_sent(chat_id, user.id):
         logger.info(f"[WELCOME] Пропуск дубля приветствия user={user.id} chat={chat_id}")
         return True

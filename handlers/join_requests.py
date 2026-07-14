@@ -233,9 +233,15 @@ async def on_join_request(event: ChatJoinRequest, bot: Bot):
     #    капча/ручной) идёт как обычно; на одобрении не задвоится — _send_welcome
     #    идемпотентна по (chat_id, user_id). Режим включается выбором «Сразу» в
     #    редакторе приветствия (welcome_delay_sec = -1); всем остальным (>=0) — как раньше.
-    if int(settings_row.get("welcome_delay_sec") or 0) < 0:
+    # settings_row из _get_owner может быть неоднозначным для каналов с несколькими ботами.
+    # Для «Сразу» берём КАНОНИЧЕСКУЮ строку канала (как after-join путь в child_bot_runner),
+    # иначе подхватывается чужая строка без медиа и приветствие уходит без картинки.
+    from db.channels import get_channel
+    _canon_wl = await get_channel(event.chat.id)
+    _wl_row = dict(_canon_wl) if _canon_wl else settings_row
+    if int(_wl_row.get("welcome_delay_sec") or 0) < 0:
         try:
-            await _send_welcome(bot, event.chat.id, user, settings_row, contact_established=True, from_join_request=True)
+            await _send_welcome(bot, event.chat.id, user, _wl_row, contact_established=True, from_join_request=True)
         except Exception as _we:
             logger.warning(f"[WELCOME] «по заявке» не ушло user={user.id}: {_we}")
 
@@ -687,6 +693,7 @@ async def _send_welcome(bot: Bot, chat_id: int, user, settings_row: dict, contac
                             logger.error(f"[WL REUPLOAD ERR] {inner_e}")
                             m = await bot.send_message(user.id, text, parse_mode="HTML", reply_markup=user_kb)
                     else:
+                        logger.warning(f"[WL MEDIA FAIL] медиа не ушло, откат в текст user={user.id} type={media_type}: {e}")
                         m = await bot.send_message(user.id, text, parse_mode="HTML", reply_markup=user_kb)
                 sent_msgs.append(m)
             else:

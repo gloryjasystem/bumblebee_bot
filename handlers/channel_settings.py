@@ -4121,7 +4121,7 @@ async def on_bs_blacklist(callback: CallbackQuery, platform_user: dict | None):
 
     await callback.message.edit_text(
         "⛔️ <b>ЧС пользователей</b>\n\n"
-        f"🔢 Записей в базе ЧС: {count:,}",
+        f"🗃 Записей в базе ЧС: {count:,}",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="⚙️ Управлять базой ЧС",  callback_data=f"bs_bl_manage:{child_bot_id}")],
             [InlineKeyboardButton(text="📤 Экспортировать базу ЧС", callback_data=f"bs_bl_export:{child_bot_id}")],
@@ -4536,7 +4536,7 @@ async def on_bs_bl_dl_bck(callback: CallbackQuery, bot: Bot, platform_user: dict
 
     await callback.message.answer(
         "⛔️ <b>ЧС пользователей</b>\n\n"
-        f"🔢 Записей в базе ЧС: {count:,}",
+        f"🗃 Записей в базе ЧС: {count:,}",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="⚙️ Управлять базой ЧС",  callback_data=f"bs_bl_manage:{child_bot_id}")],
             [InlineKeyboardButton(text="📤 Экспортировать базу ЧС", callback_data=f"bs_bl_export:{child_bot_id}")],

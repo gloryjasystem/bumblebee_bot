@@ -3176,9 +3176,11 @@ async def on_bs_settings(callback: CallbackQuery, platform_user: dict | None):
 
 # ── База пользователей ────────────────────────────────────────
 @router.callback_query(F.data.startswith("bs_base:"))
-async def on_bs_base(callback: CallbackQuery, platform_user: dict | None):
+async def on_bs_base(callback: CallbackQuery, state: FSMContext,
+                     platform_user: dict | None):
     if not platform_user:
         return
+    await state.clear()  # сбрасываем ожидание поиска подписчика, если пришли «Назад»
     child_bot_id = int(callback.data.split(":")[1])
     owner_id = await resolve_owner_id(platform_user["user_id"], child_bot_id)
     if owner_id is None:
@@ -3429,6 +3431,31 @@ async def _process_base_del(owner_id: int, child_bot_id: int,
 # ── Обработка текстового ввода для добавления/удаления ────────
 
 
+async def _render_search_result(message: Message, state: FSMContext,
+                                msg_id: int | None, text: str,
+                                keyboard: InlineKeyboardMarkup) -> int | None:
+    """Перерисовывает ЕДИНСТВЕННОЕ сообщение результата поиска на месте.
+
+    Возвращает актуальный message_id. Повторные неверные вводы переписывают одно
+    и то же сообщение (не засоряя чат). Если старое сообщение нельзя
+    отредактировать (удалено) — отправляем новое и запоминаем его id в state."""
+    from aiogram.exceptions import TelegramBadRequest
+    if msg_id is not None:
+        try:
+            await message.bot.edit_message_text(
+                text, chat_id=message.chat.id, message_id=msg_id,
+                reply_markup=keyboard, parse_mode="HTML",
+            )
+            return msg_id
+        except TelegramBadRequest as e:
+            if "not modified" in str(e).lower():
+                return msg_id  # тот же неверный ввод — сообщение уже актуально
+            # сообщение недоступно для правки → отправим новое ниже
+    sent = await message.answer(text, reply_markup=keyboard, parse_mode="HTML")
+    await state.update_data(prompt_msg_id=sent.message_id)
+    return sent.message_id
+
+
 @router.message(SettingsFSM.bs_base_waiting_del)
 async def on_bs_base_user_search(message: Message, state: FSMContext,
                                  platform_user: dict | None):
@@ -3440,18 +3467,15 @@ async def on_bs_base_user_search(message: Message, state: FSMContext,
     owner_id = platform_user["user_id"]
     prompt_msg_id = data.get("prompt_msg_id")
 
-    # Удаляем сообщение с вводом пользователя
+    # Удаляем сообщение с вводом пользователя (сам ввод в чате не нужен)
     try:
         await message.delete()
     except Exception:
         pass
 
-    # Удаляем сообщение с изначальным промптом
-    if prompt_msg_id:
-        try:
-            await message.bot.delete_message(chat_id=message.chat.id, message_id=prompt_msg_id)
-        except Exception:
-            pass
+    # ВАЖНО: промпт-сообщение НЕ удаляем — оно переиспользуется как единственное
+    # сообщение результата и перерисовывается на месте (карточка / «не найден»),
+    # чтобы повторные вводы не засоряли чат.
 
     # 1. Массовое удаление через файл (оставляем старую логику для файлов)
     if message.document:
@@ -3478,19 +3502,20 @@ async def on_bs_base_user_search(message: Message, state: FSMContext,
         detail_text = "\n".join(res["details"][:20])
         if len(res["details"]) > 20:
             detail_text += f"\n... и ещё {len(res['details']) - 20}"
-        await state.clear()
-        await message.answer(
+        await _render_search_result(
+            message, state, prompt_msg_id,
             f"🗑 <b>Удаление завершено!</b>\n\n"
             f"☑ Удалено: <b>{res['removed']}</b>\n"
             f"🔍 Не найдено: <b>{res['not_found']}</b>\n"
             f"❌ Неверный формат: <b>{res['invalid']}</b>\n\n"
             f"{detail_text}\n\n"
             f"👥 Осталось в базе: <b>{total_now:,}</b>",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="◄ Назад к управлению",
                                       callback_data=f"bs_base_edit:{child_bot_id}")],
             ]),
         )
+        await state.clear()
         return
 
     # 2. Поиск конкретного пользователя (Карточка)
@@ -3498,12 +3523,14 @@ async def on_bs_base_user_search(message: Message, state: FSMContext,
     target_username = _extract_username_from_message(message)
 
     if not target_id and not target_username:
-        await message.answer(
+        new_id = await _render_search_result(
+            message, state, prompt_msg_id,
             "❌ Не удалось распознать пользователя. Пришлите ID, @username или перешлите его сообщение.",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="◄ Назад к управлению", callback_data=f"bs_base_edit:{child_bot_id}")],
-            ])
+            InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="◄ Назад", callback_data=f"bs_base:{child_bot_id}")],
+            ]),
         )
+        await state.update_data(prompt_msg_id=new_id)  # остаёмся в поиске, ждём новый ввод
         return
 
     # Ищем пользователя в базе (объединяем площадки)
@@ -3528,20 +3555,24 @@ async def on_bs_base_user_search(message: Message, state: FSMContext,
 
     if not user_row:
         ident = target_id or f"@{target_username}"
-        await message.answer(
+        new_id = await _render_search_result(
+            message, state, prompt_msg_id,
             f"❌ Пользователь <b>{ident}</b> не найден в базе этого бота.\n"
             f"Убедитесь, что он писал сообщения в вашей группе.",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="◄ Назад к управлению", callback_data=f"bs_base_edit:{child_bot_id}")],
-            ])
+            InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="◄ Назад", callback_data=f"bs_base:{child_bot_id}")],
+            ]),
         )
+        # Остаёмся в поиске: следующий неверный ввод перепишет ЭТО же сообщение,
+        # а найденный пользователь превратит его в карточку.
+        await state.update_data(prompt_msg_id=new_id)
         return
 
-    # Рендерим карточку
-    await _show_user_card(message, state, child_bot_id, user_row)
+    # Рендерим карточку прямо в этом же сообщении (сообщение «не найден» исчезает)
+    await _show_user_card(message, state, child_bot_id, user_row, edit_msg_id=prompt_msg_id)
 
 
-async def _show_user_card(message: Message | CallbackQuery, state: FSMContext, child_bot_id: int, user_row: dict):
+async def _show_user_card(message: Message | CallbackQuery, state: FSMContext, child_bot_id: int, user_row: dict, edit_msg_id: int | None = None):
     uid = user_row["user_id"]
     username = f"@{user_row['username']}" if user_row['username'] else "Нет"
     name = user_row['first_name'] or "Аноним"
@@ -3612,10 +3643,22 @@ async def _show_user_card(message: Message | CallbackQuery, state: FSMContext, c
     ]
 
     await state.clear()
+    kb = InlineKeyboardMarkup(inline_keyboard=buttons)
+    if edit_msg_id is not None:
+        # Переписываем сообщение поиска/«не найден» на месте — превращаем в карточку
+        from aiogram.exceptions import TelegramBadRequest
+        try:
+            await message.bot.edit_message_text(
+                text, chat_id=message.chat.id, message_id=edit_msg_id,
+                reply_markup=kb, parse_mode="HTML",
+            )
+            return
+        except TelegramBadRequest:
+            pass  # сообщение недоступно для правки → отправим новое ниже
     if isinstance(message, Message):
-        await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons), parse_mode="HTML")
+        await message.answer(text, reply_markup=kb, parse_mode="HTML")
     else:
-        await message.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons), parse_mode="HTML")
+        await message.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
 
 
 # ── Действия из Карточки Подписчика ──────────────────────────

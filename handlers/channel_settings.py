@@ -4902,7 +4902,7 @@ async def on_bs_base_export_menu(callback: CallbackQuery, platform_user: dict | 
     ) or 0
 
     await callback.message.edit_text(
-        "🗄 <b>Экспорт базы</b>\n\n"
+        "🔽 <b>Экспорт базы</b>\n\n"
         "<blockquote>Здесь хранятся все пользователи, которые "
         "взаимодействовали с каналами и группами вашего бота.\n\n"
         "Вы можете выгрузить базу в формате CSV — это удобно для "
@@ -5093,7 +5093,7 @@ async def on_bs_base_dl_bck(callback: CallbackQuery, bot: Bot, platform_user: di
     ) or 0
 
     await callback.message.answer(
-        "🗄 <b>Экспорт базы</b>\n\n"
+        "🔽 <b>Экспорт базы</b>\n\n"
         "<blockquote>Здесь хранятся все пользователи, которые "
         "взаимодействовали с каналами и группами вашего бота.\n\n"
         "Вы можете выгрузить базу в формате CSV — это удобно для "

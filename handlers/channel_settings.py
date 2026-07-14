@@ -4691,7 +4691,7 @@ async def _show_bs_bl_manage(callback: CallbackQuery, platform_user: dict,
     toggle_text = "☑ ЧС: Включён 🟢" if enabled else "☑️ ЧС: Выключен 🔴"
     await callback.message.edit_text(
         "⚙️ <b>Управление базой ЧС</b>\n\n"
-        f"📊 Записей в базе: {count:,}\n\n"
+        f"🗃 Записей в базе: {count:,}\n\n"
         "Включите ЧС, чтобы бот автоматически проверял\n"
         "вступающих пользователей по списку.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[

@@ -34,6 +34,34 @@ class MassMailingFSM(StatesGroup):
     waiting_for_text = State()   # ввод текста рассылки
 
 
+async def _mailing_owner(user_id: int, mid) -> int | None:
+    """owner_id владельца рассылки, если user_id — владелец ИЛИ активный участник
+    команды бота этой рассылки. Иначе None.
+
+    Нужно, чтобы сотрудники (доступ через «Команду») могли работать с рассылками
+    бизнеса так же, как владелец: раньше все обработчики рассылки фильтровали по
+    platform_user["user_id"], и у админа выходило «Черновик не найден» / 0 получателей.
+    Для владельца поведение прежнее (user_id == owner_id → возвращаем его же id).
+    Для массовых кампаний (child_bot_id IS NULL) доступ только у владельца."""
+    if mid in (None, ""):
+        return None
+    row = await db.fetchrow(
+        "SELECT owner_id, child_bot_id FROM mailings WHERE id=$1", int(mid))
+    if not row:
+        return None
+    if row["owner_id"] == user_id:
+        return row["owner_id"]
+    if row["child_bot_id"] is not None:
+        ok = await db.fetchval(
+            "SELECT 1 FROM team_members "
+            "WHERE child_bot_id=$1 AND user_id=$2 AND is_active=true",
+            row["child_bot_id"], user_id,
+        )
+        if ok:
+            return row["owner_id"]
+    return None
+
+
 # ══════════════════════════════════════════════════════════════
 # Массовая рассылка (menu:mailing)
 # ══════════════════════════════════════════════════════════════
@@ -737,7 +765,14 @@ async def on_mailing_bot_start(callback: CallbackQuery, state: FSMContext,
     if not platform_user:
         return
     child_bot_id = int(callback.data.split(":")[1])
-    owner_id = platform_user["user_id"]
+    # Владелец бота (а не текущий пользователь): сотрудник через «Команду» управляет
+    # чужим ботом, поэтому база пользователей лежит под owner_id владельца, не под id
+    # сотрудника. Раньше тут стоял platform_user["user_id"] → у админа получателей 0.
+    from handlers.channel_settings import resolve_owner_id
+    owner_id = await resolve_owner_id(platform_user["user_id"], child_bot_id)
+    if owner_id is None:
+        await callback.answer("Нет доступа", show_alert=True)
+        return
 
     # Количество уникальных получателей по всем площадкам бота
     # is_active убран: считаем всех у кого есть user_id (IS NOT NULL)
@@ -777,7 +812,11 @@ async def on_mailing_bot_scheduled(callback: CallbackQuery, platform_user: dict 
     if not platform_user:
         return
     child_bot_id = int(callback.data.split(":")[1])
-    owner_id = platform_user["user_id"]
+    from handlers.channel_settings import resolve_owner_id
+    owner_id = await resolve_owner_id(platform_user["user_id"], child_bot_id)
+    if owner_id is None:
+        await callback.answer("Нет доступа", show_alert=True)
+        return
     # Возврат к списку задач — убираем эхо-превью открытой задачи, если оно висит сверху
     await _clear_sched_echo(callback.bot, callback.message.chat.id)
 
@@ -884,7 +923,10 @@ async def on_ml_scheduled_view(callback: CallbackQuery, platform_user: dict | No
     parts = callback.data.split(":")
     mid = int(parts[1])
     child_bot_id = int(parts[2])
-    owner_id = platform_user["user_id"]
+    owner_id = await _mailing_owner(platform_user["user_id"], mid)
+    if owner_id is None:
+        await callback.answer("Черновик не найден", show_alert=True)
+        return
 
     m = await db.fetchrow(
         "SELECT * FROM mailings WHERE id=$1 AND owner_id=$2", mid, owner_id
@@ -949,7 +991,10 @@ async def on_ml_stoggle(callback: CallbackQuery, platform_user: dict | None):
     mid = int(parts[1])
     child_bot_id = int(parts[2])
     setting = parts[3]
-    owner_id = platform_user["user_id"]
+    owner_id = await _mailing_owner(platform_user["user_id"], mid)
+    if owner_id is None:
+        await callback.answer("Черновик не найден", show_alert=True)
+        return
 
     m = await db.fetchrow("SELECT * FROM mailings WHERE id=$1 AND owner_id=$2", mid, owner_id)
     if not m:
@@ -1022,7 +1067,10 @@ async def on_ml_sched_cancel(callback: CallbackQuery, platform_user: dict | None
     parts = callback.data.split(":")
     mid = int(parts[1])
     child_bot_id = int(parts[2])
-    owner_id = platform_user["user_id"]
+    owner_id = await _mailing_owner(platform_user["user_id"], mid)
+    if owner_id is None:
+        await callback.answer("Черновик не найден", show_alert=True)
+        return
 
     m_old = await db.fetchrow("SELECT campaign_id FROM mailings WHERE id=$1 AND owner_id=$2", mid, owner_id)
     if m_old and m_old["campaign_id"]:
@@ -1086,10 +1134,14 @@ async def on_ml_sched_edit(callback: CallbackQuery, state: FSMContext,
     parts = callback.data.split(":")
     mid = int(parts[1])
     child_bot_id = int(parts[2])
+    owner_id = await _mailing_owner(platform_user["user_id"], mid)
+    if owner_id is None:
+        await callback.answer("Черновик не найден", show_alert=True)
+        return
 
     await state.set_state(MailingFSM.waiting_for_edit_text)
     await state.update_data(mailing_id=str(mid), child_bot_id=child_bot_id,
-                             owner_id=platform_user["user_id"])
+                             owner_id=owner_id)
 
     await _delete_draft_echo(callback.bot, mid)
     try:
@@ -1420,8 +1472,9 @@ async def on_ml_view_draft(callback: CallbackQuery, platform_user: dict | None):
         _draft_back_cb[mailing_id] = "ml_mass_scheduled"
     elif _ctx.isdigit():
         _draft_back_cb.pop(mailing_id, None)
+    owner_id = await _mailing_owner(platform_user["user_id"], mailing_id)
     m = await db.fetchrow("SELECT * FROM mailings WHERE id=$1 AND owner_id=$2",
-                          mailing_id, platform_user["user_id"])
+                          mailing_id, owner_id) if owner_id is not None else None
     if not m:
         await callback.answer("Черновик не найден", show_alert=True)
         return
@@ -1463,7 +1516,10 @@ async def on_ml_toggle(callback: CallbackQuery, platform_user: dict | None):
     if setting not in _TOGGLE_MAP and setting != "media":
         return
 
-    owner_id = platform_user["user_id"]
+    owner_id = await _mailing_owner(platform_user["user_id"], mid)
+    if owner_id is None:
+        await callback.answer("Черновик не найден", show_alert=True)
+        return
     m = await db.fetchrow("SELECT * FROM mailings WHERE id=$1 AND owner_id=$2", mid, owner_id)
     if not m:
         await callback.answer("Черновик не найден", show_alert=True)
@@ -1527,8 +1583,9 @@ async def on_ml_url_buttons(callback: CallbackQuery, state: FSMContext, platform
     if not platform_user:
         return
     mid = int(callback.data.split(":")[1])
+    owner_id = await _mailing_owner(platform_user["user_id"], mid)
     m = await db.fetchrow("SELECT * FROM mailings WHERE id=$1 AND owner_id=$2",
-                          mid, platform_user["user_id"])
+                          mid, owner_id) if owner_id is not None else None
     if not m:
         await callback.answer("Черновик не найден", show_alert=True)
         return
@@ -1545,7 +1602,7 @@ async def on_ml_url_buttons(callback: CallbackQuery, state: FSMContext, platform
 
     # Ставим FSM-состояние — пользователь может сразу ввести кнопки
     if state is not None:
-        await state.update_data(mailing_id=mid, owner_id=platform_user["user_id"])
+        await state.update_data(mailing_id=mid, owner_id=owner_id)
         await state.set_state(MailingFSM.waiting_for_buttons)
 
     # Отправляем экран URL-кнопок как новое сообщение (+ только кнопка Назад)
@@ -1575,7 +1632,10 @@ async def on_ml_color(callback: CallbackQuery, platform_user: dict | None):
         return
     parts = callback.data.split(":")
     mid, color = int(parts[1]), parts[2]
-    owner_id = platform_user["user_id"]
+    owner_id = await _mailing_owner(platform_user["user_id"], mid)
+    if owner_id is None:
+        await callback.answer("Черновик не найден", show_alert=True)
+        return
     m_old = await db.fetchrow("SELECT campaign_id FROM mailings WHERE id=$1", mid)
     if m_old and m_old["campaign_id"]:
         await db.execute("UPDATE mailings SET button_color=$1 WHERE campaign_id=$2 AND owner_id=$3", color, m_old["campaign_id"], owner_id)
@@ -1592,8 +1652,12 @@ async def on_ml_input_buttons(callback: CallbackQuery, state: FSMContext, platfo
     if not platform_user:
         return
     mid = int(callback.data.split(":")[1])
+    owner_id = await _mailing_owner(platform_user["user_id"], mid)
+    if owner_id is None:
+        await callback.answer("Черновик не найден", show_alert=True)
+        return
     await state.set_state(MailingFSM.waiting_for_buttons)
-    await state.update_data(mailing_id=mid, owner_id=platform_user["user_id"])
+    await state.update_data(mailing_id=mid, owner_id=owner_id)
     await callback.message.edit_text(
         "🔗 Отправьте кнопки, которые будут добавлены к сообщению.\n\n"
         "<b>Формат одной кнопки:</b> <code>Текст — ссылка</code>\n"
@@ -1690,7 +1754,10 @@ async def on_ml_clear_buttons(callback: CallbackQuery, platform_user: dict | Non
     if not platform_user:
         return
     mid = int(callback.data.split(":")[1])
-    owner_id = platform_user["user_id"]
+    owner_id = await _mailing_owner(platform_user["user_id"], mid)
+    if owner_id is None:
+        await callback.answer("Черновик не найден", show_alert=True)
+        return
     m_old = await db.fetchrow("SELECT campaign_id FROM mailings WHERE id=$1", mid)
     if m_old and m_old["campaign_id"]:
         await db.execute("UPDATE mailings SET url_buttons_raw=NULL WHERE campaign_id=$1 AND owner_id=$2", m_old["campaign_id"], owner_id)
@@ -2062,7 +2129,10 @@ async def on_mailing_save(callback: CallbackQuery, platform_user: dict | None):
         await callback.answer("Черновик не найден", show_alert=True)
         return
 
-    owner_id = platform_user["user_id"]
+    owner_id = await _mailing_owner(platform_user["user_id"], mid)
+    if owner_id is None:
+        await callback.answer("Черновик не найден", show_alert=True)
+        return
     m = await db.fetchrow(
         "SELECT * FROM mailings WHERE id=$1 AND owner_id=$2", mid, owner_id
     )
@@ -2182,9 +2252,11 @@ async def on_mailing_run(callback: CallbackQuery, bot: Bot, platform_user: dict 
     chat_id = int(chat_id_raw) if chat_id_raw not in ("None", "", "0") else None
     mid     = int(parts[2]) if len(parts) > 2 and parts[2] else None
 
-    owner_id = platform_user["user_id"]
-
     if mid:
+        owner_id = await _mailing_owner(platform_user["user_id"], mid)
+        if owner_id is None:
+            await callback.answer("Черновик не найден", show_alert=True)
+            return
         mailing = await db.fetchrow(
             "SELECT m.*, cb.bot_username FROM mailings m "
             "LEFT JOIN child_bots cb ON cb.id = m.child_bot_id "
@@ -2192,6 +2264,7 @@ async def on_mailing_run(callback: CallbackQuery, bot: Bot, platform_user: dict 
             mid, owner_id,
         )
     elif chat_id:
+        owner_id = platform_user["user_id"]
         mailing = await db.fetchrow(
             "SELECT m.*, cb.bot_username FROM mailings m "
             "LEFT JOIN child_bots cb ON cb.id = m.child_bot_id "

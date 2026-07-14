@@ -3557,7 +3557,7 @@ async def on_bs_base_user_search(message: Message, state: FSMContext,
         ident = target_id or f"@{target_username}"
         new_id = await _render_search_result(
             message, state, prompt_msg_id,
-            f"❌ Пользователь <b>{ident}</b> не найден в базе этого бота.\n"
+            f"🆔 Пользователь <b>{ident}</b> не найден в базе этого бота.\n"
             f"Убедитесь, что он писал сообщения в вашей группе.",
             InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="◄ Назад", callback_data=f"bs_base:{child_bot_id}")],
@@ -3578,7 +3578,7 @@ async def _show_user_card(message: Message | CallbackQuery, state: FSMContext, c
     name = user_row['first_name'] or "Аноним"
     joined = user_row['joined_at'].strftime("%d.%m.%Y %H:%M") if user_row['joined_at'] else "Неизвестно"
     chat_titles = user_row['chat_titles'] or "Личные сообщения"
-    is_active = "☑ Активен" if user_row['is_active'] else "❌ Вышел / Заблокировал"
+    is_active = "🟢 Активен" if user_row['is_active'] else "🔴 Вышел / Заблокировал"
 
     # Идем в Telegram узнавать реальный статус пользователя
     bot_row = await db.fetchrow("SELECT token_encrypted, owner_id FROM child_bots WHERE id=$1", child_bot_id)
@@ -3617,11 +3617,11 @@ async def _show_user_card(message: Message | CallbackQuery, state: FSMContext, c
     text = (
         f"⚙️ <b>Карточка подписчика</b>\n\n"
         f"👤 <b>Имя:</b> <a href='tg://user?id={uid}'>{name}</a>\n"
-        f"🪪 <b>ID:</b> <code>{uid}</code>\n"
-        f"🔗 <b>Юзернейм:</b> {username}\n"
+        f"🆔 <b>ID:</b> <code>{uid}</code>\n"
+        f"🐶 <b>Юзернейм:</b> {username}\n"
         f"📅 <b>Первое появление:</b> {joined}\n"
         f"📍 <b>Площадки:</b> {chat_titles}\n"
-        f"📊 <b>Статус в базе:</b> {is_active}\n"
+        f"🧍 <b>Статус в базе:</b> {is_active}\n"
     )
 
     is_banned = await db.fetchval("SELECT 1 FROM blacklist WHERE owner_id=$1 AND user_id=$2", bot_row["owner_id"], uid)

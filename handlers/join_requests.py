@@ -637,6 +637,12 @@ async def _send_welcome(bot: Bot, chat_id: int, user, settings_row: dict, contac
     dm_open = contact_established or (_captcha_type != "off")
     delay_base = send_base and welcome_delay > 0 and dm_open
 
+    logger.info(
+        f"[WELCOME DELAY] user={user.id} chat={chat_id} delay_sec={welcome_delay} "
+        f"captcha={_captcha_type} contact={contact_established} dm_open={dm_open} "
+        f"delay_base={delay_base} send_base={send_base} from_req={from_join_request}"
+    )
+
     sent_msgs = []
     delayed_base_step = None
     if send_base and not delay_base:

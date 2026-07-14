@@ -5000,7 +5000,7 @@ async def on_bs_base_export(callback: CallbackQuery, bot: Bot, platform_user: di
     bot_row = await db.fetchrow(
         "SELECT bot_username FROM child_bots WHERE id=$1", child_bot_id)
     caption = (
-        f"📊 <b>База пользователей @{bot_row['bot_username'] if bot_row else ''}</b>\n\n"
+        f"🗃 <b>База пользователей @{bot_row['bot_username'] if bot_row else ''}</b>\n\n"
         f"🔖 Фильтр: <b>{label}</b>\n"
         f"👥 Записей: <b>{len(rows):,}</b>\n\n"
         "Формат: CSV (разделитель ;)\n"

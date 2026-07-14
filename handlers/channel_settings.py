@@ -833,6 +833,24 @@ def _delay_label(sec) -> str:
     return "сразу" if sec <= 0 else f"+{format_delay_short(sec)}"
 
 
+# Шкала «Момент отправки приветствия» (welcome_delay_sec):
+#   -1 = «Сразу» (по заявке, до входа) · 0 = «После входа» (как раньше) · >0 = задержка после входа
+_WELCOME_MOMENT_CHIPS = [
+    (-1, "Сразу"), (0, "После входа"),
+    (15, "+15с"), (30, "+30с"), (60, "+1 мин"), (300, "+5 мин"), (900, "+15 мин"),
+]
+
+
+def _moment_label(sec) -> str:
+    """Подпись момента отправки приветствия для кнопки/экрана."""
+    sec = int(sec or 0)
+    if sec < 0:
+        return "Сразу"
+    if sec == 0:
+        return "После входа"
+    return f"+{format_delay_short(sec)}"
+
+
 async def _get_chat_by_id(owner_id: int, chat_id: int):
     return await db.fetchrow(
         "SELECT * FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint",
@@ -898,10 +916,10 @@ def _build_editor_kb(chat_id_str: str, msg_type: str, ch: dict, scope: str = "ch
         [InlineKeyboardButton(text=media_label,           callback_data=f"{pfx}_media:{chat_id_str}:{msg_type}")],
         [InlineKeyboardButton(text=preview_label,         callback_data=f"{pfx}_preview:{chat_id_str}:{msg_type}")],
     ]
-    # ⏱ Задержка отправки — только у приветствия (у прощания нет окна заявки)
+    # 🕒 Момент отправки — только у приветствия (у прощания нет окна заявки)
     if f.get("delay_col"):
         delay_val = int(ch.get(f["delay_col"]) or 0)
-        rows.append([InlineKeyboardButton(text=f"⏱ Задержка: {_delay_label(delay_val)}",
+        rows.append([InlineKeyboardButton(text=f"🕒 Момент: {_moment_label(delay_val)}",
                                           callback_data=f"{pfx}_delay:{chat_id_str}:{msg_type}")])
     rows += [
         [InlineKeyboardButton(text=selfdel_label_txt,     callback_data=f"{pfx}_selfdel:{chat_id_str}:{msg_type}")],
@@ -1491,8 +1509,16 @@ async def on_ch_msg_delay(callback: CallbackQuery, state: FSMContext, platform_u
     await _drop_welcome_echo(callback, state, owner_id, chat_id_str, msg_type)
     await state.set_state(None)
 
-    chip_rows, row = [], []
-    for sec, label in _MSG_DELAY_CHIPS:
+    chip_rows = []
+    # Полюса — отдельной строкой (это выбор момента, а не просто задержка)
+    pole_row = []
+    for sec, label in _WELCOME_MOMENT_CHIPS[:2]:
+        mark = " ☑" if sec == cur else ""
+        pole_row.append(InlineKeyboardButton(text=f"{label}{mark}", callback_data=f"ch_msg_delayset:{chat_id_str}:{msg_type}:{sec}"))
+    chip_rows.append(pole_row)
+    # Задержки после входа — по 3 в ряд
+    row = []
+    for sec, label in _WELCOME_MOMENT_CHIPS[2:]:
         mark = " ☑" if sec == cur else ""
         row.append(InlineKeyboardButton(text=f"{label}{mark}", callback_data=f"ch_msg_delayset:{chat_id_str}:{msg_type}:{sec}"))
         if len(row) == 3:
@@ -1504,11 +1530,13 @@ async def on_ch_msg_delay(callback: CallbackQuery, state: FSMContext, platform_u
 
     await navigate(
         callback,
-        "⏱ <b>Задержка отправки приветствия</b>\n\n"
-        "Через сколько после заявки отправить приветствие №1.\n"
-        f"Сейчас: <b>{_delay_label(cur)}</b>\n\n"
-        "ⓘ Приветствие с задержкой придёт только тем, кто уже написал боту "
-        "(прошёл капчу или отправил /start). Остальным оно уходит сразу.",
+        "🕒 <b>Момент отправки приветствия</b>\n\n"
+        "Когда бот пришлёт приветствие новому человеку:\n"
+        "• <b>Сразу</b> — по заявке, ещё до входа в канал.\n"
+        "• <b>После входа</b> — когда человек уже принят (можно с задержкой).\n\n"
+        f"Сейчас: <b>{_moment_label(cur)}</b>\n\n"
+        "ⓘ «Сразу» уходит без задержки. Приветствие с задержкой придёт только тем, "
+        "кто уже в контакте с ботом (прошёл капчу или отправил /start).",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=chip_rows),
     )
 
@@ -1523,12 +1551,14 @@ async def on_ch_msg_delayset(callback: CallbackQuery, state: FSMContext, platfor
         await callback.answer()
         return
     owner_id = await resolve_chat_owner(platform_user["user_id"], int(chat_id_str))
-    sec = max(0, int(sec_s))
+    # -1 = «Сразу» (по заявке); 0 = после входа; >0 = задержка после входа
+    sec = int(sec_s)
+    sec = -1 if sec < 0 else sec
     await db.execute(
         f"UPDATE bot_chats SET {f['delay_col']}=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
         sec, owner_id, int(chat_id_str),
     )
-    await callback.answer(f"⏱ Задержка: {_delay_label(sec)}")
+    await callback.answer(f"🕒 Момент: {_moment_label(sec)}")
     ch = await _get_chat_by_id(owner_id, int(chat_id_str))
     await _show_msg_editor(callback, chat_id_str, msg_type, dict(ch) if ch else {}, scope="ch", state=state)
 

@@ -228,6 +228,17 @@ async def on_join_request(event: ChatJoinRequest, bot: Bot):
         except Exception as e:
             logger.warning(f"[FILTER] get_user_profile_photos failed for {user.id}: {e}")
 
+    # ── «Сразу / по заявке»: базовое приветствие уходит В МОМЕНТ ЗАЯВКИ (до входа),
+    #    пока открыто ЛС-окно от join-request. Дальнейший разбор (ссылка/автоприём/
+    #    капча/ручной) идёт как обычно; на одобрении не задвоится — _send_welcome
+    #    идемпотентна по (chat_id, user_id). Режим включается выбором «Сразу» в
+    #    редакторе приветствия (welcome_delay_sec = -1); всем остальным (>=0) — как раньше.
+    if int(settings_row.get("welcome_delay_sec") or 0) < 0:
+        try:
+            await _send_welcome(bot, event.chat.id, user, settings_row, contact_established=True)
+        except Exception as _we:
+            logger.warning(f"[WELCOME] «по заявке» не ушло user={user.id}: {_we}")
+
     # 6. Проверяем auto_accept конкретной ссылки (приоритет над настройками бота)
     raw_invite_url = event.invite_link.invite_link if event.invite_link else None
     link_auto_accept = None

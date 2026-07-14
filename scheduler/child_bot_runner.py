@@ -2553,6 +2553,22 @@ async def _handle_chat_member(bot: Bot, child_bot_id: int, event: ChatMemberUpda
             from handlers.captcha import _passed_captcha_group
             captcha_key = (chat_id, user.id)
             passed_group_captcha = captcha_key in _passed_captcha_group
+            # РЕСТАРТ-БЕЗОПАСНО: in-memory флаг «капча пройдена» теряется при перезапуске
+            # бота (деплой/рестарт), и тогда при ручном/отложенном одобрении приветствие не
+            # уходило. Если капча включена, но флага в памяти нет — сверяемся с БД: статус
+            # captcha_verified/approved означает, что капчу юзер уже прошёл.
+            if not passed_group_captcha and captcha_type != "off":
+                try:
+                    _st = await db.fetchval(
+                        "SELECT status FROM join_requests "
+                        "WHERE owner_id=$1 AND chat_id=$2::bigint AND user_id=$3",
+                        owner_id, chat_id, user.id,
+                    )
+                    if _st in ("captcha_verified", "approved"):
+                        passed_group_captcha = True
+                        logger.info(f"[WELCOME] captcha-pass восстановлен из БД (status={_st}) user={user.id}")
+                except Exception as _e:
+                    logger.debug(f"[WELCOME] db captcha status check failed: {_e}")
             if passed_group_captcha:
                 # Потребляем флаг сразу, чтобы не отправить приветствие дважды
                 _passed_captcha_group.discard(captcha_key)

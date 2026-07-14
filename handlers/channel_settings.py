@@ -842,13 +842,23 @@ _WELCOME_MOMENT_CHIPS = [
 
 
 def _moment_label(sec) -> str:
-    """Подпись момента отправки приветствия для кнопки/экрана."""
+    """Короткая подпись момента отправки — для кнопки/чипов."""
     sec = int(sec or 0)
     if sec < 0:
         return "Сразу"
     if sec == 0:
         return "После входа"
     return f"+{format_delay_short(sec)}"
+
+
+def _moment_selected(sec) -> str:
+    """Развёрнутая подпись для строки «Выбрано:» на экране."""
+    sec = int(sec or 0)
+    if sec < 0:
+        return "Сразу (по заявке)"
+    if sec == 0:
+        return "После входа"
+    return f"+{format_delay_short(sec)} после входа"
 
 
 async def _get_chat_by_id(owner_id: int, chat_id: int):
@@ -919,7 +929,7 @@ def _build_editor_kb(chat_id_str: str, msg_type: str, ch: dict, scope: str = "ch
     # 🕒 Момент отправки — только у приветствия (у прощания нет окна заявки)
     if f.get("delay_col"):
         delay_val = int(ch.get(f["delay_col"]) or 0)
-        rows.append([InlineKeyboardButton(text=f"🕒 Момент: {_moment_label(delay_val)}",
+        rows.append([InlineKeyboardButton(text=f"🕒 Когда слать: {_moment_label(delay_val)}",
                                           callback_data=f"{pfx}_delay:{chat_id_str}:{msg_type}")])
     rows += [
         [InlineKeyboardButton(text=selfdel_label_txt,     callback_data=f"{pfx}_selfdel:{chat_id_str}:{msg_type}")],
@@ -1530,13 +1540,11 @@ async def on_ch_msg_delay(callback: CallbackQuery, state: FSMContext, platform_u
 
     await navigate(
         callback,
-        "🕒 <b>Момент отправки приветствия</b>\n\n"
-        "Когда бот пришлёт приветствие новому человеку:\n"
-        "• <b>Сразу</b> — по заявке, ещё до входа в канал.\n"
-        "• <b>После входа</b> — когда человек уже принят (можно с задержкой).\n\n"
-        f"Сейчас: <b>{_moment_label(cur)}</b>\n\n"
-        "ⓘ «Сразу» уходит без задержки. Приветствие с задержкой придёт только тем, "
-        "кто уже в контакте с ботом (прошёл капчу или отправил /start).",
+        "🕒 <b>Когда слать приветствие</b>\n\n"
+        "<b>Сразу</b> — по заявке, ещё до входа в канал.\n"
+        "<b>После входа</b> — когда человек принят в канал.\n\n"
+        f"Выбрано: <b>{_moment_selected(cur)}</b>\n\n"
+        "ⓘ С задержкой дойдёт только тем, кто уже писал боту.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=chip_rows),
     )
 
@@ -1558,7 +1566,7 @@ async def on_ch_msg_delayset(callback: CallbackQuery, state: FSMContext, platfor
         f"UPDATE bot_chats SET {f['delay_col']}=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
         sec, owner_id, int(chat_id_str),
     )
-    await callback.answer(f"🕒 Момент: {_moment_label(sec)}")
+    await callback.answer(f"🕒 Когда слать: {_moment_label(sec)}")
     ch = await _get_chat_by_id(owner_id, int(chat_id_str))
     await _show_msg_editor(callback, chat_id_str, msg_type, dict(ch) if ch else {}, scope="ch", state=state)
 

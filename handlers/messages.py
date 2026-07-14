@@ -301,6 +301,7 @@ async def _show_captcha(callback: CallbackQuery, chat_id: int, owner_id: int):
     btn_label     = "▫️" if btn_size == "compact" else "⬜"
 
     info = (
+        "🔒 <b>Капча</b>\n\n"
         "⚪ <b>Простая:</b> пользователю достаточно нажать на любую кнопку.\n\n"
         "🔵 <b>Рандомная:</b> пользователю необходимо нажать на верную кнопку.\n\n"
         "<blockquote>"

@@ -5200,8 +5200,8 @@ async def on_bs_timezone(callback: CallbackQuery, platform_user: dict | None,
 
     await callback.message.edit_text(
         "🌙 <b>Часовой пояс</b>\n\n"
-        f"<blockquote>ℹ Сейчас установлен часовой пояс: {current_tz}.</blockquote>\n"
-        f"<blockquote>🕐 Текущее время: {time_str}</blockquote>\n\n"
+        f"<blockquote>ℹ️ Сейчас установлен часовой пояс: {current_tz}.</blockquote>\n"
+        f"<blockquote>⏰ Текущее время: {time_str}</blockquote>\n\n"
         "Выберите действие 👇",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[

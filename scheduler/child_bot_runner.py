@@ -2200,6 +2200,19 @@ async def _handle_join_request(bot: Bot, child_bot_id: int, event: ChatJoinReque
         elif len(link_rows) > 1:
             logger.info(f"[JOIN REQ FALLBACK] Multiple active links ({len(link_rows)}), can't infer")
 
+    # ── «Сразу / по заявке»: базовое приветствие уходит В МОМЕНТ ЗАЯВКИ (до входа/капчи).
+    #    Окно ЛС от join-request открыто (тем же окном пользуется капча ниже). Настройки
+    #    берём канонические (chat_settings) → с правильным медиа. Приветствие «после входа»
+    #    для такого канала — no-op (_send_welcome, гард from_join_request), дубля не будет.
+    #    Режим включается выбором «Сразу» в редакторе приветствия (welcome_delay_sec = -1).
+    if int(chat_settings.get("welcome_delay_sec") or 0) < 0:
+        try:
+            from handlers.join_requests import _send_welcome
+            await _send_welcome(bot, chat_id, user, dict(chat_settings),
+                                contact_established=True, from_join_request=True)
+        except Exception as _we:
+            logger.warning(f"[WELCOME] «по заявке» не ушло user={user.id}: {_we}")
+
     # ── КАПЧА (приоритет над авто-принятием) ──────────────────
     if captcha_type != "off":
         # chat_join_request даёт боту временное право писать в личку —

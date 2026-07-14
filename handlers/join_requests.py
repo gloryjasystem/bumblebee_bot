@@ -637,12 +637,6 @@ async def _send_welcome(bot: Bot, chat_id: int, user, settings_row: dict, contac
     dm_open = contact_established or (_captcha_type != "off")
     delay_base = send_base and welcome_delay > 0 and dm_open
 
-    logger.info(
-        f"[WELCOME DELAY] user={user.id} chat={chat_id} delay_sec={welcome_delay} "
-        f"captcha={_captcha_type} contact={contact_established} dm_open={dm_open} "
-        f"delay_base={delay_base} send_base={send_base} from_req={from_join_request}"
-    )
-
     sent_msgs = []
     delayed_base_step = None
     if send_base and not delay_base:
@@ -806,14 +800,45 @@ async def _schedule_welcome_sequence(bot: Bot, chat_id: int, user, owner_id, cha
     key = (chat_id, user.id)
     # База (№1) — первые сообщения цепочки, чтобы шаг-удаление мог их снять
     _welcome_seq_msgs[key] = list(base_msg_ids)
-    max_delay = 0
-    for step in all_steps:
-        max_delay = max(max_delay, int(step.get("delay_sec") or 0) + int(step.get("self_delete_sec") or 0))
-        asyncio.create_task(_welcome_step_task(bot, chat_id, user, chat_title, step,
-                                               child_bot_id=child_bot_id, auto_delete_min=auto_delete_min))
+    max_delay = max(
+        (int(s.get("delay_sec") or 0) + int(s.get("self_delete_sec") or 0)) for s in all_steps
+    )
+    # ПОРЯДОК: раньше на каждый шаг создавалась ОТДЕЛЬНАЯ задача с абсолютной задержкой
+    # «от заявки». При равных задержках (напр. все +15с) шаги просыпались одновременно, и
+    # порядок отправки был случайным (приходило вперемешку / задом наперёд). Теперь — один
+    # прогон строго по порядку (см. _run_welcome_sequence).
+    asyncio.create_task(_run_welcome_sequence(
+        bot, chat_id, user, chat_title, all_steps,
+        child_bot_id=child_bot_id, auto_delete_min=auto_delete_min,
+    ))
     # Гарантированная очистка ключа из памяти после завершения цепочки
     asyncio.create_task(_prune_seq_key(key, max_delay + 300))
     return sum(1 for s in all_steps if (s.get("action") or "message") != "delete")
+
+
+async def _run_welcome_sequence(bot: Bot, chat_id: int, user, chat_title: str, all_steps: list,
+                                child_bot_id=None, auto_delete_min: int = 0):
+    """Отправляет шаги цепочки СТРОГО ПО ПОРЯДКУ, одним прогоном.
+    Сортировка по (абсолютная задержка «от заявки», исходный индекс) — база №1 идёт первой
+    при равных задержках, дальше №2, №3, №4. Между шагами спим ИНКРЕМЕНТ и ЖДЁМ каждую
+    отправку, поэтому порядок гарантирован даже когда у всех шагов одинаковая задержка."""
+    ordered = sorted(enumerate(all_steps),
+                     key=lambda t: (int(t[1].get("delay_sec") or 0), t[0]))
+    elapsed = 0
+    for _, step in ordered:
+        target = int(step.get("delay_sec") or 0)
+        wait = target - elapsed
+        if wait > 0:
+            await asyncio.sleep(wait)
+            elapsed = target
+        # Задержку уже отспали здесь → обнуляем, чтобы _welcome_step_task не спал повторно.
+        step_now = dict(step)
+        step_now["delay_sec"] = 0
+        try:
+            await _welcome_step_task(bot, chat_id, user, chat_title, step_now,
+                                     child_bot_id=child_bot_id, auto_delete_min=auto_delete_min)
+        except Exception as _e:
+            logger.debug(f"[WSEQ] ordered step failed: {_e}")
 
 
 async def _prune_seq_key(key: tuple[int, int], after_sec: int):

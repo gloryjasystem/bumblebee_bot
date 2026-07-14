@@ -4332,7 +4332,7 @@ async def on_bs_bl_export(callback: CallbackQuery, platform_user: dict | None):
                 "CSV — полная база со всеми данными (user_id, username, причина, дата).\n"
                 "TXT — только ID и @username, по одному на строку — готово для импорта "
                 "в любой другой бот.</blockquote>\n\n"
-                f"📊 Всего записей в базе ЧС: <b>{total:,}</b>",
+                f"🗃 Всего записей в базе ЧС: <b>{total:,}</b>",
                 parse_mode="HTML",
                 reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                     [InlineKeyboardButton(text="📥 Скачать CSV (полная база)",       callback_data=f"bs_bl_export_csv:{child_bot_id}")],

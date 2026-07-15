@@ -417,7 +417,7 @@ async def _show_platform_user_card(message_or_cb, admin_owner_id: int, row):
         [InlineKeyboardButton(text="💎 Управление тарифом",   callback_data=f"ga_pu_tariff:{uid}:{admin_owner_id}")],
         [InlineKeyboardButton(text="📈 История покупок",      callback_data=f"ga_pu_history:{uid}:{admin_owner_id}")],
         [InlineKeyboardButton(
-            text="☑ Разблокировать" if is_banned else "🚫 Заблокировать",
+            text="✅ Разблокировать" if is_banned else "🚫 Заблокировать",
             callback_data=f"ga_pu_unblock:{uid}:{admin_owner_id}" if is_banned else f"ga_pu_block:{uid}:{admin_owner_id}"
         )],
         [InlineKeyboardButton(text="📝 Добавить заметку",     callback_data=f"ga_pu_note:{uid}:{admin_owner_id}")],
@@ -532,7 +532,7 @@ async def on_ga_pu_block_input(message: Message, state: FSMContext):
     except Exception as e:
         logger.warning(f"Could not notify user {target_uid} about ban: {e}")
 
-    status_msg = await message.answer("☑ Пользователь заблокирован, его боты остановлены.", disable_notification=True)
+    status_msg = await message.answer("✅ Пользователь заблокирован, его боты остановлены.", disable_notification=True)
 
     # Возвращаемся в карточку
     fake_msg = await message.answer("⏳ Обновление...")  # Hack to use navigate
@@ -592,7 +592,7 @@ async def on_ga_pu_unblock(callback: CallbackQuery):
     try:
         unban_msg = await callback.bot.send_message(
             target_uid,
-            f"☑ <b>Служба поддержки Bumblebee Bot</b>\n\n"
+            f"✅ <b>Служба поддержки Bumblebee Bot</b>\n\n"
             f"Ваш аккаунт успешно <b>разблокирован</b>! Все сервисы и боты сети возобновили работу.",
             parse_mode="HTML"
         )
@@ -604,7 +604,7 @@ async def on_ga_pu_unblock(callback: CallbackQuery):
     except Exception as e:
         logger.warning(f"Could not notify user {target_uid} about unban: {e}")
 
-    await callback.answer("☑ Аккаунт разблокирован, боты запущены.")
+    await callback.answer("✅ Аккаунт разблокирован, боты запущены.")
     await _show_platform_user_card(callback, admin_owner_id, row)
 
 
@@ -633,7 +633,7 @@ async def on_ga_pu_delete_confirm(callback: CallbackQuery):
         await conn.execute("DELETE FROM platform_users WHERE user_id=$1", target_uid)
     await navigate(
         callback,
-        f"☑ Аккаунт <code>{target_uid}</code> удалён.",
+        f"✅ Аккаунт <code>{target_uid}</code> удалён.",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="◄ Назад", callback_data=f"ga_manage_users:{admin_owner_id}")]
@@ -681,7 +681,7 @@ async def on_ga_pu_pm_input(message: Message, state: FSMContext):
     try:
         await message.bot.send_message(target_uid, message.text or "", parse_mode="HTML")
         await message.answer(
-            f"☑ <b>Сообщение отправлено</b> пользователю <code>{target_uid}</code>.",
+            f"✅ <b>Сообщение отправлено</b> пользователю <code>{target_uid}</code>.",
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="◄ Назад", callback_data=f"ga_pu_card:{target_uid}:{owner_id}")]
@@ -775,7 +775,7 @@ async def on_ga_pu_note_del(callback: CallbackQuery):
         row = await conn.fetchrow("SELECT * FROM platform_users WHERE user_id=$1", target_uid)
         
     await _show_platform_user_card(callback, admin_owner_id, row)
-    await callback.answer("☑ Заметка удалена", show_alert=True)
+    await callback.answer("✅ Заметка удалена", show_alert=True)
 
 
 @router.message(StaffFSM.waiting_note_input)
@@ -806,7 +806,7 @@ async def on_ga_pu_note_input(message: Message, state: FSMContext):
         except Exception:
             pass
     await message.answer(
-        "☑ <b>Заметка сохранена.</b>",
+        "✅ <b>Заметка сохранена.</b>",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="◄ Назад", callback_data=f"ga_pu_card:{target_uid}:{owner_id}")]
@@ -884,7 +884,7 @@ async def on_ga_pu_bot_detail(callback: CallbackQuery):
     kb = []
     suffix = ":p" if from_platform else ""
     for ch in chats:
-        status = "☑" if ch['is_active'] else "❌"
+        status = "✅" if ch['is_active'] else "❌"
         ctype = "📡" if ch['chat_type'] == 'channel' else "👥"
         subs = ch['subs'] or 0
         title = (ch['chat_title'] or 'Без названия')[:28]
@@ -955,7 +955,7 @@ async def on_ga_enter_bot(callback: CallbackQuery, state: FSMContext):
     from handlers.channels import on_bot_settings
     fake_cb = callback.model_copy(update={"data": f"bot_settings:{bot_id}"})
     await on_bot_settings(fake_cb, state, dict(target_pu))
-    await callback.answer("☑ Режим управления активирован")
+    await callback.answer("✅ Режим управления активирован")
 
 
 @router.callback_query(F.data.startswith("ga_exit:"))
@@ -974,12 +974,12 @@ async def on_ga_exit(callback: CallbackQuery):
         # На всякий случай, если права пропали во время сессии
         await navigate(
             callback,
-            "☑ Режим управления завершён.",
+            "✅ Режим управления завершён.",
         )
     else:
         await _show_admin_panel(callback, role, owner_id, admin_id=callback.from_user.id)
         
-    await callback.answer("☑ Управление завершено")
+    await callback.answer("✅ Управление завершено")
 
 
 @router.callback_query(F.data.startswith("ga_pu_chat_toggle:"))
@@ -996,7 +996,7 @@ async def on_ga_pu_chat_toggle(callback: CallbackQuery):
         current = row["is_active"] if row else True
         await conn.execute("UPDATE bot_chats SET is_active=$1 WHERE id=$2", not current, chat_row_id)
 
-    await callback.answer("☑ Площадка выключена" if current else "☑ Площадка включена")
+    await callback.answer("✅ Площадка выключена" if current else "✅ Площадка включена")
     # LAZY PASS: при выключении площадки мы НЕ отправляем unban_chat_member.
     # Спамеры остаются в нативном бане Telegram — это нормальное состояние.
     # Если ЧС будет снова включён, они заново не пройдут при попытке вступить.
@@ -1114,7 +1114,7 @@ async def on_ga_pu_tariff_dur(callback: CallbackQuery):
 
     if new_tariff == "free":
         msg_text = (
-            f"☑ <b>Подтвердите сброс тарифа</b>\n\n"
+            f"✅ <b>Подтвердите сброс тарифа</b>\n\n"
             f"👤 {uname}\n"
             f"💎 <b>Новый статус:</b> {label}\n\n"
             f"<i>Внимание: тариф пользователя будет сброшен до базового уровня. Все лимиты будут пересчитаны, а излишки ботов и площадок заморожены.</i>"
@@ -1131,7 +1131,7 @@ async def on_ga_pu_tariff_dur(callback: CallbackQuery):
             until_str = until.strftime("%d.%m.%Y")
             
         msg_text = (
-            f"☑ <b>Подтвердите смену тарифа</b>\n\n"
+            f"✅ <b>Подтвердите смену тарифа</b>\n\n"
             f"👤 {uname}\n"
             f"💎 {label}  •  {dur_label}\n"
             f"📅 Будет действовать до: <b>{until_str}</b>"
@@ -1142,7 +1142,7 @@ async def on_ga_pu_tariff_dur(callback: CallbackQuery):
         msg_text,
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="☑ Да, применить", callback_data=f"ga_pu_tariff_apply:{new_tariff}:{dur_key}:{target_uid}:{admin_owner_id}")],
+            [InlineKeyboardButton(text="✅ Да, применить", callback_data=f"ga_pu_tariff_apply:{new_tariff}:{dur_key}:{target_uid}:{admin_owner_id}")],
             [InlineKeyboardButton(text="❌ Отмена",        callback_data=f"ga_pu_tariff:{target_uid}:{admin_owner_id}")],
         ])
     )
@@ -1170,7 +1170,7 @@ async def on_ga_pu_tariff_apply(callback: CallbackQuery):
     _t = asyncio.create_task(sync_child_bots(target_uid))
     _background_tasks.add(_t)
     _t.add_done_callback(_background_tasks.discard)
-    await callback.answer("☑ Тариф обновлён", show_alert=True)
+    await callback.answer("✅ Тариф обновлён", show_alert=True)
     # Go back to tariff screen refreshed
     fake_cb = callback.model_copy(update={"data": f"ga_pu_tariff:{target_uid}:{admin_owner_id}"})
     await on_ga_pu_tariff(fake_cb)
@@ -1380,10 +1380,10 @@ async def on_ga_team_add_input(message: Message, state: FSMContext):
             id_str = f"<code>{target_id}</code>"
             label = f"{tag} ({id_str})" if tag else id_str
             await message.answer(
-                f"☑ <b>Сотрудник добавлен!</b>\n\n"
+                f"✅ <b>Сотрудник добавлен!</b>\n\n"
                 f"👤 {label}\n"
                 f"🔑 <b>Роль:</b> Администратор\n"
-                f"☑ Теперь он видит ЧС, базу аудитории и запускает рассылки.",
+                f"✅ Теперь он видит ЧС, базу аудитории и запускает рассылки.",
                 parse_mode="HTML",
                 reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                     [InlineKeyboardButton(text="◄ К сотрудникам", callback_data=f"ga_team:{owner_id}")]
@@ -1500,7 +1500,7 @@ async def on_ga_team_remove_input(message: Message, state: FSMContext):
             json.dumps({"removed_admin_id": removed_id, "removed_by": message.from_user.id}))
 
     await message.answer(
-        f"☑ Администратор {removed_name} успешно удалён из списка сотрудников.",
+        f"✅ Администратор {removed_name} успешно удалён из списка сотрудников.",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="◄ К сотрудникам", callback_data=f"ga_team:{owner_id}")]
@@ -1533,7 +1533,7 @@ async def on_ga_audit(callback: CallbackQuery):
     else:
         ACTION_ICONS = {
             "block": "🚫",
-            "unblock": "☑",
+            "unblock": "✅",
             "add_admin": "👷⬆️",
             "remove_admin": "👷⬇️",
             "broadcast": "📢",
@@ -1612,7 +1612,7 @@ async def cmd_addadmin(message: Message):
                 INSERT INTO audit_log (owner_id, user_id, action, details)
                 VALUES ($1, $2, 'add_admin', $3)
             """, owner_id, message.from_user.id, json.dumps({"info": f"Granted admin to {target_id}"}))
-            await message.answer(f"☑ Пользователь <code>{target_id}</code> назначен администратором.\nСписок: /admins", parse_mode="HTML")
+            await message.answer(f"✅ Пользователь <code>{target_id}</code> назначен администратором.\nСписок: /admins", parse_mode="HTML")
         except asyncpg.UniqueViolationError:
             await message.answer("⚠️ Этот пользователь уже является администратором.")
 
@@ -1643,7 +1643,7 @@ async def cmd_removeadmin(message: Message):
                 INSERT INTO audit_log (owner_id, user_id, action, details)
                 VALUES ($1, $2, 'remove_admin', $3)
             """, owner_id, message.from_user.id, json.dumps({"info": f"Revoked admin from {target_id}"}))
-            await message.answer(f"☑ Права пользователя <code>{target_id}</code> успешно отозваны.", parse_mode="HTML")
+            await message.answer(f"✅ Права пользователя <code>{target_id}</code> успешно отозваны.", parse_mode="HTML")
 
 
 
@@ -1811,7 +1811,7 @@ async def _build_audience_text(period: str, conn, owner_id: int = 0) -> str:
         f"👥 <b>Аудитория</b>  —  <b>{label}</b>\n\n"
         f"📊 <b>Общая статистика</b>\n"
         f"👤  Всего:  <b>{total_all:,}</b>    🆕  Новых {label.lower()}:  <b>{new_period:,}</b>\n"
-        f"☑  Платных:  <b>{paid_total:,}</b>    💡  Бесплатных:  <b>{free_total:,}</b>\n\n"
+        f"✅  Платных:  <b>{paid_total:,}</b>    💡  Бесплатных:  <b>{free_total:,}</b>\n\n"
         f"📎 <b>Сегменты по тарифам</b>\n"
         f"💡  Free:  <b>{leads:,}</b>\n"
         f"🌱  Start:  <b>{start_c:,}</b>\n"
@@ -1896,7 +1896,7 @@ async def _build_finance_text(period: str, conn, owner_id: int = 0) -> str:
         f"💰 <b>Финансы</b>  —  <b>{label}</b>\n\n"
         f"💳 <b>Платежи</b>\n"
         f"⏳  В ожидании:  <b>{pending_cnt}</b>  •  <b>${pending_sum:,.2f}</b>\n"
-        f"☑  Оплачено:  <b>{paid_cnt}</b>  •  <b>${paid_sum:,.2f}</b>\n"
+        f"✅  Оплачено:  <b>{paid_cnt}</b>  •  <b>${paid_sum:,.2f}</b>\n"
         f"❌  Отмены/Просрочено:  <b>{cancelled}</b>\n"
         f"📈  Конверсия:  <b>{conversion}%</b>\n\n"
         f"📈 <b>Доходы</b>\n"
@@ -1980,7 +1980,7 @@ async def on_ga_stats(callback: CallbackQuery):
             except Exception:
                 pass
             await callback.message.answer(text, parse_mode="HTML", reply_markup=kb)
-    await callback.answer("☑ Обновлено")
+    await callback.answer("✅ Обновлено")
 
 
 @router.callback_query(F.data.startswith("ga_audience:"))
@@ -2003,7 +2003,7 @@ async def on_ga_audience(callback: CallbackQuery):
             except Exception:
                 pass
             await callback.message.answer(text, parse_mode="HTML", reply_markup=kb)
-    await callback.answer("☑ Обновлено")
+    await callback.answer("✅ Обновлено")
 
 
 @router.callback_query(F.data.startswith("ga_segment:"))
@@ -2026,7 +2026,7 @@ async def on_ga_segment(callback: CallbackQuery):
             except Exception:
                 pass
             await callback.message.answer(text, parse_mode="HTML", reply_markup=kb)
-    await callback.answer("☑ Обновлено")
+    await callback.answer("✅ Обновлено")
 
 
 @router.callback_query(F.data.startswith("ga_finance:"))
@@ -2049,7 +2049,7 @@ async def on_ga_finance(callback: CallbackQuery):
             except Exception:
                 pass
             await callback.message.answer(text, parse_mode="HTML", reply_markup=kb)
-    await callback.answer("☑ Обновлено")
+    await callback.answer("✅ Обновлено")
 
 
 # ga_segment and ga_rev redirect to merged handlers
@@ -2380,7 +2380,7 @@ async def mass_sync_blacklist(owner_id: int, turn_on: bool, admin_id: int, bot: 
 
     finish_text = "заблокированы" if turn_on else "разблокированы"
     await msg.edit_text(
-        f"☑ <b>Синхронизация завершена!</b>\n\n"
+        f"✅ <b>Синхронизация завершена!</b>\n\n"
         f"Пользователи из Глобального ЧС успешно {finish_text} "
         f"во всех {len(bots_chats)} активных разделах выборки.",
         parse_mode="HTML"
@@ -2443,7 +2443,7 @@ async def on_ga_bl(callback: CallbackQuery, state: FSMContext = None):
 
     if bl_active:
         shield = "🛡️ <b>Защита АКТИВНА</b> — блокирует вход и кикает юзеров из базы ЧС"
-        toggle_text = "☑ ЧС: Включён 🟢"
+        toggle_text = "✅ ЧС: Включён 🟢"
     else:
         shield = "⚠️ <b>Защита НЕАКТИВНА</b> — база ЧС приостановлена и пропускает всех"
         toggle_text = "☑️ ЧС: Выключен 🔴"
@@ -2528,7 +2528,7 @@ async def on_ga_bl_clear_confirm(callback: CallbackQuery):
     text = (
         "⚠️ <b>Очистка глобального ЧС</b>\n\n"
         "Вы уверены, что хотите безвозвратно удалить <b>ВЕСЬ</b> ваш глобальный черный список бота?\n\n"
-        "☑ <i>Не переживайте: локальные базы данных пользователей (черные списки в их дочерних ботах) "
+        "✅ <i>Не переживайте: локальные базы данных пользователей (черные списки в их дочерних ботах) "
         "затронуты <b>НЕ будут</b>. Удаляются только глобальные блокировки!</i>\n\n"
         f"<i>Будет удалено ваших глобальных записей: {bl_count_global}</i>"
     )
@@ -2563,7 +2563,7 @@ async def on_ga_bl_clear_yes(callback: CallbackQuery):
             "DELETE FROM blacklist WHERE owner_id=$1 AND child_bot_id IS NULL", owner_id
         )
             
-    await callback.answer("☑ ВАШ Глобальный Чёрный список полностью очищен!", show_alert=True)
+    await callback.answer("✅ ВАШ Глобальный Чёрный список полностью очищен!", show_alert=True)
     await on_ga_bl(callback)
 
 
@@ -2591,7 +2591,7 @@ async def on_ga_bl_master_toggle(callback: CallbackQuery):
             json.dumps({"info": "Blacklist ENABLED" if new_val else "Blacklist DISABLED"}))
 
     try:
-        await callback.answer("☑ ЧС включён" if new_val else "⚪️ ЧС выключен")
+        await callback.answer("✅ ЧС включён" if new_val else "⚪️ ЧС выключен")
     except Exception:
         pass
     # LAZY PASS: тумблер только меняет флаг в БД — никаких фоновых банов/разбанов.
@@ -2688,7 +2688,7 @@ async def _export_bl_csv(bot, chat_id: int, admin_id: int, owner_id: int, msg_to
             chat_id,
             document=doc,
             caption=(
-                f"☑ <b>Чёрный список готов!</b>\n"
+                f"✅ <b>Чёрный список готов!</b>\n"
                 f"📄 Записей: <b>{len(rows):,}</b>\n"
                 f"🤖 Из ботов: <b>{len(selected_bot_ids)}</b> выбранных"
             ),
@@ -2835,9 +2835,9 @@ async def process_ga_bl_add(message: Message, state: FSMContext, bot: Bot):
 
     kb = [[InlineKeyboardButton(text="◄ Вернуться в Глобальный ЧС", callback_data=f"ga_bl:{owner_id}")]]
     text_res = (
-        f"☑ <b>Операция завершена!</b>\n\n"
+        f"✅ <b>Операция завершена!</b>\n\n"
         f"📥 Обработано строк: <b>{len(targets):,}</b>\n"
-        f"☑ Добавлено новых: <b>{inserted_count:,}</b>\n"
+        f"✅ Добавлено новых: <b>{inserted_count:,}</b>\n"
         f"⚠️ Уже было в базе: <b>{len(targets) - inserted_count:,}</b>"
     )
     if target_ids_to_kick:
@@ -2979,7 +2979,7 @@ async def _export_users_csv(bot: Bot, chat_id: int, owner_id: int, export_type: 
     doc = FSInputFile(path, filename=f"global_audience_{export_type}.csv")
     
     kb = [[InlineKeyboardButton(text="◄ Назад в Базу Аудитории", callback_data=f"ga_dl_bck:{owner_id}")]]
-    await bot.send_document(chat_id, document=doc, caption="☑ Ваш отчет скомпилирован и готов.", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+    await bot.send_document(chat_id, document=doc, caption="✅ Ваш отчет скомпилирован и готов.", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
     
     try:
         os.close(fd)
@@ -3182,7 +3182,7 @@ async def cmd_notify(message: Message):
     temp_bot = Bot(token=row['bot_token'], default=DefaultBotProperties(parse_mode="HTML"))
     try:
         await temp_bot.send_message(chat_id=target_id, text=text_to_send)
-        await message.answer(f"☑ Сообщение успешно доставлено пользователю <code>{target_id}</code>.")
+        await message.answer(f"✅ Сообщение успешно доставлено пользователю <code>{target_id}</code>.")
     except Exception as e:
         await message.answer(f"❌ Ошибка отправки: пользователь заблокировал бота или недоступен ({e})")
     finally:
@@ -3289,7 +3289,7 @@ async def on_broadcast_message_received(message: Message, state: FSMContext):
                     pass
                 await asyncio.sleep(0.04)
                 
-        await msg.edit_text(f"☑ <b>Рассылка завершена!</b>\n\nДоставлено: <b>{success}</b> пользователям.", parse_mode="HTML")
+        await msg.edit_text(f"✅ <b>Рассылка завершена!</b>\n\nДоставлено: <b>{success}</b> пользователям.", parse_mode="HTML")
 
     import asyncio
     asyncio.create_task(run_broadcast())
@@ -3323,7 +3323,7 @@ async def _show_bots_network_page(callback: CallbackQuery, owner_id: int, page: 
 
     text = (
         "🗄️ <b>Управление общей базой</b>\n\n"
-        f"🤖 Всего ботов: <b>{total}</b>   │   ☑ В выборке: <b>{selected_count}</b>\n\n"
+        f"🤖 Всего ботов: <b>{total}</b>   │   ✅ В выборке: <b>{selected_count}</b>\n\n"
         "Отметьте нужные боты — они будут использоваться в Глобальном ЧС и экспорте аудитории.\n"
         "<i>Нажмите на бота — поставить/снять галочку</i>"
     )
@@ -3336,7 +3336,7 @@ async def _show_bots_network_page(callback: CallbackQuery, owner_id: int, page: 
     ]
 
     for bot_row in page_bots:
-        icon = "☑" if bot_row['selected'] else "☑️"
+        icon = "✅" if bot_row['selected'] else "☑️"
         owner_tag = f" (@{bot_row['owner_username']})" if bot_row['owner_username'] else ""
         kb.append([InlineKeyboardButton(
             text=f"{icon} @{bot_row['bot_username']}{owner_tag}",
@@ -3401,7 +3401,7 @@ async def on_ga_bot_select_toggle(callback: CallbackQuery):
                 "INSERT INTO ga_selected_bots(owner_id, child_bot_id) VALUES($1,$2) ON CONFLICT DO NOTHING",
                 owner_id, child_bot_id
             )
-            status = "☑ Добавлен в выборку"
+            status = "✅ Добавлен в выборку"
             newly_added = True
 
         # Проверяем, активен ли глобальный ЧС прямо сейчас
@@ -3537,7 +3537,7 @@ async def on_bots_search_input(message: Message, state: FSMContext):
         selected_count = sum(1 for b in bots if b['selected'])
         kb = []
         for b in bots:
-            icon = "☑" if b['selected'] else "☑️"
+            icon = "✅" if b['selected'] else "☑️"
             kb.append([InlineKeyboardButton(
                 text=f"{icon} @{b['bot_username']}",
                 callback_data=f"ga_bot_sel:{admin_id}:{b['id']}:0"
@@ -3581,7 +3581,7 @@ async def on_bots_search_input(message: Message, state: FSMContext):
         selected_count = sum(1 for b in bots if b['selected'])
         kb = []
         for b in bots:
-            icon = "☑" if b['selected'] else "☑️"
+            icon = "✅" if b['selected'] else "☑️"
             owner_tag = f" (@{b['owner_username']})" if b['owner_username'] else ""
             kb.append([InlineKeyboardButton(
                 text=f"{icon} @{b['bot_username']}{owner_tag}",
@@ -3988,7 +3988,7 @@ async def on_ga_discount_save(callback: CallbackQuery):
         return await callback.answer("❌ Только для Владельца", show_alert=True)
 
     await set_discount(percent, days)
-    await callback.answer(f"☑ Скидка {percent}% включена на {days} дней!", show_alert=True)
+    await callback.answer(f"✅ Скидка {percent}% включена на {days} дней!", show_alert=True)
     
     await callback.message.delete()
     

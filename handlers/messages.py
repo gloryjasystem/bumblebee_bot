@@ -17,7 +17,7 @@ import db.pool as db
 from db.channels import resolve_chat_owner
 from services.security import sanitize
 from utils.nav import navigate
-from handlers.captcha import greet_mode, GREET_AFTER, GREET_BEFORE, GREET_OFF
+from handlers.captcha import greet_mode
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -306,36 +306,32 @@ async def _show_captcha(callback: CallbackQuery, chat_id: int, owner_id: int):
 
     # Иконки зависящие от состояния
     anim_icon     = "🎞" if anim_on else "🎞" # Используем одну и ту же строгую иконку для обоих состояний
-    greet_active  = greet_m != GREET_OFF       # шлём ли приветствие в потоке капчи
-    greet_icon    = "📩" if (has_welcome and greet_active) else "✉️"
+    greet_icon    = "📨" if has_welcome else "✉️"
     accept_icon   = "🔋" if accept_now else "🪫"
     accept_a_icon = "☑" if accept_all else "❎"
     btn_label     = "▫️" if btn_size == "compact" else "⬜"
 
-    # Подписи режима «Приветствовать» и динамичный хвост описания
-    _greet_state = {GREET_AFTER: "после капчи", GREET_BEFORE: "до капчи", GREET_OFF: "выкл"}[greet_m]
+    # Кнопка «Сообщения»: порядок «капча ↔ сообщения» (приветствие №1 + вся цепочка).
+    # 2 состояния: после капчи (гейт, дефолт) / до капчи. Нет сообщений → неактивна.
     if not has_welcome:
-        greet_btn_text  = "✉️ Приветствовать: — (нет приветствия)"
-        greet_desc_tail = "приветствие не задано — слать после капчи нечего."
-        info_tail       = "ⓘ Приветствие не задано — капча работает как чистый гейт."
-    else:
-        greet_btn_text = f"{greet_icon} Приветствовать: {_greet_state}"
-        if greet_m == GREET_AFTER:
-            greet_desc_tail = "капча идёт первой, приветствие и цепочка — после её прохождения (гейт)."
-            info_tail       = "ⓘ Сначала капча, затем приветствие и цепочка."
-        elif greet_m == GREET_BEFORE:
-            greet_desc_tail = "приветствие и цепочка уходят первыми, капча — после них."
-            info_tail       = "ⓘ Сначала приветствие и цепочка, затем капча."
-        else:  # GREET_OFF
-            greet_desc_tail = "в потоке капчи приветствие не отправляется."
-            info_tail       = "ⓘ Приветствие в потоке капчи выключено — только капча."
+        greet_btn_text  = "✉️ Сообщения: — (не заданы)"
+        greet_desc_tail = "приветствие и цепочка не заданы — отправлять нечего."
+        info_tail       = "ⓘ Сообщения не заданы — капча работает как чистый гейт."
+    elif greet_m == 1:   # до капчи
+        greet_btn_text  = "📨 Сообщения: до капчи"
+        greet_desc_tail = "приветствие и вся цепочка уходят <b>до</b> капчи — сначала сообщения, потом проверка."
+        info_tail       = "ⓘ Сначала приветствие и цепочка, затем капча."
+    else:                # после капчи (гейт, дефолт)
+        greet_btn_text  = "📨 Сообщения: после капчи"
+        greet_desc_tail = "приветствие и вся цепочка уходят <b>после</b> капчи — сначала пользователь проходит проверку."
+        info_tail       = "ⓘ Сначала капча, затем приветствие и цепочка."
 
     info = (
         "🔒 <b>Капча</b>\n\n"
         "⚪ <b>Простая:</b> пользователю достаточно нажать на любую кнопку.\n\n"
         "🔵 <b>Рандомная:</b> пользователю необходимо нажать на верную кнопку.\n\n"
         "<blockquote>"
-        f"{greet_icon} <b>Приветствовать:</b> {greet_desc_tail}\n\n"
+        f"{greet_icon} <b>Сообщения</b> (приветствие + вся цепочка): {greet_desc_tail}\n\n"
         f"{accept_icon} <b>Принимать сразу:</b> позволяет принимать заявки сразу после решения капчи.\n\n"
         f"{accept_a_icon} <b>Принимать всех:</b> если данная опция включена, то даже если пользователь "
         "проигнорировал капчу, его заявка будет обработана."
@@ -461,8 +457,8 @@ async def on_ch_cap_toggle(callback: CallbackQuery, platform_user: dict | None):
         return
 
     if setting == "greet":
-        # 3-позиционный цикл: после капчи (гейт) → до капчи → выкл → …
-        # Неактивна, если приветствия/цепочки нет — слать после капчи нечего.
+        # 2-позиционный тумблер: сообщения после капчи (гейт) ↔ до капчи.
+        # Неактивна, если приветствия/цепочки нет — переключать нечего.
         has_base_welcome = bool(ch.get("welcome_text") or ch.get("welcome_media"))
         steps_cnt = await db.fetchval(
             "SELECT COUNT(*) FROM welcome_steps WHERE owner_id=$1 AND chat_id=$2::bigint "
@@ -472,11 +468,10 @@ async def on_ch_cap_toggle(callback: CallbackQuery, platform_user: dict | None):
         if not (has_base_welcome or steps_cnt):
             await callback.answer("Сначала задайте приветствие или цепочку", show_alert=True)
             return
-        new_mode = (greet_mode(ch) + 1) % 3
+        new_mode = 0 if greet_mode(ch) == 1 else 1
         await db.execute("UPDATE bot_chats SET captcha_greet_mode=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
                          new_mode, owner_id, chat_id)
-        _lbl = {GREET_AFTER: "после капчи", GREET_BEFORE: "до капчи", GREET_OFF: "выкл"}[new_mode]
-        await callback.answer(f"Приветствовать: {_lbl}")
+        await callback.answer("Сообщения: " + ("до капчи" if new_mode == 1 else "после капчи"))
 
     elif setting == "btn_type":
         # Размер reply-кнопки капчи: крупная (big) ↔ компактная (compact). Inline убран —

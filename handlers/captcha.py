@@ -27,17 +27,18 @@ router = Router()
 # Cache for child bot file IDs mapping: (original_file_id, bot_id) -> new_file_id
 _child_file_ids_cache = {}
 
-# Режим связки «капча ↔ приветствие» (кнопка «Приветствовать» на экране капчи):
-#   0 = после капчи (гейт, дефолт) — капча → прошёл → приветствие + цепочка
-#   1 = до капчи                    — приветствие + цепочка, потом капча
-#   2 = выкл                        — в потоке капчи приветствие не шлём
-GREET_AFTER, GREET_BEFORE, GREET_OFF = 0, 1, 2
+# Порядок «капча ↔ сообщения» (кнопка «Сообщения» на экране капчи).
+# «Сообщения» = приветствие №1 + вся подвязанная цепочка (единое целое).
+#   0 = сообщения ПОСЛЕ капчи (гейт, дефолт) — капча → прошёл → приветствие + цепочка
+#   1 = сообщения ДО капчи                    — приветствие + цепочка, потом капча
+GREET_AFTER, GREET_BEFORE = 0, 1
 
 
 def greet_mode(row) -> int:
-    """3-позиционный режим приветствия относительно капчи. Дефолт — 0 (после капчи, гейт)."""
+    """Порядок сообщений относительно капчи: 1 = до капчи, иначе 0 = после капчи (дефолт-гейт).
+    Любое иное значение схлопывается в 0 — так капча остаётся гейтом по умолчанию."""
     try:
-        return int((row or {}).get("captcha_greet_mode") or 0)
+        return 1 if int((row or {}).get("captcha_greet_mode") or 0) == 1 else 0
     except (TypeError, ValueError):
         return 0
 
@@ -323,11 +324,10 @@ async def send_captcha(bot: Bot, event: ChatJoinRequest, settings_row: dict):
             # без chat_title/welcome_media/кнопок), чтобы приветствие и цепочка отработали корректно.
             full_row = await _fetch_chat_settings(event.chat.id, settings_row.get("owner_id"))
             _wrow = dict(full_row) if full_row else settings_row
-            # Капча-гейт: «выкл» — приветствие в потоке капчи не шлём; иначе from_join_request=True
-            # обходит «страж Сразу» (гейт для «Сразу»-каналов), дубль гасит _welcome_already_sent.
-            if greet_mode(_wrow) != GREET_OFF:
-                await _send_welcome(bot, event.chat.id, user, _wrow,
-                                    contact_established=True, from_join_request=True)
+            # Капча пройдена → шлём сообщения. from_join_request=True обходит «страж Сразу»
+            # (гейт для «Сразу»-каналов), дубль в режиме «до капчи» гасит _welcome_already_sent.
+            await _send_welcome(bot, event.chat.id, user, _wrow,
+                                contact_established=True, from_join_request=True)
         else:
             logger.info(f"[CAPTCHA] Both bots failed DM for user={user.id} — leaving pending for manual review")
 
@@ -666,9 +666,9 @@ async def _approve_user(
             # не нажимал /start (Forbidden: bot can't initiate conversation). Именно
             # поэтому раньше капча доходила (окно было открыто), а приветствие — нет.
             welcome_ok = False
-            # Капча-гейт: «выкл» — приветствие в потоке капчи не шлём; иначе from_join_request=True
-            # обходит «страж Сразу» (гейт для «Сразу»-каналов), дубль гасит _welcome_already_sent.
-            if settings_row and greet_mode(settings_row) != GREET_OFF:
+            # Капча пройдена → шлём сообщения. from_join_request=True обходит «страж Сразу»
+            # (гейт для «Сразу»-каналов), дубль в режиме «до капчи» гасит _welcome_already_sent.
+            if settings_row:
                 try:
                     from handlers.join_requests import _send_welcome
                     welcome_ok = await _send_welcome(bot, chat_id, callback.from_user, dict(settings_row),
@@ -891,9 +891,9 @@ async def _approve_user_from_message(
         # Приветствие — ДО approve (пока открыто окно заявки; после approve окно
         # закрывается и боту нельзя писать юзеру, не нажимавшему /start).
         welcome_ok = False
-        # Капча-гейт: «выкл» — приветствие в потоке капчи не шлём; иначе from_join_request=True
-        # обходит «страж Сразу» (гейт для «Сразу»-каналов), дубль гасит _welcome_already_sent.
-        if settings_row and greet_mode(settings_row) != GREET_OFF:
+        # Капча пройдена → шлём сообщения. from_join_request=True обходит «страж Сразу»
+        # (гейт для «Сразу»-каналов), дубль в режиме «до капчи» гасит _welcome_already_sent.
+        if settings_row:
             try:
                 from handlers.join_requests import _send_welcome
                 welcome_ok = await _send_welcome(bot, chat_id, message.from_user, dict(settings_row),

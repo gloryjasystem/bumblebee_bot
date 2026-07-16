@@ -2584,17 +2584,12 @@ async def _handle_chat_member(bot: Bot, child_bot_id: int, event: ChatMemberUpda
             if passed_group_captcha:
                 # Потребляем флаг сразу, чтобы не отправить приветствие дважды
                 _passed_captcha_group.discard(captcha_key)
-                # Капча-гейт: «выкл» (greet_mode=2) — в потоке капчи приветствие не шлём.
-                # Иначе шлём с from_join_request=True (обходит «страж Сразу», чтобы гейт
-                # сработал и для «Сразу»-каналов); дубль в режиме «до капчи» гасит
-                # _welcome_already_sent (180с).
-                from handlers.captcha import greet_mode as _greet_mode
-                if _greet_mode(welcome_row) == 2:
-                    logger.info(f"[WELCOME] greet_mode=off — приветствие в потоке капчи пропущено user={user.id}")
-                else:
-                    logger.info(f"[WELCOME] captcha passed — sending welcome to user={user.id}")
-                    await _send_welcome(bot, chat_id, user, welcome_row,
-                                        contact_established=True, from_join_request=True)
+                # Капча пройдена → шлём сообщения с from_join_request=True (обходит «страж
+                # Сразу», чтобы гейт сработал и для «Сразу»-каналов); дубль в режиме «до
+                # капчи» гасит _welcome_already_sent (180с).
+                logger.info(f"[WELCOME] captcha passed — sending welcome to user={user.id}")
+                await _send_welcome(bot, chat_id, user, welcome_row,
+                                    contact_established=True, from_join_request=True)
             elif captcha_type == "off":
                 await _send_welcome(bot, chat_id, user, welcome_row)
     # ── Пользователь вышел/забанен ────────────────────────────

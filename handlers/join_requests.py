@@ -244,8 +244,10 @@ async def on_join_request(event: ChatJoinRequest, bot: Bot):
     # уходит после прохождения капчи (или не уходит) — чтобы капча не заваливалась.
     from handlers.captcha import greet_mode as _greet_mode
     _wl_captcha_on = (_wl_row.get("captcha_type") or "off") != "off"
-    _wl_greet_at_request = (not _wl_captcha_on) or (_greet_mode(_wl_row) == 1)
-    if int(_wl_row.get("welcome_delay_sec") or 0) < 0 and _wl_greet_at_request:
+    _wl_greet_mode = _greet_mode(_wl_row)
+    _wl_greet_at_request = (not _wl_captcha_on) or (_wl_greet_mode == 1)
+    _wl_welcome_fired = int(_wl_row.get("welcome_delay_sec") or 0) < 0 and _wl_greet_at_request
+    if _wl_welcome_fired:
         try:
             await _send_welcome(bot, event.chat.id, user, _wl_row, contact_established=True, from_join_request=True)
         except Exception as _we:
@@ -308,7 +310,18 @@ async def on_join_request(event: ChatJoinRequest, bot: Bot):
 
     elif (settings_row.get("captcha_type") or "off") != "off":
         await _save_pending(owner_id, event.chat.id, user)
-        from handlers.captcha import send_captcha
+        from handlers.captcha import send_captcha, send_captcha_after
+        # «До капчи» (greet_mode=1): №1 уже ушло, №2+ уходят отложенно. Капчу шлём ПОСЛЕ
+        # последнего сообщения цепочки, иначе она выскочит между №1 и отложенными №2+.
+        if _wl_greet_mode == 1 and _wl_welcome_fired:
+            _max_delay = await db.fetchval(
+                "SELECT COALESCE(MAX(delay_sec), 0) FROM welcome_steps "
+                "WHERE owner_id=$1 AND chat_id=$2::bigint AND (action IS NULL OR action <> 'delete')",
+                owner_id, event.chat.id,
+            )
+            if int(_max_delay or 0) > 0:
+                asyncio.create_task(send_captcha_after(bot, event, dict(settings_row), int(_max_delay) + 5))
+                return
         await send_captcha(bot, event, dict(settings_row))
     else:
         # Ручной режим — сохраняем в очередь для ревью владельцем

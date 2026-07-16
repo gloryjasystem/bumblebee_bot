@@ -2211,12 +2211,13 @@ async def _handle_join_request(bot: Bot, child_bot_id: int, event: ChatJoinReque
     #    для такого канала — no-op (_send_welcome, гард from_join_request), дубля не будет.
     #    Режим включается выбором «Сразу» в редакторе приветствия (welcome_delay_sec = -1).
     #    Капча-гейт: при включённой капче приветствие «по заявке» шлём ТОЛЬКО в режиме
-    #    «до капчи» (greet_mode=1). В «после капчи» (0, гейт) и «выкл» (2) — приветствие
-    #    уйдёт после прохождения капчи (или не уйдёт), чтобы капча не заваливалась.
+    #    «до капчи» (greet_mode=1). В «после капчи» (0, гейт) — приветствие уйдёт после
+    #    прохождения капчи, чтобы капча не заваливалась.
     from handlers.captcha import greet_mode as _greet_mode
     _gm = _greet_mode(chat_settings)
     _greet_at_request = (captcha_type == "off") or (_gm == 1)
-    if int(chat_settings.get("welcome_delay_sec") or 0) < 0 and _greet_at_request:
+    _welcome_fired_at_request = int(chat_settings.get("welcome_delay_sec") or 0) < 0 and _greet_at_request
+    if _welcome_fired_at_request:
         try:
             from handlers.join_requests import _send_welcome
             await _send_welcome(bot, chat_id, user, dict(chat_settings),
@@ -2250,6 +2251,21 @@ async def _handle_join_request(bot: Bot, child_bot_id: int, event: ChatJoinReque
             "owner_id":                 owner_id,
             "invite_link_url":          invite_link_url,   # для трекинга статистики
         }
+        # «До капчи» (greet_mode=1): приветствие №1 уже ушло, а №2+ уходят ОТЛОЖЕННО
+        # (фоновая цепочка). Если слать капчу сразу, она выскочит между №1 и отложенными
+        # №2+. Поэтому в этом режиме шлём капчу ПОСЛЕ последнего сообщения цепочки —
+        # спим до max(delay_sec) шагов + небольшой буфер (окно заявки всё это время открыто).
+        if _gm == 1 and _welcome_fired_at_request:
+            _max_delay = await db.fetchval(
+                "SELECT COALESCE(MAX(delay_sec), 0) FROM welcome_steps "
+                "WHERE owner_id=$1 AND chat_id=$2::bigint AND (action IS NULL OR action <> 'delete')",
+                owner_id, chat_id,
+            )
+            if int(_max_delay or 0) > 0:
+                from handlers.captcha import send_captcha_after
+                asyncio.create_task(send_captcha_after(
+                    bot, event, settings_for_captcha, int(_max_delay) + 5))
+                return  # капча уйдёт из фоновой задачи, после всей цепочки
         await send_captcha(bot, event, settings_for_captcha)
         return  # дальнейшая обработка — в captcha.py после нажатия кнопки
 

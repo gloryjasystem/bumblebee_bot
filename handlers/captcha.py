@@ -125,6 +125,18 @@ _kicked_for_captcha: set[tuple[int, int]] = set()
 # Публичная точка входа — вызывается из join_requests.py
 # ══════════════════════════════════════════════════════════════
 
+async def send_captcha_after(bot: Bot, event: ChatJoinRequest, settings_row: dict, delay_sec: int):
+    """Режим «до капчи»: капча уходит ПОСЛЕ всей цепочки приветствий. Спим до конца ленты
+    (max(delay_sec) шагов) + буфер, затем шлём капчу. Окно заявки всё это время открыто
+    (заявка ещё pending), поэтому право писать в ЛС сохраняется."""
+    try:
+        await asyncio.sleep(max(0, int(delay_sec)))
+        await send_captcha(bot, event, settings_row)
+    except Exception as e:
+        _uid = getattr(getattr(event, "from_user", None), "id", "?")
+        logger.warning(f"[CAPTCHA] отложенная капча (до капчи) не ушла user={_uid}: {e}")
+
+
 async def send_captcha(bot: Bot, event: ChatJoinRequest, settings_row: dict):
     """
     Отправляет капчу пользователю в личку.

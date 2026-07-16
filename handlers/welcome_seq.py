@@ -1206,7 +1206,8 @@ async def on_wseq_test(callback: CallbackQuery, platform_user: dict | None):
         return
 
     row = await db.fetchrow(
-        "SELECT welcome_text, welcome_media, welcome_media_type, welcome_buttons, welcome_enabled, chat_title "
+        "SELECT welcome_text, welcome_media, welcome_media_type, welcome_buttons, welcome_enabled, chat_title, "
+        "captcha_type, captcha_greet_mode "
         "FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint",
         owner_id, chat_id,
     )
@@ -1238,6 +1239,10 @@ async def on_wseq_test(callback: CallbackQuery, platform_user: dict | None):
     # Предпросмотр в порядке доставки (тот же ключ, что и на экране/в движке)
     msg_steps.sort(key=lambda s: (int(s["delay_sec"] or 0), int(s["step_order"] or 0), int(s["id"])))
 
+    # Капча в предпросмотре: 0/None = после капчи (гейт, сверху), 1 = до капчи (в конце)
+    captcha_on = bool(row and (row["captcha_type"] or "off") != "off")
+    greet_m    = int(row["captcha_greet_mode"] or 0) if row else 0
+
     key = (chat_id, user.id)
     # снести прошлый предпросмотр, если он ещё висит
     prev = _preview_msgs.pop(key, None)
@@ -1252,6 +1257,16 @@ async def on_wseq_test(callback: CallbackQuery, platform_user: dict | None):
     def _track(sent):
         if sent:
             mids.append(sent.message_id)
+
+    # Капча «сверху»: после капчи (гейт, дефолт) — маркер до №1
+    if captcha_on and greet_m != 1:
+        try:
+            _track(await bot.send_message(
+                tg,
+                "🔒 <b>Капча · сначала</b>\n<i>Пройдёт → уйдёт всё, что ниже.</i>",
+                parse_mode="HTML"))
+        except Exception:
+            pass
 
     # №1 — приветствие (только если включено и задано; иначе сдержанная пометка)
     if base_on:
@@ -1269,6 +1284,16 @@ async def on_wseq_test(callback: CallbackQuery, platform_user: dict | None):
         txt = _apply_vars(st["text"] or "", user, chat_title)
         kb = build_inline_keyboard(st["buttons"])
         _track(await _preview_one(bot, tg, f"№{i} · {_delay_offset(st['delay_sec'])}", txt, st["media"], st["media_type"], kb))
+
+    # Капча «в конце»: до капчи — маркер после последнего шага
+    if captcha_on and greet_m == 1:
+        try:
+            _track(await bot.send_message(
+                tg,
+                "🔒 <b>Капча · в конце</b>\n<i>После цепочки — капча для вступления в канал.</i>",
+                parse_mode="HTML"))
+        except Exception:
+            pass
 
     # очистка переписки (свойство цепочки)
     if autoclear_sec > 0:

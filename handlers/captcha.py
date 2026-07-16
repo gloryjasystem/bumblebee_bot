@@ -803,6 +803,16 @@ async def _approve_user(
                 _captcha_msg_ids[key] = callback.message.message_id
                 await callback.answer("☑ Готово!")
 
+            # Капча = активатор ленты: приветствие+цепочку шлём СРАЗУ после капчи (окно
+            # заявки открыто), не откладывая до вступления. Повтор гасит _welcome_already_sent.
+            if settings_row:
+                try:
+                    from handlers.join_requests import _send_welcome
+                    await _send_welcome(bot, chat_id, callback.from_user, dict(settings_row),
+                                        contact_established=True, from_join_request=True)
+                except Exception as _we:
+                    logger.warning(f"[CAPTCHA WELCOME manual] send failed user={callback.from_user.id}: {_we}")
+
     else:
         try:
             await event.decline()
@@ -989,6 +999,18 @@ async def _approve_user_from_message(
             "Ожидайте подтверждения.",
             reply_markup=ReplyKeyboardRemove(),
         )
+
+        # Капча = активатор ленты: приветствие+цепочку шлём СРАЗУ после прохождения капчи
+        # (контакт установлен reply-капчей → ЛС открыта), не откладывая до вступления в канал.
+        # Принятие в канал (авто-таймер/ручное) идёт параллельно и ленту не задерживает.
+        # Повтор на входе / при отложенном одобрении гасит _welcome_already_sent (180с).
+        if settings_row:
+            try:
+                from handlers.join_requests import _send_welcome
+                await _send_welcome(bot, chat_id, message.from_user, dict(settings_row),
+                                    contact_established=True, from_join_request=True)
+            except Exception as _we:
+                logger.warning(f"[CAPTCHA WELCOME REPLY manual] send failed user={message.from_user.id}: {_we}")
 
         if delay > 0 and settings_row:
             from scheduler.child_bot_runner import _delayed_approve_join_request

@@ -399,18 +399,24 @@ async def _show_captcha(callback: CallbackQuery, chat_id: int, owner_id: int, ba
 
 
 @router.callback_query(F.data.startswith("ch_captcha:"))
-async def on_ch_captcha(callback: CallbackQuery, platform_user: dict | None):
+async def on_ch_captcha(callback: CallbackQuery, platform_user: dict | None, state: FSMContext | None = None):
     if not platform_user:
         return
+    # Возврат в меню капчи = выход из режима ввода текста/кнопок капчи (если были в нём),
+    # иначе следующее случайное сообщение улетит в настройку.
+    if state is not None:
+        await state.clear()
     chat_id = int(callback.data.split(":")[1])
     await _show_captcha(callback, chat_id, await resolve_chat_owner(platform_user["user_id"], chat_id))
 
 
 @router.callback_query(F.data.startswith("ch_captcha_chain:"))
-async def on_ch_captcha_chain(callback: CallbackQuery, platform_user: dict | None):
+async def on_ch_captcha_chain(callback: CallbackQuery, platform_user: dict | None, state: FSMContext | None = None):
     """Вход в капчу из экрана «⛓ Цепочка сообщений»: «Назад» ведёт обратно в цепочку."""
     if not platform_user:
         return
+    if state is not None:
+        await state.clear()
     chat_id = int(callback.data.split(":")[1])
     await _show_captcha(callback, chat_id, await resolve_chat_owner(platform_user["user_id"], chat_id),
                         back_cb=f"wseq:{chat_id}")
@@ -852,6 +858,9 @@ async def on_ch_captcha_text(callback: CallbackQuery, state: FSMContext, platfor
         "└ Текущая дата: <code>{day}</code>\n\n"
         "ℹ️ Можно прикрепить медиа.",
         parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="◄ Назад", callback_data=f"ch_captcha:{chat_id}")],
+        ]),
     )
     await callback.answer()
 
@@ -916,6 +925,9 @@ async def on_ch_captcha_btns(callback: CallbackQuery, state: FSMContext, platfor
         "<u>Пример:</u> <code>🟩 Я не робот</code></blockquote>\n\n"
         "↪️ Пришлите названия для <u>кнопок капчи:</u>",
         parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="◄ Назад", callback_data=f"ch_captcha:{chat_id}")],
+        ]),
     )
     await callback.answer()
 

@@ -69,8 +69,9 @@ _CAPTCHA_EMOJI_STYLE_MAP = {
 def _parse_captcha_buttons(raw: str) -> list[tuple[str, str | None]]:
     """Парсит captcha_buttons_raw в список (текст, style|None).
     Поддерживает разделитель новая строка и запятая.
-    Если строка начинается с цветного эмодзи (🟩/🟦/🟥) — возвращает соответствующий style,
-    эмодзи убирается из текста кнопки (цвет применяется через Bot API 9.4).
+    Если строка начинается с цветного эмодзи (🟩/🟦/🟥) — возвращает соответствующий style
+    И ОСТАВЛЯЕТ эмодзи в тексте кнопки: капча всегда reply-клавиатура, а её кнопки Telegram
+    красить через Bot API не умеет — поэтому цветной квадрат в подписи и есть «цвет» кнопки.
     """
     if not raw:
         return []
@@ -83,12 +84,11 @@ def _parse_captcha_buttons(raw: str) -> list[tuple[str, str | None]]:
             btn = btn.strip()
             if not btn:
                 continue
-            # Определяем цвет по ведущему emoji
+            # Определяем цвет по ведущему emoji (эмодзи НЕ вырезаем — он и есть видимый цвет)
             btn_style = None
             for emoji, style in _CAPTCHA_EMOJI_STYLE_MAP.items():
                 if btn.startswith(emoji):
                     btn_style = style
-                    btn = btn[len(emoji):].strip()
                     break
             parts.append((btn, btn_style))
     return parts[:10]  # не больше 10 кнопок

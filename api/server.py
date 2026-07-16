@@ -85,6 +85,7 @@ def create_app(bot: Bot, dp: Dispatcher) -> FastAPI:
                 "ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS captcha_timer_min    INT     DEFAULT 1",
                 "ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS captcha_emoji_set    TEXT    DEFAULT '🍕🍔🌭🌮'",
                 "ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS captcha_greet        BOOLEAN DEFAULT false",
+                "ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS captcha_greet_mode   SMALLINT DEFAULT 0",
                 "ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS captcha_accept_now   BOOLEAN DEFAULT false",
                 "ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS captcha_accept_all   BOOLEAN DEFAULT false",
                 "ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS captcha_anim_file_id TEXT",

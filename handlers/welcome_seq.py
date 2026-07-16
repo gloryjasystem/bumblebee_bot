@@ -268,21 +268,33 @@ async def _show_manager(event, chat_id: int, owner_id: int):
         owner_id, chat_id,
     )
     base = await db.fetchrow(
-        "SELECT welcome_text, welcome_media, welcome_enabled, welcome_delay_sec FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint",
+        "SELECT welcome_text, welcome_media, welcome_enabled, welcome_delay_sec, "
+        "captcha_type, captcha_greet_mode FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint",
         owner_id, chat_id,
     )
     has_base = bool(base and (base["welcome_text"] or base["welcome_media"]))
     # база «в игре», только если задана И тумблер не выключен (NULL/None = включено)
     base_on = has_base and (base["welcome_enabled"] is not False)
     base_delay = int(base["welcome_delay_sec"] or 0) if base else 0
+    # Капча-гейт: 0 = после капчи (гейт), 1 = до капчи, 2 = выкл
+    captcha_on = bool(base and (base["captcha_type"] or "off") != "off")
+    greet_m = int(base["captcha_greet_mode"] or 0) if base else 0
 
     # Шаги-сообщения нумеруются; авто-очистка (action='delete') — свойство цепочки
     msg_steps = [s for s in steps if (s["action"] or "message") != "delete"]
     del_steps = [s for s in steps if (s["action"] or "message") == "delete"]
     autoclear_sec = min((int(s["delay_sec"] or 0) for s in del_steps), default=0)
+    # Порядок на экране = порядок доставки (тот же ключ, что в _run_welcome_sequence)
+    msg_steps.sort(key=lambda s: (int(s["delay_sec"] or 0), int(s["step_order"] or 0), int(s["id"])))
 
     # ── Тело: компактный таймлайн (одна строка на шаг) ──
     lines = ["⛓ <b>Цепочка сообщений</b>", ""]
+    # Капча «сверху»: гейт (после капчи) или выкл (приветствие в потоке капчи не шлётся)
+    if captcha_on and greet_m in (0, 2):
+        if greet_m == 0:
+            lines.append("<b>🔒</b> · <i>сначала</i> · Капча (гейт)")
+        else:
+            lines.append("<b>🔒</b> · <i>сначала</i> · Капча (без приветствия)")
     if not has_base:
         lines.append("<b>№1</b> · <i>сразу</i> · ⚠️ не задано")
     elif base_on:
@@ -296,6 +308,10 @@ async def _show_manager(event, chat_id: int, owner_id: int):
         max_delay = max(max_delay, delay)
         icon, prev = _step_preview(st, 30)
         lines.append(f"<b>№{i}</b> · <i>{_delay_offset(delay)}</i> · {icon} {_html.escape(prev)}")
+
+    # Капча «снизу»: до капчи — сначала лента, капча в конце
+    if captcha_on and greet_m == 1:
+        lines.append("<b>🔒</b> · <i>в конце</i> · Капча")
 
     if autoclear_sec > 0:
         lines += ["", f"🧹 <b>через +{format_delay_short(autoclear_sec)}</b> — вся переписка очистится"]
@@ -319,11 +335,24 @@ async def _show_manager(event, chat_id: int, owner_id: int):
         if not msg_steps:
             lines += ["", "Пока только приветствие (№1). Добавьте сообщения ниже — до 10."]
 
+    # Подпись про капчу-гейт под итогом
+    if captcha_on:
+        if greet_m == 0:
+            lines += ["", "🔒 <i>Сначала капча. Пройдёт → уйдёт лента.</i>"]
+        elif greet_m == 1:
+            lines += ["", "🔒 <i>Сначала лента, в конце — капча для вступления.</i>"]
+        else:
+            lines += ["", "🔒 <i>Только капча. Приветствие в её потоке выключено.</i>"]
+
     # ── Клавиатура ──
-    kb_rows = [[InlineKeyboardButton(
+    kb_rows = []
+    if captcha_on:
+        kb_rows.append([InlineKeyboardButton(
+            text="🔒 Капча · настроить", callback_data=f"ch_captcha:{chat_id}")])
+    kb_rows.append([InlineKeyboardButton(
         text=("✎ №1 Приветствие" if has_base else "✎ Задать приветствие №1"),
         callback_data=f"welcome_set_chain:{chat_id}",
-    )]]
+    )])
     for i, st in enumerate(msg_steps, start=2):
         delay = int(st["delay_sec"] or 0)
         icon, _prev = _step_preview(st, 18)
@@ -1211,6 +1240,8 @@ async def on_wseq_test(callback: CallbackQuery, platform_user: dict | None):
     msg_steps = [s for s in steps if (s["action"] or "message") != "delete"]
     del_steps = [s for s in steps if (s["action"] or "message") == "delete"]
     autoclear_sec = min((int(s["delay_sec"] or 0) for s in del_steps), default=0)
+    # Предпросмотр в порядке доставки (тот же ключ, что и на экране/в движке)
+    msg_steps.sort(key=lambda s: (int(s["delay_sec"] or 0), int(s["step_order"] or 0), int(s["id"])))
 
     key = (chat_id, user.id)
     # снести прошлый предпросмотр, если он ещё висит

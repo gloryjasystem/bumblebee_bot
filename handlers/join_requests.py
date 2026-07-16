@@ -239,7 +239,13 @@ async def on_join_request(event: ChatJoinRequest, bot: Bot):
     from db.channels import get_channel
     _canon_wl = await get_channel(event.chat.id)
     _wl_row = dict(_canon_wl) if _canon_wl else settings_row
-    if int(_wl_row.get("welcome_delay_sec") or 0) < 0:
+    # Капча-гейт: при включённой капче приветствие «по заявке» шлём ТОЛЬКО в режиме
+    # «до капчи» (greet_mode=1). В «после капчи» (0, гейт) и «выкл» (2) приветствие
+    # уходит после прохождения капчи (или не уходит) — чтобы капча не заваливалась.
+    from handlers.captcha import greet_mode as _greet_mode
+    _wl_captcha_on = (_wl_row.get("captcha_type") or "off") != "off"
+    _wl_greet_at_request = (not _wl_captcha_on) or (_greet_mode(_wl_row) == 1)
+    if int(_wl_row.get("welcome_delay_sec") or 0) < 0 and _wl_greet_at_request:
         try:
             await _send_welcome(bot, event.chat.id, user, _wl_row, contact_established=True, from_join_request=True)
         except Exception as _we:

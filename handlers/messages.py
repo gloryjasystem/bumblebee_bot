@@ -17,6 +17,7 @@ import db.pool as db
 from db.channels import resolve_chat_owner
 from services.security import sanitize
 from utils.nav import navigate
+from handlers.captcha import greet_mode, GREET_AFTER, GREET_BEFORE, GREET_OFF
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -284,10 +285,20 @@ async def _show_captcha(callback: CallbackQuery, chat_id: int, owner_id: int):
     timer         = int(ch["captcha_timer_min"] if ch.get("captcha_timer_min") else 1)
     anim_on       = bool(ch.get("captcha_anim_file_id")) or bool(ch.get("captcha_animation", False))
     btn_size      = "compact" if ch.get("captcha_button_style") == "compact" else "big"  # размер reply-кнопки
-    greet_on      = bool(ch.get("captcha_greet", False))
+    greet_m       = greet_mode(ch)                 # 0=после капчи, 1=до капчи, 2=выкл
     accept_now    = bool(ch.get("captcha_accept_now", False))
     accept_all    = bool(ch.get("captcha_accept_all", False))
     emoji_set     = ch.get("captcha_emoji_set") or _EMOJI_SETS[0]
+
+    # Есть ли что слать после капчи: база-приветствие ИЛИ хоть один не-delete шаг цепочки.
+    # Нет приветствия → кнопка «Приветствовать» неактивна, капча работает как чистый гейт.
+    has_base_welcome = bool(ch.get("welcome_text") or ch.get("welcome_media"))
+    steps_cnt = await db.fetchval(
+        "SELECT COUNT(*) FROM welcome_steps WHERE owner_id=$1 AND chat_id=$2::bigint "
+        "AND (action IS NULL OR action <> 'delete')",
+        owner_id, chat_id,
+    )
+    has_welcome = has_base_welcome or bool(steps_cnt)
 
     type_labels = {"off": "🔒 Капча: выкл", "simple": "🔒 Капча: простая",
                    "random": "🔒 Капча: рандомная"}
@@ -295,23 +306,41 @@ async def _show_captcha(callback: CallbackQuery, chat_id: int, owner_id: int):
 
     # Иконки зависящие от состояния
     anim_icon     = "🎞" if anim_on else "🎞" # Используем одну и ту же строгую иконку для обоих состояний
-    greet_icon    = "📩" if greet_on else "✉️"
+    greet_active  = greet_m != GREET_OFF       # шлём ли приветствие в потоке капчи
+    greet_icon    = "📩" if (has_welcome and greet_active) else "✉️"
     accept_icon   = "🔋" if accept_now else "🪫"
     accept_a_icon = "☑" if accept_all else "❎"
     btn_label     = "▫️" if btn_size == "compact" else "⬜"
+
+    # Подписи режима «Приветствовать» и динамичный хвост описания
+    _greet_state = {GREET_AFTER: "после капчи", GREET_BEFORE: "до капчи", GREET_OFF: "выкл"}[greet_m]
+    if not has_welcome:
+        greet_btn_text  = "✉️ Приветствовать: — (нет приветствия)"
+        greet_desc_tail = "приветствие не задано — слать после капчи нечего."
+        info_tail       = "ⓘ Приветствие не задано — капча работает как чистый гейт."
+    else:
+        greet_btn_text = f"{greet_icon} Приветствовать: {_greet_state}"
+        if greet_m == GREET_AFTER:
+            greet_desc_tail = "капча идёт первой, приветствие и цепочка — после её прохождения (гейт)."
+            info_tail       = "ⓘ Сначала капча, затем приветствие и цепочка."
+        elif greet_m == GREET_BEFORE:
+            greet_desc_tail = "приветствие и цепочка уходят первыми, капча — после них."
+            info_tail       = "ⓘ Сначала приветствие и цепочка, затем капча."
+        else:  # GREET_OFF
+            greet_desc_tail = "в потоке капчи приветствие не отправляется."
+            info_tail       = "ⓘ Приветствие в потоке капчи выключено — только капча."
 
     info = (
         "🔒 <b>Капча</b>\n\n"
         "⚪ <b>Простая:</b> пользователю достаточно нажать на любую кнопку.\n\n"
         "🔵 <b>Рандомная:</b> пользователю необходимо нажать на верную кнопку.\n\n"
         "<blockquote>"
-        f"{greet_icon} <b>Приветствовать:</b> позволяет отправлять пользователю приветствие "
-        "сразу после решения капчи.\n\n"
+        f"{greet_icon} <b>Приветствовать:</b> {greet_desc_tail}\n\n"
         f"{accept_icon} <b>Принимать сразу:</b> позволяет принимать заявки сразу после решения капчи.\n\n"
         f"{accept_a_icon} <b>Принимать всех:</b> если данная опция включена, то даже если пользователь "
         "проигнорировал капчу, его заявка будет обработана."
         "</blockquote>\n\n"
-        "ⓘ Капча отправляется перед приветственным сообщением."
+        f"{info_tail}"
     )
 
     # Базовые кнопки (всегда)
@@ -355,7 +384,7 @@ async def _show_captcha(callback: CallbackQuery, chat_id: int, owner_id: int):
                 InlineKeyboardButton(text=f"⏱ На прохождение: {timer} мин", callback_data=f"ch_cap_toggle:{chat_id}:timer"),
             ],
             [InlineKeyboardButton(
-                text=f"{greet_icon} Приветствовать: {'вкл' if greet_on else 'выкл'}",
+                text=greet_btn_text,
                 callback_data=f"ch_cap_toggle:{chat_id}:greet",
             )],
             [InlineKeyboardButton(
@@ -432,10 +461,22 @@ async def on_ch_cap_toggle(callback: CallbackQuery, platform_user: dict | None):
         return
 
     if setting == "greet":
-        new_val = not bool(ch.get("captcha_greet", False))
-        await db.execute("UPDATE bot_chats SET captcha_greet=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
-                         new_val, owner_id, chat_id)
-        await callback.answer("Приветствовать: " + ("вкл" if new_val else "выкл"))
+        # 3-позиционный цикл: после капчи (гейт) → до капчи → выкл → …
+        # Неактивна, если приветствия/цепочки нет — слать после капчи нечего.
+        has_base_welcome = bool(ch.get("welcome_text") or ch.get("welcome_media"))
+        steps_cnt = await db.fetchval(
+            "SELECT COUNT(*) FROM welcome_steps WHERE owner_id=$1 AND chat_id=$2::bigint "
+            "AND (action IS NULL OR action <> 'delete')",
+            owner_id, chat_id,
+        )
+        if not (has_base_welcome or steps_cnt):
+            await callback.answer("Сначала задайте приветствие или цепочку", show_alert=True)
+            return
+        new_mode = (greet_mode(ch) + 1) % 3
+        await db.execute("UPDATE bot_chats SET captcha_greet_mode=$1 WHERE owner_id=$2 AND chat_id=$3::bigint",
+                         new_mode, owner_id, chat_id)
+        _lbl = {GREET_AFTER: "после капчи", GREET_BEFORE: "до капчи", GREET_OFF: "выкл"}[new_mode]
+        await callback.answer(f"Приветствовать: {_lbl}")
 
     elif setting == "btn_type":
         # Размер reply-кнопки капчи: крупная (big) ↔ компактная (compact). Inline убран —

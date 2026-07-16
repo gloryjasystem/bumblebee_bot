@@ -27,6 +27,20 @@ router = Router()
 # Cache for child bot file IDs mapping: (original_file_id, bot_id) -> new_file_id
 _child_file_ids_cache = {}
 
+# Режим связки «капча ↔ приветствие» (кнопка «Приветствовать» на экране капчи):
+#   0 = после капчи (гейт, дефолт) — капча → прошёл → приветствие + цепочка
+#   1 = до капчи                    — приветствие + цепочка, потом капча
+#   2 = выкл                        — в потоке капчи приветствие не шлём
+GREET_AFTER, GREET_BEFORE, GREET_OFF = 0, 1, 2
+
+
+def greet_mode(row) -> int:
+    """3-позиционный режим приветствия относительно капчи. Дефолт — 0 (после капчи, гейт)."""
+    try:
+        return int((row or {}).get("captcha_greet_mode") or 0)
+    except (TypeError, ValueError):
+        return 0
+
 
 def _fill_captcha_text(template: str, user, chat_title: str) -> str:
     """Подставляет переменные {name}, {allname}, {username}, {chat}, {day} в текст капчи."""
@@ -308,7 +322,12 @@ async def send_captcha(bot: Bot, event: ChatJoinRequest, settings_row: dict):
             # Берём ПОЛНЫЕ настройки из БД (settings_row здесь урезанный settings_for_captcha —
             # без chat_title/welcome_media/кнопок), чтобы приветствие и цепочка отработали корректно.
             full_row = await _fetch_chat_settings(event.chat.id, settings_row.get("owner_id"))
-            await _send_welcome(bot, event.chat.id, user, dict(full_row) if full_row else settings_row)
+            _wrow = dict(full_row) if full_row else settings_row
+            # Капча-гейт: «выкл» — приветствие в потоке капчи не шлём; иначе from_join_request=True
+            # обходит «страж Сразу» (гейт для «Сразу»-каналов), дубль гасит _welcome_already_sent.
+            if greet_mode(_wrow) != GREET_OFF:
+                await _send_welcome(bot, event.chat.id, user, _wrow,
+                                    contact_established=True, from_join_request=True)
         else:
             logger.info(f"[CAPTCHA] Both bots failed DM for user={user.id} — leaving pending for manual review")
 
@@ -647,10 +666,13 @@ async def _approve_user(
             # не нажимал /start (Forbidden: bot can't initiate conversation). Именно
             # поэтому раньше капча доходила (окно было открыто), а приветствие — нет.
             welcome_ok = False
-            if settings_row:
+            # Капча-гейт: «выкл» — приветствие в потоке капчи не шлём; иначе from_join_request=True
+            # обходит «страж Сразу» (гейт для «Сразу»-каналов), дубль гасит _welcome_already_sent.
+            if settings_row and greet_mode(settings_row) != GREET_OFF:
                 try:
                     from handlers.join_requests import _send_welcome
-                    welcome_ok = await _send_welcome(bot, chat_id, callback.from_user, dict(settings_row))
+                    welcome_ok = await _send_welcome(bot, chat_id, callback.from_user, dict(settings_row),
+                                                     contact_established=True, from_join_request=True)
                 except Exception as _we:
                     logger.warning(f"[CAPTCHA WELCOME] send failed user={callback.from_user.id}: {_we}")
             try:
@@ -869,10 +891,13 @@ async def _approve_user_from_message(
         # Приветствие — ДО approve (пока открыто окно заявки; после approve окно
         # закрывается и боту нельзя писать юзеру, не нажимавшему /start).
         welcome_ok = False
-        if settings_row:
+        # Капча-гейт: «выкл» — приветствие в потоке капчи не шлём; иначе from_join_request=True
+        # обходит «страж Сразу» (гейт для «Сразу»-каналов), дубль гасит _welcome_already_sent.
+        if settings_row and greet_mode(settings_row) != GREET_OFF:
             try:
                 from handlers.join_requests import _send_welcome
-                welcome_ok = await _send_welcome(bot, chat_id, message.from_user, dict(settings_row))
+                welcome_ok = await _send_welcome(bot, chat_id, message.from_user, dict(settings_row),
+                                                 contact_established=True, from_join_request=True)
             except Exception as _we:
                 logger.warning(f"[CAPTCHA WELCOME REPLY] send failed user={message.from_user.id}: {_we}")
         try:

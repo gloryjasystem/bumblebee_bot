@@ -409,6 +409,8 @@ ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS captcha_anim_type VARCHAR(16);
 
 -- captcha_greet
 ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS captcha_greet BOOLEAN DEFAULT false;
+-- captcha_greet_mode: 0 = после капчи (гейт, дефолт), 1 = до капчи, 2 = выкл
+ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS captcha_greet_mode SMALLINT DEFAULT 0;
 
 ALTER TABLE bot_chats ADD COLUMN IF NOT EXISTS farewell_media_below BOOLEAN DEFAULT false;
 

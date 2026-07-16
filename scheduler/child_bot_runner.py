@@ -2210,7 +2210,13 @@ async def _handle_join_request(bot: Bot, child_bot_id: int, event: ChatJoinReque
     #    берём канонические (chat_settings) → с правильным медиа. Приветствие «после входа»
     #    для такого канала — no-op (_send_welcome, гард from_join_request), дубля не будет.
     #    Режим включается выбором «Сразу» в редакторе приветствия (welcome_delay_sec = -1).
-    if int(chat_settings.get("welcome_delay_sec") or 0) < 0:
+    #    Капча-гейт: при включённой капче приветствие «по заявке» шлём ТОЛЬКО в режиме
+    #    «до капчи» (greet_mode=1). В «после капчи» (0, гейт) и «выкл» (2) — приветствие
+    #    уйдёт после прохождения капчи (или не уйдёт), чтобы капча не заваливалась.
+    from handlers.captcha import greet_mode as _greet_mode
+    _gm = _greet_mode(chat_settings)
+    _greet_at_request = (captcha_type == "off") or (_gm == 1)
+    if int(chat_settings.get("welcome_delay_sec") or 0) < 0 and _greet_at_request:
         try:
             from handlers.join_requests import _send_welcome
             await _send_welcome(bot, chat_id, user, dict(chat_settings),
@@ -2231,6 +2237,7 @@ async def _handle_join_request(bot: Bot, child_bot_id: int, event: ChatJoinReque
             "captcha_buttons_raw":      chat_settings.get("captcha_buttons_raw"),
             "captcha_button_style":     chat_settings.get("captcha_button_style") or "big",
             "captcha_greet":            chat_settings.get("captcha_greet") or False,
+            "captcha_greet_mode":       int(chat_settings.get("captcha_greet_mode") or 0),
             "captcha_accept_now":       chat_settings.get("captcha_accept_now") or False,
             "captcha_accept_all":       chat_settings.get("captcha_accept_all") or False,
             "captcha_animation":        chat_settings.get("captcha_animation") or False,
@@ -2577,8 +2584,17 @@ async def _handle_chat_member(bot: Bot, child_bot_id: int, event: ChatMemberUpda
             if passed_group_captcha:
                 # Потребляем флаг сразу, чтобы не отправить приветствие дважды
                 _passed_captcha_group.discard(captcha_key)
-                logger.info(f"[WELCOME] captcha passed — sending welcome to user={user.id}")
-                await _send_welcome(bot, chat_id, user, welcome_row)
+                # Капча-гейт: «выкл» (greet_mode=2) — в потоке капчи приветствие не шлём.
+                # Иначе шлём с from_join_request=True (обходит «страж Сразу», чтобы гейт
+                # сработал и для «Сразу»-каналов); дубль в режиме «до капчи» гасит
+                # _welcome_already_sent (180с).
+                from handlers.captcha import greet_mode as _greet_mode
+                if _greet_mode(welcome_row) == 2:
+                    logger.info(f"[WELCOME] greet_mode=off — приветствие в потоке капчи пропущено user={user.id}")
+                else:
+                    logger.info(f"[WELCOME] captcha passed — sending welcome to user={user.id}")
+                    await _send_welcome(bot, chat_id, user, welcome_row,
+                                        contact_established=True, from_join_request=True)
             elif captcha_type == "off":
                 await _send_welcome(bot, chat_id, user, welcome_row)
     # ── Пользователь вышел/забанен ────────────────────────────

@@ -343,7 +343,7 @@ async def _show_manager(event, chat_id: int, owner_id: int):
     kb_rows = []
     if captcha_on:
         kb_rows.append([InlineKeyboardButton(
-            text="🔒 Капча · настроить", callback_data=f"ch_captcha:{chat_id}")])
+            text="🔒 Капча · настроить", callback_data=f"ch_captcha_chain:{chat_id}")])
     kb_rows.append([InlineKeyboardButton(
         text=("✎ №1 Приветствие" if has_base else "✎ Задать приветствие №1"),
         callback_data=f"welcome_set_chain:{chat_id}",

@@ -272,7 +272,7 @@ async def on_ch_delete_toggle(callback: CallbackQuery, platform_user: dict | Non
 # Экран 4: Настройки капчи
 # ══════════════════════════════════════════════════════════════
 
-async def _show_captcha(callback: CallbackQuery, chat_id: int, owner_id: int):
+async def _show_captcha(callback: CallbackQuery, chat_id: int, owner_id: int, back_cb: str | None = None):
     ch = await db.fetchrow(
         "SELECT * FROM bot_chats WHERE owner_id=$1 AND chat_id=$2::bigint",
         owner_id, chat_id,
@@ -389,7 +389,7 @@ async def _show_captcha(callback: CallbackQuery, chat_id: int, owner_id: int):
             )],
         ])
 
-    buttons.append([InlineKeyboardButton(text="◄ Назад", callback_data=f"ch_messages:{chat_id}")])
+    buttons.append([InlineKeyboardButton(text="◄ Назад", callback_data=back_cb or f"ch_messages:{chat_id}")])
 
     await navigate(
         callback,
@@ -404,6 +404,16 @@ async def on_ch_captcha(callback: CallbackQuery, platform_user: dict | None):
         return
     chat_id = int(callback.data.split(":")[1])
     await _show_captcha(callback, chat_id, await resolve_chat_owner(platform_user["user_id"], chat_id))
+
+
+@router.callback_query(F.data.startswith("ch_captcha_chain:"))
+async def on_ch_captcha_chain(callback: CallbackQuery, platform_user: dict | None):
+    """Вход в капчу из экрана «⛓ Цепочка сообщений»: «Назад» ведёт обратно в цепочку."""
+    if not platform_user:
+        return
+    chat_id = int(callback.data.split(":")[1])
+    await _show_captcha(callback, chat_id, await resolve_chat_owner(platform_user["user_id"], chat_id),
+                        back_cb=f"wseq:{chat_id}")
 
 
 # ── Toggle: Тип капчи (off → simple → random → off → ...) ──────

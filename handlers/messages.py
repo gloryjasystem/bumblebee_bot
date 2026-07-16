@@ -923,7 +923,7 @@ async def on_ch_captcha_btns(callback: CallbackQuery, state: FSMContext, platfor
         "🟩 - Зелёный\n"
         "🟥 - Красный\n\n"
         "<u>Пример:</u> <code>🟩 Я не робот</code></blockquote>\n\n"
-        "↪️ Пришлите названия для <u>кнопок капчи:</u>",
+        "👇 Пришлите названия для <u>кнопок капчи:</u>",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="◄ Назад", callback_data=f"ch_captcha:{chat_id}")],

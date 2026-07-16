@@ -291,7 +291,7 @@ async def _show_manager(event, chat_id: int, owner_id: int):
     lines = ["⛓ <b>Цепочка сообщений</b>", ""]
     # Капча «сверху»: сообщения после капчи (гейт, дефолт)
     if captcha_on and greet_m != 1:
-        lines.append("<b>🔒</b> · <i>сначала</i> · Капча")
+        lines.append("<b>​🔒</b> · <i>сначала</i> · Капча")
     if not has_base:
         lines.append("<b>№1</b> · <i>сразу</i> · ⚠️ не задано")
     elif base_on:
@@ -308,7 +308,7 @@ async def _show_manager(event, chat_id: int, owner_id: int):
 
     # Капча «снизу»: до капчи — сначала лента, капча в конце
     if captcha_on and greet_m == 1:
-        lines.append("<b>🔒</b> · <i>в конце</i> · Капча")
+        lines.append("<b>​🔒</b> · <i>в конце</i> · Капча")
 
     if autoclear_sec > 0:
         lines += ["", f"🧹 <b>через +{format_delay_short(autoclear_sec)}</b> — вся переписка очистится"]
@@ -335,9 +335,9 @@ async def _show_manager(event, chat_id: int, owner_id: int):
     # Подпись про капчу-гейт под итогом
     if captcha_on:
         if greet_m == 1:
-            lines += ["", "🔒 <i>Сначала приветствие и цепочка, в конце — капча для вступления.</i>"]
+            lines += ["", "​🔒 <i>Сначала приветствие и цепочка, в конце — капча для вступления.</i>"]
         else:
-            lines += ["", "🔒 <i>Сначала капча. Пройдёт → уйдут приветствие и цепочка.</i>"]
+            lines += ["", "​🔒 <i>Сначала капча. Пройдёт → уйдут приветствие и цепочка.</i>"]
 
     # ── Клавиатура ──
     kb_rows = []

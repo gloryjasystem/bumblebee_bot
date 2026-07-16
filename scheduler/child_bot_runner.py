@@ -2214,9 +2214,12 @@ async def _handle_join_request(bot: Bot, child_bot_id: int, event: ChatJoinReque
     #    «до капчи» (greet_mode=1). В «после капчи» (0, гейт) — приветствие уйдёт после
     #    прохождения капчи, чтобы капча не заваливалась.
     from handlers.captcha import greet_mode as _greet_mode
+    from handlers.join_requests import _welcome_recently_sent
     _gm = _greet_mode(chat_settings)
     _greet_at_request = (captcha_type == "off") or (_gm == 1)
     _welcome_fired_at_request = int(chat_settings.get("welcome_delay_sec") or 0) < 0 and _greet_at_request
+    # Проверяем ДО отправки: подавит ли дедуп свежую ленту (быстрый ре-джойн тем же юзером).
+    _welcome_deduped = _welcome_recently_sent(chat_id, user.id)
     if _welcome_fired_at_request:
         try:
             from handlers.join_requests import _send_welcome
@@ -2255,7 +2258,7 @@ async def _handle_join_request(bot: Bot, child_bot_id: int, event: ChatJoinReque
         # (фоновая цепочка). Если слать капчу сразу, она выскочит между №1 и отложенными
         # №2+. Поэтому в этом режиме шлём капчу ПОСЛЕ последнего сообщения цепочки —
         # спим до max(delay_sec) шагов + небольшой буфер (окно заявки всё это время открыто).
-        if _gm == 1 and _welcome_fired_at_request:
+        if _gm == 1 and _welcome_fired_at_request and not _welcome_deduped:
             _max_delay = await db.fetchval(
                 "SELECT COALESCE(MAX(delay_sec), 0) FROM welcome_steps "
                 "WHERE owner_id=$1 AND chat_id=$2::bigint AND (action IS NULL OR action <> 'delete')",

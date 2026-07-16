@@ -49,6 +49,14 @@ def _welcome_release(chat_id: int, user_id: int) -> None:
     _recent_welcome.pop((chat_id, user_id), None)
 
 
+def _welcome_recently_sent(chat_id: int, user_id: int) -> bool:
+    """Read-only проверка (БЕЗ пометки): уходило ли приветствие этой паре в окне дедупа.
+    Нужна режиму «до капчи»: если приветствие/цепочку сейчас подавит дедуп (быстрый
+    ре-джойн тем же аккаунтом), капчу НЕ откладываем — свежей ленты не будет, шлём сразу."""
+    ts = _recent_welcome.get((chat_id, user_id))
+    return ts is not None and (time.monotonic() - ts) < _WELCOME_DEDUP_SEC
+
+
 # ── Дедуп прощания: помечаем ТОЛЬКО по факту успешной доставки ──
 # На общем канале событие 'left' приходит нескольким ботам-админам сразу; каждый
 # пробует отправить прощание, но доходит лишь тот, у кого открыта личка с юзером.
@@ -247,6 +255,7 @@ async def on_join_request(event: ChatJoinRequest, bot: Bot):
     _wl_greet_mode = _greet_mode(_wl_row)
     _wl_greet_at_request = (not _wl_captcha_on) or (_wl_greet_mode == 1)
     _wl_welcome_fired = int(_wl_row.get("welcome_delay_sec") or 0) < 0 and _wl_greet_at_request
+    _wl_welcome_deduped = _welcome_recently_sent(event.chat.id, user.id)  # свежую ленту подавит дедуп?
     if _wl_welcome_fired:
         try:
             await _send_welcome(bot, event.chat.id, user, _wl_row, contact_established=True, from_join_request=True)
@@ -313,7 +322,7 @@ async def on_join_request(event: ChatJoinRequest, bot: Bot):
         from handlers.captcha import send_captcha, send_captcha_after
         # «До капчи» (greet_mode=1): №1 уже ушло, №2+ уходят отложенно. Капчу шлём ПОСЛЕ
         # последнего сообщения цепочки, иначе она выскочит между №1 и отложенными №2+.
-        if _wl_greet_mode == 1 and _wl_welcome_fired:
+        if _wl_greet_mode == 1 and _wl_welcome_fired and not _wl_welcome_deduped:
             _max_delay = await db.fetchval(
                 "SELECT COALESCE(MAX(delay_sec), 0) FROM welcome_steps "
                 "WHERE owner_id=$1 AND chat_id=$2::bigint AND (action IS NULL OR action <> 'delete')",
